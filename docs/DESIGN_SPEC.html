@@ -1,0 +1,710 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>团队管理软件 - 前端视觉规范 v0.8.1-stable</title>
+<style>
+  :root {
+    --c-primary: #409EFF;
+    --c-primary-dark: #337ECC;
+    --c-primary-light: #66B1FF;
+    --c-success: #67C23A;
+    --c-warning: #E6A23C;
+    --c-danger: #F56C6C;
+    --c-info: #909399;
+    --c-bg: #F5F7FA;
+    --c-bg-card: #FFFFFF;
+    --c-text-1: #303133;
+    --c-text-2: #606266;
+    --c-text-3: #909399;
+    --c-border: #DCDFE6;
+    --c-border-light: #E4E7ED;
+    --c-border-lighter: #EBEEF5;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    background: var(--c-bg);
+    color: var(--c-text-1);
+    line-height: 1.7;
+    padding: 0;
+  }
+  .doc-header {
+    background: linear-gradient(135deg, #409EFF 0%, #36CFC9 100%);
+    color: #fff;
+    padding: 48px 32px;
+    text-align: center;
+  }
+  .doc-header h1 { font-size: 28px; font-weight: 700; margin-bottom: 8px; }
+  .doc-header .meta { font-size: 14px; opacity: 0.85; }
+  .doc-body { max-width: 960px; margin: 0 auto; padding: 32px 24px; }
+  .doc-body section { margin-bottom: 48px; }
+  .doc-body h2 {
+    font-size: 22px; font-weight: 700; color: var(--c-text-1);
+    padding-bottom: 12px; margin-bottom: 20px;
+    border-bottom: 2px solid var(--c-primary);
+    display: flex; align-items: center; gap: 8px;
+  }
+  .doc-body h2::before {
+    content: ''; width: 4px; height: 22px;
+    background: var(--c-primary); border-radius: 2px;
+  }
+  .doc-body h3 { font-size: 17px; font-weight: 600; color: var(--c-text-1); margin: 20px 0 12px; }
+  .doc-body p { font-size: 14px; color: var(--c-text-2); margin-bottom: 8px; }
+  .doc-body ul { padding-left: 20px; margin-bottom: 12px; }
+  .doc-body li { font-size: 14px; color: var(--c-text-2); margin-bottom: 4px; }
+
+  /* 色板展示 */
+  .color-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; margin: 16px 0; }
+  .color-chip {
+    border-radius: 8px; overflow: hidden;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+  }
+  .color-chip .swatch { height: 60px; }
+  .color-chip .info { padding: 8px 12px; background: #fff; }
+  .color-chip .name { font-size: 13px; font-weight: 600; }
+  .color-chip .hex { font-size: 12px; color: var(--c-text-3); font-family: monospace; }
+  .color-chip .usage { font-size: 11px; color: var(--c-text-3); margin-top: 2px; }
+
+  /* 表格 */
+  .spec-table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 13px; }
+  .spec-table th {
+    background: #f0f2f5; color: var(--c-text-1); font-weight: 600;
+    padding: 10px 12px; text-align: left; border-bottom: 2px solid var(--c-border);
+  }
+  .spec-table td {
+    padding: 10px 12px; border-bottom: 1px solid var(--c-border-lighter); color: var(--c-text-2);
+  }
+  .spec-table tr:nth-child(even) td { background: #fafafa; }
+
+  /* 标签演示 */
+  .tag-demo { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+  .tag-demo .el-tag-equivalent {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 2px 10px; border-radius: 4px; font-size: 12px; font-weight: 500;
+    border: 1px solid;
+  }
+
+  /* 代码块 */
+  .code-block {
+    background: #1e1e1e; color: #d4d4d4; border-radius: 8px;
+    padding: 16px 20px; font-family: 'Cascadia Code', 'Fira Code', monospace;
+    font-size: 13px; line-height: 1.6; overflow-x: auto; margin: 12px 0;
+  }
+  .code-block .comment { color: #6A9955; }
+  .code-block .keyword { color: #569CD6; }
+  .code-block .string { color: #CE9178; }
+  .code-block .number { color: #B5CEA8; }
+
+  /* 提示框 */
+  .callout {
+    border-radius: 8px; padding: 14px 18px; margin: 12px 0; font-size: 13px;
+  }
+  .callout-info { background: #ECF5FF; border-left: 4px solid var(--c-primary); color: #337ECC; }
+  .callout-warn { background: #FDF6EC; border-left: 4px solid var(--c-warning); color: #B88230; }
+  .callout-danger { background: #FEF0F0; border-left: 4px solid var(--c-danger); color: #C45656; }
+  .callout-success { background: #F0F9EB; border-left: 4px solid var(--c-success); color: #5FA83E; }
+
+  /* 审计结果 */
+  .audit-file { margin-bottom: 16px; }
+  .audit-file h4 { font-size: 14px; font-weight: 600; color: var(--c-text-1); margin-bottom: 6px; font-family: monospace; }
+  .audit-line { font-size: 12px; font-family: monospace; color: var(--c-text-2); padding: 2px 0; }
+  .audit-fail { color: #C45656; }
+  .audit-pass { color: #5FA83E; }
+
+  /* 分隔线 */
+  .divider { height: 1px; background: var(--c-border-lighter); margin: 24px 0; }
+</style>
+</head>
+<body>
+
+<div class="doc-header">
+  <h1>团队管理软件 — 前端视觉规范</h1>
+  <div class="meta">v0.8.1-stable &nbsp;|&nbsp; 2026-07-02 &nbsp;|&nbsp; P3 设计规范阶段</div>
+</div>
+
+<div class="doc-body">
+
+<!-- ============================================================ -->
+<!-- 0. Web Interface Guidelines 审计结果 -->
+<!-- ============================================================ -->
+<section>
+<h2>Web Interface Guidelines 审计</h2>
+<p>以下为基于 Vercel Web Interface Guidelines 对当前核心文件的合规审计结果（P3 美化时需修复）：</p>
+
+<div class="audit-file">
+<h4>## frontend/src/views/login/LoginView.vue</h4>
+<div class="audit-line audit-fail">LoginView.vue:26 — placeholder "邮箱地址" → "邮箱地址…"（省略号规范）</div>
+<div class="audit-line audit-fail">LoginView.vue:35 — placeholder "密码" → "密码…"</div>
+<div class="audit-line audit-fail">LoginView.vue:24 — el-input email 缺少 name="email" 和 autocomplete="email"</div>
+<div class="audit-line audit-fail">LoginView.vue:32 — el-input password 缺少 name="password" 和 autocomplete="current-password"</div>
+<div class="audit-line audit-fail">LoginView.vue:25 — email 输入框缺少 spellcheck="false"</div>
+<div class="audit-line audit-fail">LoginView.vue:130 — 缺少 prefers-reduced-motion 媒体查询</div>
+</div>
+
+<div class="audit-file">
+<h4>## frontend/src/layouts/PCLayout.vue</h4>
+<div class="audit-line audit-fail">PCLayout.vue:33 — collapse-btn 图标按钮缺少 aria-label</div>
+<div class="audit-line audit-fail">PCLayout.vue:64 — transition 缺少 prefers-reduced-motion 处理</div>
+<div class="audit-line audit-fail">PCLayout.vue:153 — handleResize 空实现，需移除或完善</div>
+<div class="audit-line audit-fail">PCLayout.vue:45 — el-avatar img 缺少 alt 属性</div>
+</div>
+
+<div class="audit-file">
+<h4>## frontend/src/layouts/MobileLayout.vue</h4>
+<div class="audit-line audit-fail">MobileLayout.vue:9 — menu-btn 图标按钮缺少 aria-label</div>
+<div class="audit-line audit-fail">MobileLayout.vue:24 — tab-item div @click 应为 button 或加 role="tab"</div>
+<div class="audit-line audit-fail">MobileLayout.vue:88 — badge 值硬编码 3，应从通知 store 动态读取</div>
+<div class="audit-line audit-fail">MobileLayout.vue:40 — el-drawer 缺少 overscroll-behavior: contain</div>
+<div class="audit-line audit-fail">MobileLayout.vue:16 — transition 缺少 prefers-reduced-motion</div>
+</div>
+
+<div class="audit-file">
+<h4>## frontend/src/views/dashboard/DashboardView.vue</h4>
+<div class="audit-line audit-fail">DashboardView.vue:45 — "已延期任务" 应为 "已逾期任务"（P2 已改 TASK_STATUS_MAP 但 Dashboard 标签遗漏）</div>
+<div class="audit-line audit-fail">DashboardView.vue:271 — todo-card div @click 应为 button 或加 role="button"</div>
+<div class="audit-line audit-fail">DashboardView.vue:1015 — transition: all 0.2s → 应列出具体属性</div>
+<div class="audit-line audit-fail">DashboardView.vue:573 — "延期" 应为 "已逾期"（柱状图 xAxis）</div>
+<div class="audit-line audit-fail">DashboardView.vue:701 — hover transform 缺少 prefers-reduced-motion</div>
+<div class="audit-line audit-fail">DashboardView.vue:55 — 统计卡片数字缺少 font-variant-numeric: tabular-nums</div>
+</div>
+
+<div class="audit-file">
+<h4>## frontend/src/components/PageHeader.vue</h4>
+<div class="audit-line audit-pass">✓ pass（结构简洁，语义正确）</div>
+</div>
+
+<div class="audit-file">
+<h4>## frontend/src/components/EmptyState.vue</h4>
+<div class="audit-line audit-fail">EmptyState.vue:3 — el-icon 装饰图标缺少 aria-hidden="true"</div>
+</div>
+
+<div class="audit-file">
+<h4>## frontend/src/styles/index.scss</h4>
+<div class="audit-line audit-fail">index.scss:46 — 滚动条样式缺少 Firefox (-webkit-scrollbar 仅 Chrome/Safari)</div>
+<div class="audit-line audit-fail">index.scss:64 — CSS 变量缺少圆角/阴影/间距体系变量</div>
+<div class="audit-line audit-pass">✓ CSS Reset 基本完善</div>
+</div>
+
+<div class="callout callout-info">
+  <strong>审计摘要：</strong>共发现 22 项需修复的合规问题，集中在 6 个文件。P3 第一批美化时需同时修复这些可访问性与规范问题。
+</div>
+</section>
+
+<div class="divider"></div>
+
+<!-- ============================================================ -->
+<!-- 1. 整体视觉风格 -->
+<!-- ============================================================ -->
+<section>
+<h2>1. 整体视觉风格</h2>
+
+<table class="spec-table">
+  <tr><th>维度</th><th>规范</th><th>说明</th></tr>
+  <tr><td>整体气质</td><td>清爽 · 可信 · 透明 · 年轻 · 科技感 · 有秩序 · 不压抑 · 有团队氛围</td><td>8 个关键词定义整体调性</td></tr>
+  <tr><td>设计语言</td><td>轻拟物 + 扁平混合</td><td>卡片用微阴影体现层次，图标用纯色填充，避免重拟物</td></tr>
+  <tr><td>圆角体系</td><td>大圆角（12px）友好不锐利</td><td>卡片 12px / 按钮 6px / 输入框 4px / 标签 4px</td></tr>
+  <tr><td>阴影体系</td><td>轻阴影为主，hover 加深</td><td>默认 0 2px 8px rgba(0,0,0,0.06) / hover 0 4px 16px rgba(0,0,0,0.12)</td></tr>
+  <tr><td>留白节奏</td><td>16px 基准网格</td><td>卡片间距 16px / 内边距 20px / 区块间距 24px</td></tr>
+  <tr><td>动效</td><td>快速、轻量、可中断</td><td>过渡 0.2-0.3s ease / hover translateY(-2px) / 遵守 prefers-reduced-motion</td></tr>
+  <tr><td>信息密度</td><td>中等密度</td><td>表格行高 48px / 卡片内文 14px / 辅助文 12-13px</td></tr>
+</table>
+</section>
+
+<!-- ============================================================ -->
+<!-- 2. 色彩规范 -->
+<!-- ============================================================ -->
+<section>
+<h2>2. 色彩规范</h2>
+
+<h3>主色与功能色</h3>
+<div class="color-grid">
+  <div class="color-chip">
+    <div class="swatch" style="background:#409EFF"></div>
+    <div class="info"><div class="name">主色 Primary</div><div class="hex">#409EFF</div><div class="usage">品牌/链接/主按钮</div></div>
+  </div>
+  <div class="color-chip">
+    <div class="swatch" style="background:#337ECC"></div>
+    <div class="info"><div class="name">主色深 Primary Dark</div><div class="hex">#337ECC</div><div class="usage">hover/active</div></div>
+  </div>
+  <div class="color-chip">
+    <div class="swatch" style="background:#66B1FF"></div>
+    <div class="info"><div class="name">主色浅 Primary Light</div><div class="hex">#66B1FF</div><div class="usage">disabled/浅底</div></div>
+  </div>
+  <div class="color-chip">
+    <div class="swatch" style="background:#67C23A"></div>
+    <div class="info"><div class="name">成功色 Success</div><div class="hex">#67C23A</div><div class="usage">完成/通过/正常</div></div>
+  </div>
+  <div class="color-chip">
+    <div class="swatch" style="background:#E6A23C"></div>
+    <div class="info"><div class="name">警告色 Warning</div><div class="hex">#E6A23C</div><div class="usage">待审/即将到期</div></div>
+  </div>
+  <div class="color-chip">
+    <div class="swatch" style="background:#F56C6C"></div>
+    <div class="info"><div class="name">危险色 Danger</div><div class="hex">#F56C6C</div><div class="usage">驳回/超支/逾期</div></div>
+  </div>
+  <div class="color-chip">
+    <div class="swatch" style="background:#909399"></div>
+    <div class="info"><div class="name">信息色 Info</div><div class="hex">#909399</div><div class="usage">待办/辅助/禁用</div></div>
+  </div>
+</div>
+
+<h3>背景色与文字色</h3>
+<div class="color-grid">
+  <div class="color-chip">
+    <div class="swatch" style="background:#F5F7FA"></div>
+    <div class="info"><div class="name">页面背景</div><div class="hex">#F5F7FA</div><div class="usage">内容区底色</div></div>
+  </div>
+  <div class="color-chip">
+    <div class="swatch" style="background:#FFFFFF"></div>
+    <div class="info"><div class="name">卡片背景</div><div class="hex">#FFFFFF</div><div class="usage">卡片/弹窗/表格</div></div>
+  </div>
+  <div class="color-chip">
+    <div class="swatch" style="background:#304156"></div>
+    <div class="info"><div class="name">侧边栏深色</div><div class="hex">#304156</div><div class="usage">PC 侧边栏</div></div>
+  </div>
+  <div class="color-chip">
+    <div class="swatch" style="background:#303133"></div>
+    <div class="info"><div class="name">文字主色</div><div class="hex">#303133</div><div class="usage">标题/正文</div></div>
+  </div>
+  <div class="color-chip">
+    <div class="swatch" style="background:#606266"></div>
+    <div class="info"><div class="name">文字常规</div><div class="hex">#606266</div><div class="usage">正文/表格内容</div></div>
+  </div>
+  <div class="color-chip">
+    <div class="swatch" style="background:#909399"></div>
+    <div class="info"><div class="name">文字次要</div><div class="hex">#909399</div><div class="usage">标签/提示/时间</div></div>
+  </div>
+  <div class="color-chip">
+    <div class="swatch" style="background:#DCDFE6"></div>
+    <div class="info"><div class="name">边框色</div><div class="hex">#DCDFE6</div><div class="usage">输入框/分隔线</div></div>
+  </div>
+  <div class="color-chip">
+    <div class="swatch" style="background:#EBEEF5"></div>
+    <div class="info"><div class="name">浅边框色</div><div class="hex">#EBEEF5</div><div class="usage">表格行线/轻分隔</div></div>
+  </div>
+</div>
+
+<h3>渐变色（数据卡片与品牌区）</h3>
+<table class="spec-table">
+  <tr><th>名称</th><th>值</th><th>用途</th></tr>
+  <tr><td>品牌渐变</td><td><code>linear-gradient(135deg, #409EFF 0%, #36CFC9 100%)</code></td><td>登录页左侧/Logo 区</td></tr>
+  <tr><td>蓝色卡片</td><td><code>linear-gradient(135deg, #409EFF, #36CFC9)</code></td><td>项目总数统计卡片</td></tr>
+  <tr><td>绿色卡片</td><td><code>linear-gradient(135deg, #67C23A, #95DE64)</code></td><td>进行中统计卡片</td></tr>
+  <tr><td>橙色卡片</td><td><code>linear-gradient(135deg, #E6A23C, #FFD591)</code></td><td>待办统计卡片</td></tr>
+  <tr><td>红色卡片</td><td><code>linear-gradient(135deg, #F56C6C, #FF7875)</code></td><td>逾期统计卡片</td></tr>
+  <tr><td>紫色卡片</td><td><code>linear-gradient(135deg, #9B59B6, #C39BD3)</code></td><td>经费统计卡片</td></tr>
+</table>
+
+<div class="callout callout-warn">
+  <strong>禁止：</strong>不引入新色系，不使用 Tailwind 自定义色，不修改 Element Plus 主题变量覆盖方式。所有新增色值写入 <code>variables.scss</code> 的 CSS 变量。
+</div>
+</section>
+
+<!-- ============================================================ -->
+<!-- 3. 字体字号规范 -->
+<!-- ============================================================ -->
+<section>
+<h2>3. 字体字号规范</h2>
+
+<table class="spec-table">
+  <tr><th>层级</th><th>字号</th><th>字重</th><th>颜色</th><th>用途</th></tr>
+  <tr><td>页面标题 H2</td><td>20px</td><td>600</td><td>#303133</td><td>PageHeader 标题</td></tr>
+  <tr><td>区块标题 H3</td><td>16px</td><td>600</td><td>#303133</td><td>卡片标题/Tab 标题</td></tr>
+  <tr><td>副标题</td><td>13px</td><td>400</td><td>#909399</td><td>页面副标题/描述</td></tr>
+  <tr><td>正文</td><td>14px</td><td>400</td><td>#606266</td><td>表格/列表/表单</td></tr>
+  <tr><td>辅助文字</td><td>13px</td><td>400</td><td>#909399</td><td>时间/标签/提示</td></tr>
+  <tr><td>统计数字</td><td>22px</td><td>700</td><td>#303133</td><td>Dashboard 统计卡片数值</td></tr>
+  <tr><td>大号统计</td><td>28px</td><td>700</td><td>#303133</td><td>工作状态/概览数字</td></tr>
+  <tr><td>标签文字</td><td>12px</td><td>500</td><td>按类型</td><td>el-tag 内容</td></tr>
+  <tr><td>移动端标题</td><td>17px</td><td>600</td><td>#303133</td><td>移动端顶部栏标题</td></tr>
+  <tr><td>移动端 Tab</td><td>11px</td><td>400</td><td>#909399</td><td>底部导航文字</td></tr>
+</table>
+
+<h3>排版规则</h3>
+<ul>
+  <li>数字列/金额列使用 <code>font-variant-numeric: tabular-nums</code> 等宽对齐</li>
+  <li>标题使用 <code>text-wrap: balance</code> 防止孤行</li>
+  <li>长文本截断：<code>overflow: hidden; text-overflow: ellipsis; white-space: nowrap;</code></li>
+  <li>多行截断：<code>-webkit-line-clamp: 2</code> + <code>-webkit-box-orient: vertical</code></li>
+  <li>省略号使用 <code>…</code>（U+2026），不使用三个点 <code>...</code></li>
+  <li>加载状态文字以 <code>…</code> 结尾，如"加载中…"</li>
+  <li>金额/数字与单位之间用 <code>&amp;nbsp;</code> 不换行空格</li>
+</ul>
+</section>
+
+<!-- ============================================================ -->
+<!-- 4. 页面标题规范 -->
+<!-- ============================================================ -->
+<section>
+<h2>4. 页面标题规范</h2>
+
+<table class="spec-table">
+  <tr><th>属性</th><th>规范</th></tr>
+  <tr><td>组件</td><td><code>PageHeader.vue</code> 统一封装</td></tr>
+  <tr><td>标题字号</td><td>20px / 600 / #303133</td></tr>
+  <tr><td>副标题</td><td>13px / 400 / #909399（可选）</td></tr>
+  <tr><td>容器样式</td><td>白底 #fff / 圆角 8px / 阴影 0 2px 4px rgba(0,0,0,0.06) / 下边距 16px</td></tr>
+  <tr><td>布局</td><td>左右两端对齐：左侧标题+副标题，右侧操作按钮区</td></tr>
+  <tr><td>移动端</td><td>标题与操作区垂直排列，操作区占满宽度</td></tr>
+  <tr><td>语义</td><td>使用 <code>&lt;h2&gt;</code> 标签，确保 heading 层级连续</td></tr>
+</table>
+</section>
+
+<!-- ============================================================ -->
+<!-- 5. 卡片规范 -->
+<!-- ============================================================ -->
+<section>
+<h2>5. 卡片规范</h2>
+
+<table class="spec-table">
+  <tr><th>属性</th><th>规范</th></tr>
+  <tr><td>背景</td><td>#FFFFFF</td></tr>
+  <tr><td>圆角</td><td>12px（大卡片）/ 8px（小卡片/内嵌）</td></tr>
+  <tr><td>阴影（默认）</td><td><code>0 2px 8px rgba(0, 0, 0, 0.06)</code></td></tr>
+  <tr><td>阴影（hover）</td><td><code>0 4px 16px rgba(0, 0, 0, 0.12)</code></td></tr>
+  <tr><td>内边距</td><td>20px（大卡片）/ 16px（紧凑卡片）</td></tr>
+  <tr><td>标题</td><td>16px / 600 / #303133，左侧带 4px 蓝色竖条装饰</td></tr>
+  <tr><td>卡片间距</td><td>16px（el-row gutter）</td></tr>
+  <tr><td>hover 效果</td><td><code>transform: translateY(-2px)</code> + 阴影加深</td></tr>
+  <tr><td>过渡</td><td><code>transition: transform 0.2s ease, box-shadow 0.2s ease</code></td></tr>
+  <tr><td>reduced-motion</td><td>需 <code>@media (prefers-reduced-motion: reduce)</code> 禁用 transform</td></tr>
+</table>
+
+<div class="code-block">
+<span class="comment">/* 卡片通用样式 */</span>
+<span class="keyword">.card</span> {
+  <span class="keyword">background</span>: <span class="keyword">var</span>(--c-bg-card);
+  <span class="keyword">border-radius</span>: <span class="number">12px</span>;
+  <span class="keyword">padding</span>: <span class="number">20px</span>;
+  <span class="keyword">box-shadow</span>: <span class="number">0</span> <span class="number">2px</span> <span class="number">8px</span> rgba(<span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>, <span class="number">0.06</span>);
+  <span class="keyword">transition</span>: transform <span class="number">0.2s</span> ease, box-shadow <span class="number">0.2s</span> ease;
+
+  &amp;:hover {
+    <span class="keyword">transform</span>: translateY(<span class="number">-2px</span>);
+    <span class="keyword">box-shadow</span>: <span class="number">0</span> <span class="number">4px</span> <span class="number">16px</span> rgba(<span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>, <span class="number">0.12</span>);
+  }
+}
+
+<span class="comment">/* 尊重用户减少动画偏好 */</span>
+<span class="keyword">@media</span> (prefers-reduced-motion: reduce) {
+  <span class="keyword">.card</span> { <span class="keyword">transition</span>: <span class="keyword">none</span>; &amp;:hover { <span class="keyword">transform</span>: <span class="keyword">none</span>; } }
+}
+</div>
+</section>
+
+<!-- ============================================================ -->
+<!-- 6. 表格规范 -->
+<!-- ============================================================ -->
+<section>
+<h2>6. 表格规范</h2>
+
+<table class="spec-table">
+  <tr><th>属性</th><th>规范</th></tr>
+  <tr><td>组件</td><td>Element Plus <code>el-table</code></td></tr>
+  <tr><td>边框</td><td><code>border</code> + <code>stripe</code> 斑马纹</td></tr>
+  <tr><td>尺寸</td><td>默认 size / 紧凑场景用 <code>size="small"</code></td></tr>
+  <tr><td>行高</td><td>默认 48px / small 40px</td></tr>
+  <tr><td>表头</td><td>背景 #F5F7FA / 字色 #303133 / 字重 600</td></tr>
+  <tr><td>表体</td><td>字色 #606266 / 斑马纹行 #FAFAFA</td></tr>
+  <tr><td>对齐</td><td>文字左对齐 / 数字右对齐 / 状态居中</td></tr>
+  <tr><td>金额列</td><td>右对齐 + <code>font-variant-numeric: tabular-nums</code></td></tr>
+  <tr><td>长文本</td><td><code>show-overflow-tooltip</code> 悬停显示完整</td></tr>
+  <tr><td>空数据</td><td>使用 <code>EmptyState</code> 组件替代默认文字</td></tr>
+  <tr><td>操作列</td><td>右固定 <code>fixed="right"</code> / 按钮用 <code>el-button link</code></td></tr>
+  <tr><td>移动端</td><td>表格转卡片模式（已有 CSS，保持 <code>data-label</code> 属性）</td></tr>
+</table>
+</section>
+
+<!-- ============================================================ -->
+<!-- 7. 表单规范 -->
+<!-- ============================================================ -->
+<section>
+<h2>7. 表单规范</h2>
+
+<table class="spec-table">
+  <tr><th>属性</th><th>规范</th></tr>
+  <tr><td>组件</td><td>Element Plus <code>el-form</code> + <code>el-form-item</code></td></tr>
+  <tr><td>label 位置</td><td>右侧（<code>label-width="100px"</code> 或按需）</td></tr>
+  <tr><td>label 字号</td><td>14px / 400 / #606266</td></tr>
+  <tr><td>输入框尺寸</td><td><code>size="default"</code>（高度 32px）</td></tr>
+  <tr><td>输入框圆角</td><td>4px（Element Plus 默认）</td></tr>
+  <tr><td>必填标记</td><td>红色 * 号（Element Plus 默认）</td></tr>
+  <tr><td>placeholder</td><td>以 <code>…</code> 结尾并给示例，如"请输入邮箱…"</td></tr>
+  <tr><td>校验提示</td><td>行内红色文字，focus 第一个错误字段</td></tr>
+  <tr><td>提交按钮</td><td>提交期间 disabled + loading 图标</td></tr>
+  <tr><td>表单间距</td><td>el-form-item margin-bottom 18px</td></tr>
+  <tr><td>弹窗表单</td><td>宽度 500-600px / label-width 100-120px</td></tr>
+</table>
+
+<div class="callout callout-info">
+  <strong>可访问性要求：</strong>所有 <code>el-input</code> 需设置 <code>name</code> 和 <code>autocomplete</code> 属性；邮箱/用户名输入设 <code>spellcheck="false"</code>。
+</div>
+</section>
+
+<!-- ============================================================ -->
+<!-- 8. 按钮规范 -->
+<!-- ============================================================ -->
+<section>
+<h2>8. 按钮规范</h2>
+
+<table class="spec-table">
+  <tr><th>类型</th><th>样式</th><th>用途</th></tr>
+  <tr><td>主要 <code>type="primary"</code></td><td>蓝底白字 #409EFF</td><td>提交/创建/确认</td></tr>
+  <tr><td>成功 <code>type="success"</code></td><td>绿底白字 #67C23A</td><td>通过/审批同意</td></tr>
+  <tr><td>警告 <code>type="warning"</code></td><td>橙底白字 #E6A23C</td><td>退回/提醒</td></tr>
+  <tr><td>危险 <code>type="danger"</code></td><td>红底白字 #F56C6C</td><td>删除/驳回/撤销</td></tr>
+  <tr><td>默认 default</td><td>白底蓝边</td><td>取消/关闭</td></tr>
+  <tr><td>文字 <code>link</code></td><td>蓝色文字无边框</td><td>表格内操作/查看详情</td></tr>
+  <tr><td>图标按钮</td><td>仅图标，须加 <code>aria-label</code></td><td>折叠/关闭/刷新</td></tr>
+</table>
+
+<h3>按钮规则</h3>
+<ul>
+  <li>每个页面/弹窗仅 1 个 primary 主按钮</li>
+  <li>危险操作必须二次确认（ElMessageBox.confirm）</li>
+  <li>提交期间按钮 disabled + loading，防止重复提交</li>
+  <li>按钮文字使用动词+名词，如"创建项目""保存修改""删除文件"</li>
+  <li>hover 状态加深 10% 亮度</li>
+  <li>所有按钮需有 <code>:focus-visible</code> 可见焦点环</li>
+</ul>
+</section>
+
+<!-- ============================================================ -->
+<!-- 9. 状态标签规范 -->
+<!-- ============================================================ -->
+<section>
+<h2>9. 状态标签规范</h2>
+
+<h3>任务状态</h3>
+<div class="tag-demo">
+  <span class="el-tag-equivalent" style="background:#F4F4F5;color:#909399;border-color:#E9E9EB">待办 todo</span>
+  <span class="el-tag-equivalent" style="background:#ECF5FF;color:#409EFF;border-color:#D9ECFF">进行中 doing</span>
+  <span class="el-tag-equivalent" style="background:#FDF6EC;color:#E6A23C;border-color:#FAECD8">待审核 pending_review</span>
+  <span class="el-tag-equivalent" style="background:#F0F9EB;color:#67C23A;border-color:#E1F3D8">已完成 done</span>
+  <span class="el-tag-equivalent" style="background:#FEF0F0;color:#F56C6C;border-color:#FDE2E2">已逾期 overdue</span>
+  <span class="el-tag-equivalent" style="background:#F4F4F5;color:#909399;border-color:#E9E9EB">已暂停 paused</span>
+</div>
+
+<h3>用户角色</h3>
+<div class="tag-demo">
+  <span class="el-tag-equivalent" style="background:#FEF0F0;color:#F56C6C;border-color:#FDE2E2">系统管理员 sys_admin</span>
+  <span class="el-tag-equivalent" style="background:#FDF6EC;color:#E6A23C;border-color:#FAECD8">老师 teacher</span>
+  <span class="el-tag-equivalent" style="background:#F4F4F5;color:#909399;border-color:#E9E9EB">普通成员 member</span>
+  <span class="el-tag-equivalent" style="background:#F0F9EB;color:#67C23A;border-color:#E1F3D8">敏感审批人 sens_approver</span>
+</div>
+
+<h3>文件权限</h3>
+<div class="tag-demo">
+  <span class="el-tag-equivalent" style="background:#F0F9EB;color:#67C23A;border-color:#E1F3D8">公开 public</span>
+  <span class="el-tag-equivalent" style="background:#ECF5FF;color:#409EFF;border-color:#D9ECFF">内部 internal</span>
+  <span class="el-tag-equivalent" style="background:#FEF0F0;color:#F56C6C;border-color:#FDE2E2">敏感 sensitive</span>
+</div>
+
+<h3>IP 状态色块</h3>
+<table class="spec-table">
+  <tr><th>状态区间</th><th>颜色</th><th>语义</th></tr>
+  <tr><td>draft → submitted</td><td>灰色 #909399</td><td>草稿/待提交</td></tr>
+  <tr><td>under_review → leader_review</td><td>蓝色 #409EFF</td><td>审核中</td></tr>
+  <tr><td>returned</td><td>红色 #F56C6C</td><td>退回修改</td></tr>
+  <tr><td>teacher_confirmed → filed</td><td>绿色 #67C23A</td><td>已完成/归档</td></tr>
+  <tr><td>objection</td><td>橙色 #E6A23C</td><td>异议处理中</td></tr>
+</table>
+</section>
+
+<!-- ============================================================ -->
+<!-- 10. 空状态规范 -->
+<!-- ============================================================ -->
+<section>
+<h2>10. 空状态规范</h2>
+
+<table class="spec-table">
+  <tr><th>属性</th><th>规范</th></tr>
+  <tr><td>组件</td><td><code>EmptyState.vue</code> 统一封装</td></tr>
+  <tr><td>图标</td><td>60px / #C0C4CC / 装饰性（<code>aria-hidden="true"</code>）</td></tr>
+  <tr><td>文字</td><td>14px / #909399 / 居中</td></tr>
+  <tr><td>内边距</td><td>40px 20px</td></tr>
+  <tr><td>可选操作</td><td>底部 slot="action" 放置引导按钮</td></tr>
+  <tr><td>图标映射</td><td>按场景选择：FolderOpened(数据)/Calendar(日历)/Document(文档)/Trophy(贡献)/Bell(通知)/CircleCheck(无风险)</td></tr>
+  <tr><td>禁止</td><td>不使用 <code>undefined</code> / 不显示空白区域 / 不使用 el-empty 默认样式</td></tr>
+</table>
+</section>
+
+<!-- ============================================================ -->
+<!-- 11. Dashboard 数据卡片规范 -->
+<!-- ============================================================ -->
+<section>
+<h2>11. Dashboard 数据卡片规范</h2>
+
+<table class="spec-table">
+  <tr><th>属性</th><th>规范</th></tr>
+  <tr><td>布局</td><td>5 列等宽（<code>:lg="24/5"</code>），移动端 2 列</td></tr>
+  <tr><td>高度</td><td>统一高度，<code>height: 100%</code></td></tr>
+  <tr><td>内边距</td><td>20px</td></tr>
+  <tr><td>圆角</td><td>10px</td></tr>
+  <tr><td>图标区</td><td>52x52px 圆角 12px，渐变背景，白色图标</td></tr>
+  <tr><td>数值</td><td>22px / 700 / #303133 / <code>tabular-nums</code> / <code>white-space: nowrap</code></td></tr>
+  <tr><td>标签</td><td>13px / 400 / #909399</td></tr>
+  <tr><td>hover</td><td><code>translateY(-3px)</code> + 阴影加深</td></tr>
+  <tr><td>过渡</td><td><code>transition: transform 0.2s ease</code>（不使用 <code>transition: all</code>）</td></tr>
+  <tr><td>移动端</td><td>图标 42px / 数值 18px / 标签 12px / 内边距 14px</td></tr>
+</table>
+
+<div class="callout callout-warn">
+  <strong>审计发现：</strong>当前 <code>DashboardView.vue:1015</code> 使用 <code>transition: all 0.2s</code>，需改为 <code>transition: transform 0.2s ease, box-shadow 0.2s ease</code>。另外 <code>DashboardView.vue:45</code> "已延期任务" 和 <code>:573</code> "延期" 应改为 "已逾期"。
+</div>
+</section>
+
+<!-- ============================================================ -->
+<!-- 12. 项目详情页视觉规范 -->
+<!-- ============================================================ -->
+<section>
+<h2>12. 项目详情页视觉规范</h2>
+
+<table class="spec-table">
+  <tr><th>区域</th><th>规范</th></tr>
+  <tr><td>整体定位</td><td>项目档案 — 信息分区清晰，层次分明</td></tr>
+  <tr><td>顶部信息</td><td>项目名称(H2) + 状态标签 + 阶段进度条 + 基本信息卡片</td></tr>
+  <tr><td>阶段步骤条</td><td><code>el-steps</code>，已完成步骤用绿色，当前步骤用蓝色脉冲动画</td></tr>
+  <tr><td>Tab 导航</td><td>概述/任务/文件/经费/比赛/成员/排序 — Tab 间距 16px</td></tr>
+  <tr><td>内容区</td><td>每个 Tab 内容用白色卡片包裹，内边距 20px</td></tr>
+  <tr><td>文件 Tab</td><td>文件列表 + 上传区，权限标签用三色体系</td></tr>
+  <tr><td>经费 Tab</td><td>预算/支出双表格，收支对比卡片</td></tr>
+  <tr><td>比赛 Tab</td><td>关联比赛列表，无关联时显示 EmptyState</td></tr>
+  <tr><td>移动端</td><td>Tab 改为横向滚动，内容卡片间距 12px</td></tr>
+</table>
+</section>
+
+<!-- ============================================================ -->
+<!-- 13. 经费页"公开透明"视觉规范 -->
+<!-- ============================================================ -->
+<section>
+<h2>13. 经费页"公开透明"视觉规范</h2>
+
+<table class="spec-table">
+  <tr><th>属性</th><th>规范</th></tr>
+  <tr><td>视觉主题</td><td>公开透明 — 收支对比清晰，数据一目了然</td></tr>
+  <tr><td>顶部概览</td><td>3 卡片：总收入(绿色) / 总支出(红色) / 结余(蓝色)，数值用 tabular-nums</td></tr>
+  <tr><td>收支对比</td><td>并列表格或卡片，预算用绿色条，支出用红色条，视觉对比</td></tr>
+  <tr><td>超支标记</td><td>负数红色加粗 + 危险标签</td></tr>
+  <tr><td>票据展示</td><td>缩略图网格 + 点击放大，已审核绿色标记</td></tr>
+  <tr><td>权限提示</td><td>页面顶部绿色 Alert："经费信息公开透明，全体成员可查看"</td></tr>
+  <tr><td>筛选区</td><td>精简为后端支持的字段：项目/分类/日期，空值不发送</td></tr>
+  <tr><td>导出按钮</td><td>右上角，Excel 导出 + 时间范围选择</td></tr>
+</table>
+</section>
+
+<!-- ============================================================ -->
+<!-- 14. 知识产权页"责任追踪"视觉规范 -->
+<!-- ============================================================ -->
+<section>
+<h2>14. 知识产权页"责任追踪"视觉规范</h2>
+
+<table class="spec-table">
+  <tr><th>属性</th><th>规范</th></tr>
+  <tr><td>视觉主题</td><td>责任追踪 — 状态流转可视化，退回责任清晰</td></tr>
+  <tr><td>状态流转</td><td>横向时间轴/步骤条，14 个状态节点，当前节点高亮</td></tr>
+  <tr><td>退回标记</td><td>红色虚线连接 + "退回至 XXX" 标签 + 责任人头像</td></tr>
+  <tr><td>贡献者列表</td><td>头像 + 姓名 + 贡献类型标签，权重进度条</td></tr>
+  <tr><td>待办提醒</td><td>卡片式待办，左侧色条标记类型（撰写蓝/退回红/审核橙/确认绿）</td></tr>
+  <tr><td>截止时间</td><td>标签色递进：>3天灰色 / ≤3天橙色 / 已过期红色</td></tr>
+  <tr><td>状态进度条</td><td><code>el-progress</code>，百分比按 step/10 计算，颜色随状态变化</td></tr>
+</table>
+</section>
+
+<!-- ============================================================ -->
+<!-- 15. 敏感资料页"安全审批"视觉规范 -->
+<!-- ============================================================ -->
+<section>
+<h2>15. 敏感资料页"安全审批"视觉规范</h2>
+
+<table class="spec-table">
+  <tr><th>属性</th><th>规范</th></tr>
+  <tr><td>视觉主题</td><td>安全审批 — 锁/盾图标，脱敏展示，审批状态色块</td></tr>
+  <tr><td>资料列表</td><td>类型标签彩色 + 脱敏值（masked_value）+ 权限标识</td></tr>
+  <tr><td>查看弹窗</td><td>遮罩层 + "点击查看明文" + 倒计时警示条 + 自动关闭</td></tr>
+  <tr><td>倒计时</td><td>橙色 Alert 剩余时间 / 红色 Alert 时间到自动隐藏</td></tr>
+  <tr><td>审批操作</td><td>通过(绿色按钮) / 驳回(红色按钮)，有效期选择 1-72 小时</td></tr>
+  <tr><td>安全提示</td><td>页面顶部蓝色 Alert："敏感资料已加密存储，查看需审批授权"</td></tr>
+  <tr><td>申请列表</td><td>状态色块：待审批(橙) / 已通过(绿) / 已驳回(红) / 已过期(灰)</td></tr>
+  <tr><td>明文区</td><td>等宽字体 + 背景微灰 + 可选复制按钮（记录操作日志）</td></tr>
+</table>
+</section>
+
+<!-- ============================================================ -->
+<!-- 16. 移动端适配规范 -->
+<!-- ============================================================ -->
+<section>
+<h2>16. 移动端适配规范</h2>
+
+<table class="spec-table">
+  <tr><th>属性</th><th>规范</th></tr>
+  <tr><td>布局</td><td>顶部标题栏(50px) + 内容区(flex:1) + 底部 Tab(56px)</td></tr>
+  <tr><td>断点</td><td>768px 以下切换 MobileLayout</td></tr>
+  <tr><td>底部 Tab</td><td>4 个：首页/项目/通知/我的，图标 22px + 文字 11px</td></tr>
+  <tr><td>更多菜单</td><td>右侧滑出 Drawer，含全部菜单 + 退出登录</td></tr>
+  <tr><td>表格转卡片</td><td>768px 以下表格行转为 flex 卡片，<code>data-label</code> 显示列名</td></tr>
+  <tr><td>统计卡片</td><td>2 列布局，图标缩小至 42px</td></tr>
+  <tr><td>触摸友好</td><td>按钮/Tab 最小点击区域 44x44px</td></tr>
+  <tr><td>滚动</td><td><code>-webkit-overflow-scrolling: touch</code> + <code>overscroll-behavior: contain</code></td></tr>
+  <tr><td>安全区域</td><td>底部 Tab 需 <code>padding-bottom: env(safe-area-inset-bottom)</code></td></tr>
+  <tr><td>弹窗</td><td>全宽弹窗或底部抽屉，<code>overscroll-behavior: contain</code></td></tr>
+  <tr><td>禁用</td><td>不使用 <code>user-scalable=no</code>，允许用户缩放</td></tr>
+</table>
+</section>
+
+<div class="divider"></div>
+
+<!-- ============================================================ -->
+<!-- 结论 -->
+<!-- ============================================================ -->
+<section>
+<h2>结论与建议</h2>
+
+<h3>1. 推荐设计方向</h3>
+<ul>
+  <li><strong>保持 Element Plus 体系</strong>：色彩/组件/交互沿用 Element Plus，仅微调 CSS 变量和局部样式</li>
+  <li><strong>渐变数据卡片</strong>：Dashboard 统计卡片保留渐变背景，强化"驾驶舱"感</li>
+  <li><strong>左侧深色导航栏</strong>：保持 #304156 深色侧边栏，与白色内容区形成对比</li>
+  <li><strong>微交互动效</strong>：hover translateY + 阴影变化，快速轻量，遵守 prefers-reduced-motion</li>
+  <li><strong>统一 EmptyState</strong>：所有空列表使用 EmptyState 组件，带图标和引导</li>
+  <li><strong>可访问性修复</strong>：P3 美化同时修复审计发现的 22 项 a11y 问题</li>
+</ul>
+
+<h3>2. 不推荐的设计方向</h3>
+<ul>
+  <li><strong>不引入 Tailwind CSS</strong>：当前项目无 Tailwind，不为此做迁移</li>
+  <li><strong>不引入 shadcn/ui</strong>：保持 Element Plus，不混用组件库</li>
+  <li><strong>不做暗色模式</strong>：当前阶段仅亮色，暗色模式留待 v1.0</li>
+  <li><strong>不做大重构</strong>：不大改布局结构，不拆分组件层级</li>
+  <li><strong>不新增动画库</strong>：不引入 GSAP/Framer Motion，仅用 CSS transition</li>
+  <li><strong>不改 Element Plus 主题覆盖方式</strong>：保持 SCSS 变量 + CSS 变量方式</li>
+</ul>
+
+<h3>3. P3 第一批页面设计重点</h3>
+<table class="spec-table">
+  <tr><th>页面</th><th>设计重点</th></tr>
+  <tr><td>登录页</td><td>左侧品牌渐变区优化文案+图标，右侧表单加 name/autocomplete/spellcheck，placeholder 加省略号</td></tr>
+  <tr><td>Dashboard</td><td>"已延期"改"已逾期"，transition:all 改具体属性，统计数字加 tabular-nums，加 prefers-reduced-motion</td></tr>
+  <tr><td>PCLayout</td><td>折叠按钮加 aria-label，avatar 加 alt，移除空 handleResize，加 prefers-reduced-motion</td></tr>
+  <tr><td>MobileLayout</td><td>菜单按钮加 aria-label，Tab 改 button 语义，badge 动态化，drawer 加 overscroll-behavior</td></tr>
+  <tr><td>全局样式</td><td>variables.scss 补全圆角/阴影/间距 CSS 变量，index.scss 补 Firefox 滚动条</td></tr>
+</table>
+
+<h3>4. 是否建议进入 theme-factory 阶段</h3>
+<div class="callout callout-success">
+  <strong>建议进入。</strong>当前规范已明确色彩/字体/卡片/表格/标签等体系，可以用 <code>theme-factory</code> 技能生成一套主题 token 文件（SCSS 变量 + CSS 变量），作为 P3 美化的样式基础。但需注意：
+  <ul style="margin-top:8px;">
+    <li>仅生成 token 文件（变量定义），不替换现有组件结构</li>
+    <li>主题需与 Element Plus 兼容（不覆盖 Element Plus 内部变量）</li>
+    <li>生成后需通过 vue-tsc + npm run build 验证</li>
+    <li>先确认 P3 第一批方案后再执行 theme-factory</li>
+  </ul>
+</div>
+
+</section>
+
+</div>
+</body>
+</html>

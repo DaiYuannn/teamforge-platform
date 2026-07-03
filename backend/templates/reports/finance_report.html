@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>{{ title }}</title>
+    <style>
+        body { font-family: "微软雅黑", "Microsoft YaHei", sans-serif; font-size: 12px; color: #333; margin: 30px; }
+        h1 { color: #2c3e50; font-size: 22px; border-bottom: 2px solid #4472C4; padding-bottom: 8px; }
+        h2 { color: #4472C4; font-size: 16px; margin-top: 24px; border-left: 4px solid #4472C4; padding-left: 8px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        th { background-color: #4472C4; color: #fff; padding: 8px; text-align: left; font-size: 12px; }
+        td { border: 1px solid #ddd; padding: 6px 8px; font-size: 12px; }
+        tr:nth-child(even) { background-color: #f8f9fa; }
+        .summary { background-color: #f0f4ff; padding: 12px; border-radius: 4px; margin: 10px 0; }
+        .summary span { display: inline-block; margin-right: 30px; }
+        .summary .label { color: #666; }
+        .summary .value { font-weight: bold; color: #2c3e50; font-size: 14px; }
+        .footer { margin-top: 40px; text-align: right; color: #888; font-size: 11px; border-top: 1px solid #eee; padding-top: 8px; }
+        .empty { color: #999; font-style: italic; }
+    </style>
+</head>
+<body>
+    <h1>{{ title }}</h1>
+
+    <div class="summary">
+        <span><span class="label">奖金总额：</span><span class="value">{{ total_bonus }} 元</span></span>
+        <span><span class="label">已用金额：</span><span class="value">{{ total_used }} 元</span></span>
+        <span><span class="label">剩余金额：</span><span class="value">{{ total_remaining }} 元</span></span>
+    </div>
+
+    <h2>一、经费预算</h2>
+    {% if budgets %}
+    <table>
+        <tr><th>项目名称</th><th>奖金总额</th><th>其他收入</th><th>已用金额</th><th>待报销</th><th>剩余金额</th><th>状态</th><th>统计周期</th></tr>
+        {% for b in budgets %}
+        <tr>
+            <td>{{ b.project.name|default:"" }}</td>
+            <td>{{ b.bonus_amount }}</td>
+            <td>{{ b.other_income }}</td>
+            <td>{{ b.used_amount }}</td>
+            <td>{{ b.pending_reimbursement }}</td>
+            <td>{{ b.remaining_amount }}</td>
+            <td>{{ b.get_status_display }}</td>
+            <td>{{ b.period }}</td>
+        </tr>
+        {% endfor %}
+    </table>
+    {% else %}
+    <p class="empty">暂无经费预算记录</p>
+    {% endif %}
+
+    <h2>二、经费明细</h2>
+    {% if expenses %}
+    <table>
+        <tr><th>支出标题</th><th>所属项目</th><th>金额</th><th>经办人</th><th>支出日期</th><th>经费类别</th><th>用途说明</th></tr>
+        {% for e in expenses %}
+        <tr>
+            <td>{{ e.title }}</td>
+            <td>{{ e.project.name|default:"" }}</td>
+            <td>{{ e.amount }}</td>
+            <td>{{ e.spender.name|default:"" }}</td>
+            <td>{{ e.expense_date|date:"Y-m-d"|default:"" }}</td>
+            <td>{{ e.get_category_display }}</td>
+            <td>{{ e.purpose }}</td>
+        </tr>
+        {% endfor %}
+    </table>
+    {% else %}
+    <p class="empty">暂无经费明细记录</p>
+    {% endif %}
+
+    <div class="footer">报告生成时间：{% now "Y-m-d H:i" %}</div>
+</body>
+</html>

@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Team Cockpit 主题 Token 方案</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif; background: #F5F7FA; color: #303133; line-height: 1.7; }
+  .header { background: linear-gradient(135deg, #409EFF 0%, #36CFC9 100%); color: #fff; padding: 40px 32px; text-align: center; }
+  .header h1 { font-size: 26px; font-weight: 700; }
+  .header .meta { font-size: 14px; opacity: 0.85; margin-top: 6px; }
+  .body { max-width: 960px; margin: 0 auto; padding: 32px 24px; }
+  .body h2 { font-size: 20px; font-weight: 700; padding-bottom: 10px; margin: 32px 0 16px; border-bottom: 2px solid #409EFF; }
+  .body h3 { font-size: 16px; font-weight: 600; margin: 20px 0 10px; color: #303133; }
+  .body p { font-size: 14px; color: #606266; margin-bottom: 8px; }
+  .body ul { padding-left: 20px; margin-bottom: 12px; }
+  .body li { font-size: 14px; color: #606266; margin-bottom: 4px; }
+  .code-block { background: #1e1e1e; color: #d4d4d4; border-radius: 8px; padding: 20px 24px; font-family: 'Cascadia Code', 'Fira Code', Consolas, monospace; font-size: 13px; line-height: 1.65; overflow-x: auto; margin: 12px 0; white-space: pre; }
+  .code-block .c { color: #6A9955; }
+  .code-block .k { color: #569CD6; }
+  .code-block .s { color: #CE9178; }
+  .code-block .n { color: #B5CEA8; }
+  .code-block .v { color: #9CDCFE; }
+  .code-block .p { color: #D4D4D4; }
+  .code-block .m { color: #DCDCAA; }
+  .callout { border-radius: 8px; padding: 14px 18px; margin: 12px 0; font-size: 13px; }
+  .callout-info { background: #ECF5FF; border-left: 4px solid #409EFF; color: #337ECC; }
+  .callout-warn { background: #FDF6EC; border-left: 4px solid #E6A23C; color: #B88230; }
+  .callout-danger { background: #FEF0F0; border-left: 4px solid #F56C6C; color: #C45656; }
+  .callout-success { background: #F0F9EB; border-left: 4px solid #67C23A; color: #5FA83E; }
+  .color-row { display: flex; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px solid #EBEEF5; }
+  .color-swatch { width: 40px; height: 40px; border-radius: 8px; flex-shrink: 0; box-shadow: 0 2px 6px rgba(0,0,0,0.1); }
+  .color-info { flex: 1; }
+  .color-name { font-size: 14px; font-weight: 600; color: #303133; }
+  .color-hex { font-size: 12px; color: #909399; font-family: monospace; }
+  .color-usage { font-size: 12px; color: #909399; }
+  .keep-badge { display: inline-block; padding: 1px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; margin-left: 8px; }
+  .keep-badge-existing { background: #E1F3D8; color: #5FA83E; }
+  .keep-badge-new { background: #ECF5FF; color: #337ECC; }
+  table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 13px; }
+  th { background: #F0F2F5; color: #303133; font-weight: 600; padding: 10px 12px; text-align: left; border-bottom: 2px solid #DCDFE6; }
+  td { padding: 10px 12px; border-bottom: 1px solid #EBEEF5; color: #606266; }
+  .divider { height: 1px; background: #EBEEF5; margin: 24px 0; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Team Cockpit — 主题 Token 方案</h1>
+  <div class="meta">团队驾驶舱 · 科技蓝/青蓝系 · v0.8.1-stable · 2026-07-02</div>
+</div>
+
+<div class="body">
+
+<section>
+<h2>1. 推荐主题 Token 总览</h2>
+<p>基于项目需求定制的 <strong>Team Cockpit</strong> 主题，核心设计原则：</p>
+<ul>
+  <li><strong>保留</strong>所有现有 SCSS 变量名和值，不删除、不重命名</li>
+  <li><strong>新增</strong>模块专属色、渐变色、扩展圆角/阴影/间距体系</li>
+  <li><strong>兼容</strong> Element Plus，不覆盖 Element Plus 内部变量</li>
+  <li><strong>新增</strong> CSS 变量（<code>:root</code>），供 Vue 组件内联引用</li>
+</ul>
+
+<h3>主色 + 辅助色色板</h3>
+<div class="color-row"><div class="color-swatch" style="background:#409EFF"></div><div class="color-info"><div class="color-name">主色 Primary <span class="keep-badge keep-badge-existing">保留</span></div><div class="color-hex">#409EFF</div><div class="color-usage">品牌 / 链接 / 主按钮 / 导航激活</div></div></div>
+<div class="color-row"><div class="color-swatch" style="background:#337ECC"></div><div class="color-info"><div class="color-name">主色深 Primary Dark <span class="keep-badge keep-badge-new">新增</span></div><div class="color-hex">#337ECC</div><div class="color-usage">hover / active 加深</div></div></div>
+<div class="color-row"><div class="color-swatch" style="background:#67C23A"></div><div class="color-info"><div class="color-name">成功 Success <span class="keep-badge keep-badge-existing">保留</span></div><div class="color-hex">#67C23A</div><div class="color-usage">已完成 / 通过 / 正常</div></div></div>
+<div class="color-row"><div class="color-swatch" style="background:#E6A23C"></div><div class="color-info"><div class="color-name">警告 Warning <span class="keep-badge keep-badge-existing">保留</span></div><div class="color-hex">#E6A23C</div><div class="color-usage">待处理 / 提醒 / 即将截止</div></div></div>
+<div class="color-row"><div class="color-swatch" style="background:#F56C6C"></div><div class="color-info"><div class="color-name">危险 Danger <span class="keep-badge keep-badge-existing">保留</span></div><div class="color-hex">#F56C6C</div><div class="color-usage">逾期 / 驳回 / 风险</div></div></div>
+<div class="color-row"><div class="color-swatch" style="background:#909399"></div><div class="color-info"><div class="color-name">信息 Info <span class="keep-badge keep-badge-existing">保留</span></div><div class="color-hex">#909399</div><div class="color-usage">待办 / 辅助 / 禁用</div></div></div>
+
+<h3>模块专属色</h3>
+<div class="color-row"><div class="color-swatch" style="background:#7C3AED"></div><div class="color-info"><div class="color-name">知识产权 IP <span class="keep-badge keep-badge-new">新增</span></div><div class="color-hex">#7C3AED</div><div class="color-usage">成果 / 责任追踪 / IP 标签</div></div></div>
+<div class="color-row"><div class="color-swatch" style="background:#1E40AF"></div><div class="color-info"><div class="color-name">敏感资料 Sensitive <span class="keep-badge keep-badge-new">新增</span></div><div class="color-hex">#1E40AF</div><div class="color-usage">审批 / 安全 / 受控访问</div></div></div>
+<div class="color-row"><div class="color-swatch" style="background:#059669"></div><div class="color-info"><div class="color-name">经费 Finance <span class="keep-badge keep-badge-new">新增</span></div><div class="color-hex">#059669</div><div class="color-usage">公开透明 / 收支</div></div></div>
+
+<h3>渐变色（Dashboard 数据卡片）</h3>
+<table>
+  <tr><th>Token</th><th>值</th><th>用途</th></tr>
+  <tr><td>品牌渐变</td><td><code>linear-gradient(135deg, #409EFF 0%, #36CFC9 100%)</code></td><td>登录页 / Logo 区</td></tr>
+  <tr><td>蓝色卡片</td><td><code>linear-gradient(135deg, #409EFF, #36CFC9)</code></td><td>项目总数统计</td></tr>
+  <tr><td>绿色卡片</td><td><code>linear-gradient(135deg, #67C23A, #95DE64)</code></td><td>进行中统计</td></tr>
+  <tr><td>橙色卡片</td><td><code>linear-gradient(135deg, #E6A23C, #FFD591)</code></td><td>待办统计</td></tr>
+  <tr><td>红色卡片</td><td><code>linear-gradient(135deg, #F56C6C, #FF7875)</code></td><td>逾期统计</td></tr>
+  <tr><td>紫色卡片</td><td><code>linear-gradient(135deg, #7C3AED, #C39BD3)</code></td><td>经费统计</td></tr>
+  <tr><td>靛蓝卡片</td><td><code>linear-gradient(135deg, #1E40AF, #3B82F6)</code></td><td>敏感资料统计</td></tr>
+</table>
+</section>
+
+<div class="divider"></div>
+
+<section>
+<h2>2. 建议写入 variables.scss 的内容</h2>
+<p>以下内容在现有文件基础上<strong>追加</strong>，不修改、不删除任何现有变量：</p>
+
+<div class="code-block"><span class="c">// ============================================</span>
+<span class="c">// Team Cockpit 主题 Token（v0.8.1-stable 追加）</span>
+<span class="c">// 在现有变量基础上扩展，不修改原有变量</span>
+<span class="c">// ============================================</span>
+
+<span class="c">// --- 主色扩展 ---</span>
+<span class="v">$primary-dark</span>: <span class="n">#337ECC</span>;
+<span class="v">$primary-light</span>: <span class="n">#66B1FF</span>;
+<span class="v">$primary-lighter</span>: <span class="n">#ECF5FF</span>;
+<span class="v">$primary-rgb</span>: <span class="n">64, 158, 255</span>;
+
+<span class="c">// --- 辅助色浅底 ---</span>
+<span class="v">$success-light</span>: <span class="n">#E1F3D8</span>;
+<span class="v">$warning-light</span>: <span class="n">#FAECD8</span>;
+<span class="v">$danger-light</span>: <span class="n">#FDE2E2</span>;
+<span class="v">$info-light</span>: <span class="n">#E9E9EB</span>;
+
+<span class="c">// --- 模块专属色 ---</span>
+<span class="v">$ip-color</span>: <span class="n">#7C3AED</span>;
+<span class="v">$ip-light</span>: <span class="n">#F3EEFF</span>;
+<span class="v">$sensitive-color</span>: <span class="n">#1E40AF</span>;
+<span class="v">$sensitive-light</span>: <span class="n">#DBEAFE</span>;
+<span class="v">$finance-color</span>: <span class="n">#059669</span>;
+<span class="v">$finance-light</span>: <span class="n">#D1FAE5</span>;
+
+<span class="c">// --- 背景/表格扩展 ---</span>
+<span class="v">$bg-card</span>: <span class="n">#FFFFFF</span>;
+<span class="v">$bg-table-header</span>: <span class="n">#F5F7FA</span>;
+<span class="v">$bg-table-stripe</span>: <span class="n">#FAFAFA</span>;
+
+<span class="c">// --- 侧边栏扩展 ---</span>
+<span class="v">$sidebar-bg-dark</span>: <span class="n">#2B3A4D</span>;
+<span class="v">$sidebar-hover-bg</span>: <span class="n">#263445</span>;
+
+<span class="c">// --- 渐变色 ---</span>
+<span class="v">$gradient-brand</span>: <span class="k">linear-gradient</span>(<span class="n">135deg</span>, <span class="n">#409EFF</span> <span class="n">0%</span>, <span class="n">#36CFC9</span> <span class="n">100%</span>);
+<span class="v">$gradient-blue</span>: <span class="k">linear-gradient</span>(<span class="n">135deg</span>, <span class="n">#409EFF</span>, <span class="n">#36CFC9</span>);
+<span class="v">$gradient-green</span>: <span class="k">linear-gradient</span>(<span class="n">135deg</span>, <span class="n">#67C23A</span>, <span class="n">#95DE64</span>);
+<span class="v">$gradient-orange</span>: <span class="k">linear-gradient</span>(<span class="n">135deg</span>, <span class="n">#E6A23C</span>, <span class="n">#FFD591</span>);
+<span class="v">$gradient-red</span>: <span class="k">linear-gradient</span>(<span class="n">135deg</span>, <span class="n">#F56C6C</span>, <span class="n">#FF7875</span>);
+<span class="v">$gradient-purple</span>: <span class="k">linear-gradient</span>(<span class="n">135deg</span>, <span class="n">#7C3AED</span>, <span class="n">#C39BD3</span>);
+<span class="v">$gradient-indigo</span>: <span class="k">linear-gradient</span>(<span class="n">135deg</span>, <span class="n">#1E40AF</span>, <span class="n">#3B82F6</span>);
+
+<span class="c">// --- 圆角扩展 ---</span>
+<span class="v">$radius-xs</span>: <span class="n">4px</span>;
+<span class="v">$radius-sm</span>: <span class="n">6px</span>;
+<span class="v">$radius-lg</span>: <span class="n">12px</span>;
+<span class="v">$radius-pill</span>: <span class="n">999px</span>;
+
+<span class="c">// --- 阴影扩展 ---</span>
+<span class="v">$shadow-xs</span>: <span class="n">0</span> <span class="n">1px</span> <span class="n">2px</span> <span class="k">rgba</span>(<span class="n">0</span>, <span class="n">0</span>, <span class="n">0</span>, <span class="n">0.04</span>);
+<span class="v">$shadow-sm</span>: <span class="n">0</span> <span class="n">2px</span> <span class="n">8px</span> <span class="k">rgba</span>(<span class="n">0</span>, <span class="n">0</span>, <span class="n">0</span>, <span class="n">0.06</span>);
+<span class="v">$shadow-lg</span>: <span class="n">0</span> <span class="n">4px</span> <span class="n">16px</span> <span class="k">rgba</span>(<span class="n">0</span>, <span class="n">0</span>, <span class="n">0</span>, <span class="n">0.12</span>);
+<span class="v">$shadow-xl</span>: <span class="n">0</span> <span class="n">8px</span> <span class="n">32px</span> <span class="k">rgba</span>(<span class="n">0</span>, <span class="n">0</span>, <span class="n">0</span>, <span class="n">0.16</span>);
+<span class="v">$shadow-primary</span>: <span class="n">0</span> <span class="n">4px</span> <span class="n">12px</span> <span class="k">rgba</span>(<span class="n">64</span>, <span class="n">158</span>, <span class="n">255</span>, <span class="n">0.15</span>);
+
+<span class="c">// --- 间距扩展 ---</span>
+<span class="v">$spacing-md</span>: <span class="n">12px</span>;
+<span class="v">$spacing-lg</span>: <span class="n">20px</span>;
+<span class="v">$page-padding-mobile</span>: <span class="n">12px</span>;
+<span class="v">$card-padding</span>: <span class="n">20px</span>;
+<span class="v">$card-padding-sm</span>: <span class="n">16px</span>;
+<span class="v">$card-gap</span>: <span class="n">16px</span>;
+
+<span class="c">// --- 字体扩展 ---</span>
+<span class="v">$font-family-mono</span>: <span class="s">'Cascadia Code'</span>, <span class="s">'Fira Code'</span>, <span class="s">'Consolas'</span>, <span class="k">monospace</span>;
+<span class="v">$font-size-xs</span>: <span class="n">12px</span>;
+<span class="v">$font-size-sm</span>: <span class="n">13px</span>;
+<span class="v">$font-size-lg</span>: <span class="n">16px</span>;
+<span class="v">$font-size-xl</span>: <span class="n">18px</span>;
+<span class="v">$font-size-2xl</span>: <span class="n">20px</span>;
+<span class="v">$font-size-3xl</span>: <span class="n">22px</span>;
+<span class="v">$font-size-4xl</span>: <span class="n">28px</span>;
+<span class="v">$font-weight-light</span>: <span class="n">300</span>;
+<span class="v">$font-weight-medium</span>: <span class="n">500</span>;
+<span class="v">$font-weight-semibold</span>: <span class="n">600</span>;
+<span class="v">$font-weight-bold</span>: <span class="n">700</span>;
+
+<span class="c">// --- 过渡扩展 ---</span>
+<span class="v">$transition-fast</span>: <span class="n">0.15s</span> <span class="k">ease</span>;
+<span class="v">$transition-base</span>: <span class="n">0.2s</span> <span class="k">ease</span>;
+<span class="v">$transition-slow</span>: <span class="n">0.3s</span> <span class="k">ease</span>;
+
+<span class="c">// --- z-index 扩展 ---</span>
+<span class="v">$z-index-dropdown</span>: <span class="n">2500</span>;</div>
+
+<div class="callout callout-warn">
+  <strong>注意：</strong>以上内容全部是<strong>追加</strong>，不修改现有第 1-59 行的任何变量。<code>$border-radius</code>、<code>$border-radius-large</code>、<code>$box-shadow</code>、<code>$box-shadow-light</code>、<code>$box-shadow-dark</code>、<code>$spacing-mini</code> 等原名保持不变。
+</div>
+</section>
+
+<div class="divider"></div>
+
+<section>
+<h2>3. 建议写入 index.scss 的内容</h2>
+<p>以下内容在现有文件基础上<strong>追加</strong>到 <code>:root</code> 块和文件末尾：</p>
+
+<h3>3.1 扩展 CSS 变量（追加到现有 :root 块）</h3>
+
+<div class="code-block"><span class="c">/* 追加到现有 :root 块 */</span>
+<span class="p">:root</span> {
+  <span class="c">/* --- 主色扩展 --- */</span>
+  <span class="m">--primary-dark</span>: <span class="n">#337ECC</span>;
+  <span class="m">--primary-light</span>: <span class="n">#66B1FF</span>;
+  <span class="m">--primary-lighter</span>: <span class="n">#ECF5FF</span>;
+  <span class="m">--primary-rgb</span>: <span class="n">64, 158, 255</span>;
+
+  <span class="c">/* --- 辅助色浅底 --- */</span>
+  <span class="m">--success-light</span>: <span class="n">#E1F3D8</span>;
+  <span class="m">--warning-light</span>: <span class="n">#FAECD8</span>;
+  <span class="m">--danger-light</span>: <span class="n">#FDE2E2</span>;
+  <span class="m">--info-light</span>: <span class="n">#E9E9EB</span>;
+
+  <span class="c">/* --- 模块专属色 --- */</span>
+  <span class="m">--ip-color</span>: <span class="n">#7C3AED</span>;
+  <span class="m">--ip-light</span>: <span class="n">#F3EEFF</span>;
+  <span class="m">--sensitive-color</span>: <span class="n">#1E40AF</span>;
+  <span class="m">--sensitive-light</span>: <span class="n">#DBEAFE</span>;
+  <span class="m">--finance-color</span>: <span class="n">#059669</span>;
+  <span class="m">--finance-light</span>: <span class="n">#D1FAE5</span>;
+
+  <span class="c">/* --- 背景/表格扩展 --- */</span>
+  <span class="m">--bg-card</span>: <span class="n">#FFFFFF</span>;
+  <span class="m">--bg-table-header</span>: <span class="n">#F5F7FA</span>;
+  <span class="m">--bg-table-stripe</span>: <span class="n">#FAFAFA</span>;
+
+  <span class="c">/* --- 圆角 --- */</span>
+  <span class="m">--radius-xs</span>: <span class="n">4px</span>;
+  <span class="m">--radius-sm</span>: <span class="n">6px</span>;
+  <span class="m">--radius-md</span>: <span class="n">8px</span>;
+  <span class="m">--radius-lg</span>: <span class="n">12px</span>;
+  <span class="m">--radius-pill</span>: <span class="n">999px</span>;
+
+  <span class="c">/* --- 阴影 --- */</span>
+  <span class="m">--shadow-xs</span>: <span class="n">0</span> <span class="n">1px</span> <span class="n">2px</span> <span class="k">rgba</span>(<span class="n">0</span>, <span class="n">0</span>, <span class="n">0</span>, <span class="n">0.04</span>);
+  <span class="m">--shadow-sm</span>: <span class="n">0</span> <span class="n">2px</span> <span class="n">8px</span> <span class="k">rgba</span>(<span class="n">0</span>, <span class="n">0</span>, <span class="n">0</span>, <span class="n">0.06</span>);
+  <span class="m">--shadow-md</span>: <span class="n">0</span> <span class="n">2px</span> <span class="n">12px</span> <span class="k">rgba</span>(<span class="n">0</span>, <span class="n">0</span>, <span class="n">0</span>, <span class="n">0.08</span>);
+  <span class="m">--shadow-lg</span>: <span class="n">0</span> <span class="n">4px</span> <span class="n">16px</span> <span class="k">rgba</span>(<span class="n">0</span>, <span class="n">0</span>, <span class="n">0</span>, <span class="n">0.12</span>);
+  <span class="m">--shadow-primary</span>: <span class="n">0</span> <span class="n">4px</span> <span class="n">12px</span> <span class="k">rgba</span>(<span class="n">64</span>, <span class="n">158</span>, <span class="n">255</span>, <span class="n">0.15</span>);
+
+  <span class="c">/* --- 渐变 --- */</span>
+  <span class="m">--gradient-brand</span>: <span class="k">linear-gradient</span>(<span class="n">135deg</span>, <span class="n">#409EFF</span> <span class="n">0%</span>, <span class="n">#36CFC9</span> <span class="n">100%</span>);
+  <span class="m">--gradient-blue</span>: <span class="k">linear-gradient</span>(<span class="n">135deg</span>, <span class="n">#409EFF</span>, <span class="n">#36CFC9</span>);
+  <span class="m">--gradient-green</span>: <span class="k">linear-gradient</span>(<span class="n">135deg</span>, <span class="n">#67C23A</span>, <span class="n">#95DE64</span>);
+  <span class="m">--gradient-orange</span>: <span class="k">linear-gradient</span>(<span class="n">135deg</span>, <span class="n">#E6A23C</span>, <span class="n">#FFD591</span>);
+  <span class="m">--gradient-red</span>: <span class="k">linear-gradient</span>(<span class="n">135deg</span>, <span class="n">#F56C6C</span>, <span class="n">#FF7875</span>);
+  <span class="m">--gradient-purple</span>: <span class="k">linear-gradient</span>(<span class="n">135deg</span>, <span class="n">#7C3AED</span>, <span class="n">#C39BD3</span>);
+  <span class="m">--gradient-indigo</span>: <span class="k">linear-gradient</span>(<span class="n">135deg</span>, <span class="n">#1E40AF</span>, <span class="n">#3B82F6</span>);
+
+  <span class="c">/* --- 字号 --- */</span>
+  <span class="m">--font-size-xs</span>: <span class="n">12px</span>;
+  <span class="m">--font-size-sm</span>: <span class="n">13px</span>;
+  <span class="m">--font-size-lg</span>: <span class="n">16px</span>;
+  <span class="m">--font-size-xl</span>: <span class="n">18px</span>;
+  <span class="m">--font-size-2xl</span>: <span class="n">20px</span>;
+  <span class="m">--font-size-3xl</span>: <span class="n">22px</span>;
+  <span class="m">--font-size-4xl</span>: <span class="n">28px</span>;
+}</div>
+
+<h3>3.2 全局样式增强（追加到文件末尾）</h3>
+
+<div class="code-block"><span class="c">/* ============================================ */</span>
+<span class="c">/* Team Cockpit 全局样式增强（追加） */</span>
+<span class="c">/* ============================================ */</span>
+
+<span class="c">/* Firefox 滚动条 */</span>
+<span class="p">*</span> {
+  <span class="k">scrollbar-width</span>: <span class="k">thin</span>;
+  <span class="k">scrollbar-color</span>: <span class="n">#C1C1C1</span> <span class="n">#F1F1F1</span>;
+}
+
+<span class="c">/* 数字列等宽对齐 */</span>
+<span class="p">.tabular-nums</span> {
+  <span class="k">font-variant-numeric</span>: <span class="k">tabular-nums</span>;
+}
+
+<span class="c">/* 标题防孤行 */</span>
+<span class="p">h1, h2, h3, h4, h5, h6</span> {
+  <span class="k">text-wrap</span>: <span class="k">balance</span>;
+}
+
+<span class="c">/* 卡片 hover 动效（遵守 reduced-motion） */</span>
+<span class="p">.card-hover</span> {
+  <span class="k">transition</span>: <span class="k">transform</span> <span class="n">0.2s</span> <span class="k">ease</span>, <span class="k">box-shadow</span> <span class="n">0.2s</span> <span class="k">ease</span>;
+  &amp;:hover {
+    <span class="k">transform</span>: <span class="k">translateY</span>(<span class="n">-2px</span>);
+    <span class="k">box-shadow</span>: <span class="k">var</span>(--shadow-lg);
+  }
+}
+
+<span class="c">/* 统计卡片通用 */</span>
+<span class="p">.stat-card</span> {
+  <span class="k">border-radius</span>: <span class="k">var</span>(--radius-lg);
+  <span class="k">padding</span>: <span class="n">20px</span>;
+  <span class="k">transition</span>: <span class="k">transform</span> <span class="n">0.2s</span> <span class="k">ease</span>, <span class="k">box-shadow</span> <span class="n">0.2s</span> <span class="k">ease</span>;
+  &amp;:hover {
+    <span class="k">transform</span>: <span class="k">translateY</span>(<span class="n">-3px</span>);
+    <span class="k">box-shadow</span>: <span class="k">var</span>(--shadow-lg);
+  }
+}
+
+<span class="c">/* 模块标题装饰条 */</span>
+<span class="p">.section-title</span> {
+  <span class="k">display</span>: <span class="k">flex</span>;
+  <span class="k">align-items</span>: <span class="k">center</span>;
+  <span class="k">gap</span>: <span class="n">8px</span>;
+  &amp;::before {
+    <span class="k">content</span>: <span class="s">''</span>;
+    <span class="k">width</span>: <span class="n">4px</span>;
+    <span class="k">height</span>: <span class="n">18px</span>;
+    <span class="k">background</span>: <span class="k">var</span>(--primary-color);
+    <span class="k">border-radius</span>: <span class="n">2px</span>;
+    <span class="k">flex-shrink</span>: <span class="n">0</span>;
+  }
+}
+
+<span class="c">/* 模块专属标题色 */</span>
+<span class="p">.section-title--ip::before</span> { <span class="k">background</span>: <span class="k">var</span>(--ip-color); }
+<span class="p">.section-title--sensitive::before</span> { <span class="k">background</span>: <span class="k">var</span>(--sensitive-color); }
+<span class="p">.section-title--finance::before</span> { <span class="k">background</span>: <span class="k">var</span>(--finance-color); }
+
+<span class="c">/* 移动端页面容器间距 */</span>
+<span class="p">@media</span> <span class="k">screen</span> <span class="k">and</span> (<span class="k">max-width</span>: <span class="n">768px</span>) {
+  <span class="p">.page-container</span> {
+    <span class="k">padding</span>: <span class="n">12px</span>;
+  }
+}
+
+<span class="c">/* 尊重用户减少动画偏好 */</span>
+<span class="p">@media</span> (<span class="k">prefers-reduced-motion</span>: <span class="k">reduce</span>) {
+  <span class="p">*, *::before, *::after</span> {
+    <span class="k">animation-duration</span>: <span class="n">0.01ms</span> <span class="k">!important</span>;
+    <span class="k">animation-iteration-count</span>: <span class="n">1</span> <span class="k">!important</span>;
+    <span class="k">transition-duration</span>: <span class="n">0.01ms</span> <span class="k">!important</span>;
+  }
+}</div>
+</section>
+
+<div class="divider"></div>
+
+<section>
+<h2>4. 哪些现有变量不能删除</h2>
+<p>以下变量被现有代码引用，<strong>绝对不能删除或重命名</strong>：</p>
+
+<h3>SCSS 变量（variables.scss 第 1-59 行全部保留）</h3>
+<table>
+  <tr><th>变量名</th><th>值</th><th>被引用位置</th></tr>
+  <tr><td><code>$primary-color</code></td><td>#409EFF</td><td>多处组件 / Element Plus 覆盖</td></tr>
+  <tr><td><code>$success-color</code></td><td>#67C23A</td><td>标签 / 状态色</td></tr>
+  <tr><td><code>$warning-color</code></td><td>#E6A23C</td><td>标签 / 状态色</td></tr>
+  <tr><td><code>$danger-color</code></td><td>#F56C6C</td><td>标签 / 状态色</td></tr>
+  <tr><td><code>$info-color</code></td><td>#909399</td><td>标签 / 状态色</td></tr>
+  <tr><td><code>$bg-color</code> ~ <code>$bg-color-dark</code></td><td>3 个背景色</td><td>布局 / 卡片</td></tr>
+  <tr><td><code>$text-primary</code> ~ <code>$text-placeholder</code></td><td>4 个文字色</td><td>全局文字</td></tr>
+  <tr><td><code>$border-color</code> ~ <code>$border-color-lighter</code></td><td>3 个边框色</td><td>表格 / 输入框</td></tr>
+  <tr><td><code>$sidebar-width</code> / <code>-collapsed-width</code></td><td>220px / 64px</td><td>PCLayout 布局</td></tr>
+  <tr><td><code>$sidebar-bg</code> / <code>-text</code> / <code>-active-text</code></td><td>3 个侧边栏色</td><td>PCLayout 样式</td></tr>
+  <tr><td><code>$spacing-mini</code> ~ <code>$spacing-xl</code></td><td>5 个间距</td><td>多处间距</td></tr>
+  <tr><td><code>$border-radius-small</code> / <code>$border-radius</code> / <code>-large</code></td><td>3 个圆角</td><td>卡片 / 按钮</td></tr>
+  <tr><td><code>$box-shadow</code> / <code>-light</code> / <code>-dark</code></td><td>3 个阴影</td><td>卡片 / 弹窗</td></tr>
+  <tr><td><code>$z-index-header</code> ~ <code>$z-index-popover</code></td><td>4 个层级</td><td>布局层级</td></tr>
+  <tr><td><code>$breakpoint-mobile</code></td><td>768px</td><td>响应式断点</td></tr>
+</table>
+
+<h3>CSS 变量（index.scss :root 块全部保留）</h3>
+<table>
+  <tr><th>变量名</th><th>被引用位置</th></tr>
+  <tr><td><code>--primary-color</code></td><td>组件内联样式</td></tr>
+  <tr><td><code>--success-color</code></td><td>组件内联样式</td></tr>
+  <tr><td><code>--warning-color</code></td><td>组件内联样式</td></tr>
+  <tr><td><code>--danger-color</code></td><td>组件内联样式</td></tr>
+  <tr><td><code>--info-color</code></td><td>组件内联样式</td></tr>
+  <tr><td><code>--bg-color</code></td><td>页面背景</td></tr>
+  <tr><td><code>--text-primary</code> ~ <code>--text-secondary</code></td><td>文字色</td></tr>
+  <tr><td><code>--border-color</code></td><td>边框色</td></tr>
+  <tr><td><code>--sidebar-width</code> / <code>--sidebar-collapsed-width</code></td><td>侧边栏布局</td></tr>
+</table>
+
+<h3>全局样式类（index.scss 全部保留）</h3>
+<table>
+  <tr><th>类名</th><th>被引用位置</th></tr>
+  <tr><td><code>.flex</code> / <code>.flex-center</code> / <code>.flex-between</code> / <code>.flex-column</code></td><td>多处布局</td></tr>
+  <tr><td><code>.text-ellipsis</code> / <code>.text-ellipsis-2</code></td><td>文本截断</td></tr>
+  <tr><td><code>.page-container</code></td><td>每个页面容器</td></tr>
+  <tr><td><code>.card</code></td><td>通用卡片</td></tr>
+  <tr><td>移动端表格转卡片 <code>@media</code></td><td>所有表格响应式</td></tr>
+  <tr><td>CSS Reset <code>*</code> / <code>html, body</code> / <code>#app</code></td><td>全局重置</td></tr>
+  <tr><td>滚动条 <code>::-webkit-scrollbar</code></td><td>全局滚动条</td></tr>
+</table>
+</section>
+
+<div class="divider"></div>
+
+<section>
+<h2>5. 结论</h2>
+
+<h3>5.1 推荐设计方向</h3>
+<ul>
+  <li><strong>Team Cockpit 主题</strong>：科技蓝 #409EFF 为主色，青蓝 #36CFC9 为渐变辅色，清爽可信</li>
+  <li><strong>模块专属色体系</strong>：知识产权紫色 / 敏感资料安全蓝 / 经费深绿，视觉区分模块属性</li>
+  <li><strong>保留 Element Plus 原生体系</strong>：不覆盖 Element Plus 内部 SCSS 变量，仅通过 CSS 变量层扩展</li>
+  <li><strong>渐进式增强</strong>：先写 token，再逐批应用，每批验证</li>
+</ul>
+
+<h3>5.2 不推荐的设计方向</h3>
+<ul>
+  <li><strong>不使用 10 个预设主题中的任何一个</strong>：它们都是面向幻灯片/文档的通用主题，缺少模块专属色</li>
+  <li><strong>不覆盖 Element Plus 内部变量</strong>：不修改 <code>node_modules/element-plus</code> 主题文件</li>
+  <li><strong>不引入 CSS-in-JS</strong>：保持 SCSS + CSS 变量方式</li>
+  <li><strong>不引入 Tailwind</strong>：不为 P3 美化引入新 CSS 框架</li>
+</ul>
+
+<h3>5.3 P3 第一批页面设计重点</h3>
+<table>
+  <tr><th>文件</th><th>美化重点</th><th>使用的新 Token</th></tr>
+  <tr><td><code>variables.scss</code></td><td>追加 Team Cockpit token</td><td>全部新增变量</td></tr>
+  <tr><td><code>index.scss</code></td><td>追加 CSS 变量 + 全局增强样式</td><td>CSS 变量 + 工具类</td></tr>
+  <tr><td><code>LoginView.vue</code></td><td>左侧品牌渐变 + 表单 a11y 修复</td><td><code>--gradient-brand</code></td></tr>
+  <tr><td><code>DashboardView.vue</code></td><td>统计卡片渐变 + "已逾期"修复 + transition 修复</td><td><code>--gradient-*</code> / <code>--shadow-*</code></td></tr>
+  <tr><td><code>PCLayout.vue</code></td><td>侧边栏微调 + a11y 修复</td><td><code>--shadow-*</code> / <code>--radius-*</code></td></tr>
+  <tr><td><code>MobileLayout.vue</code></td><td>底部 Tab 样式 + a11y 修复</td><td><code>--radius-*</code></td></tr>
+</table>
+
+<h3>5.4 是否建议进入 P3 第一批代码美化</h3>
+<div class="callout callout-success">
+  <strong>建议进入 P3 第一批。</strong>主题 token 方案已完整输出，设计规范已确认，Web Interface Guidelines 审计已完成。可以开始将 token 写入 <code>variables.scss</code> 和 <code>index.scss</code>，然后美化登录页、Dashboard、PCLayout、MobileLayout。
+  <br><br>
+  <strong>执行顺序：</strong>
+  <ol style="margin-top:8px; padding-left:20px;">
+    <li>写入 <code>variables.scss</code> 追加内容</li>
+    <li>写入 <code>index.scss</code> 追加内容</li>
+    <li>美化 <code>LoginView.vue</code>（含 a11y 修复）</li>
+    <li>美化 <code>DashboardView.vue</code>（含标签/transition 修复）</li>
+    <li>美化 <code>PCLayout.vue</code>（含 a11y 修复）</li>
+    <li>美化 <code>MobileLayout.vue</code>（含 a11y 修复）</li>
+    <li>验证：<code>vue-tsc</code> + <code>npm run build</code> + <code>python manage.py check</code></li>
+  </ol>
+</div>
+
+</section>
+
+</div>
+</body>
+</html>

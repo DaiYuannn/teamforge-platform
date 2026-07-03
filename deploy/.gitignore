@@ -1,0 +1,10 @@
+# 环境变量文件（含敏感信息，不应提交到版本库）
+env/backend.env
+env/backend.prod.env
+env/frontend.env
+
+# SSL 证书
+nginx/ssl/*.pem
+nginx/ssl/*.key
+nginx/ssl/*.crt
+nginx/ssl/*.csr

@@ -1,0 +1,74 @@
+# Environment files
+.env
+.env.local
+.env.production
+.env.*.local
+.env.docker
+backend/.env
+deploy/env/backend.env
+deploy/env/backend.prod.env
+deploy/env/frontend.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Databases and backups
+db.sqlite3
+db.sqlite3-journal
+backend/*.dump
+backend/media.before_v2_seed/
+
+# User uploads and generated media
+backend/media/
+media/
+.uploads/
+
+# Logs
+logs/
+*.log
+
+# Collected static files
+backend/staticfiles/
+
+# Node and frontend build output
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# IDE and local tooling
+.vscode/
+.idea/
+.trae/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Docker local config and certificates
+.docker-config/
+deploy/nginx/ssl/*.pem
+deploy/nginx/ssl/*.key
+deploy/nginx/ssl/*.crt
+deploy/release/*.tar.gz
+deploy/release/*.zip
+
+# Temporary files
+*.tmp
+*.bak
+*.cache
+
+# Local reference backups
+references/backups/
+references/99_backups/

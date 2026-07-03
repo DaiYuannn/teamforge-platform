@@ -1,0 +1,145 @@
+// ============================================
+// SCSS 变量定义（主题色等）
+// ============================================
+
+// 主题色
+$primary-color: #409EFF;
+$success-color: #67C23A;
+$warning-color: #E6A23C;
+$danger-color: #F56C6C;
+$info-color: #909399;
+
+// 背景色
+$bg-color: #f5f7fa;
+$bg-color-light: #fafafa;
+$bg-color-dark: #e9ecef;
+
+// 文字颜色
+$text-primary: #303133;
+$text-regular: #606266;
+$text-secondary: #909399;
+$text-placeholder: #c0c4cc;
+
+// 边框颜色
+$border-color: #dcdfe6;
+$border-color-light: #e4e7ed;
+$border-color-lighter: #ebeef5;
+
+// 侧边栏
+$sidebar-width: 220px;
+$sidebar-collapsed-width: 64px;
+$sidebar-bg: #304156;
+$sidebar-text: #bfcbd9;
+$sidebar-active-text: #409EFF;
+
+// 间距
+$spacing-mini: 4px;
+$spacing-small: 8px;
+$spacing-medium: 16px;
+$spacing-large: 24px;
+$spacing-xl: 32px;
+
+// 圆角
+$border-radius-small: 4px;
+$border-radius: 8px;
+$border-radius-large: 16px;
+
+// 阴影
+$box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
+$box-shadow-light: 0 2px 4px rgba(0, 0, 0, 0.06);
+$box-shadow-dark: 0 4px 20px rgba(0, 0, 0, 0.15);
+
+// z-index
+$z-index-header: 1000;
+$z-index-sidebar: 1001;
+$z-index-modal: 2000;
+$z-index-popover: 3000;
+
+// 移动端断点
+$breakpoint-mobile: 768px;
+
+// ============================================
+// Team Cockpit 主题 Token（v0.8.1-stable 追加）
+// 在现有变量基础上扩展，不修改原有变量
+// ============================================
+
+// --- 主色扩展 ---
+$primary-dark: #337ECC;
+$primary-light: #66B1FF;
+$primary-lighter: #ECF5FF;
+$primary-rgb: 64, 158, 255;
+
+// --- 辅助色浅底 ---
+$success-light: #E1F3D8;
+$warning-light: #FAECD8;
+$danger-light: #FDE2E2;
+$info-light: #E9E9EB;
+
+// --- 模块专属色 ---
+$ip-color: #7C3AED;
+$ip-light: #F3EEFF;
+$sensitive-color: #1E40AF;
+$sensitive-light: #DBEAFE;
+$finance-color: #059669;
+$finance-light: #D1FAE5;
+
+// --- 背景/表格扩展 ---
+$bg-card: #FFFFFF;
+$bg-table-header: #F5F7FA;
+$bg-table-stripe: #FAFAFA;
+
+// --- 侧边栏扩展 ---
+$sidebar-bg-dark: #2B3A4D;
+$sidebar-hover-bg: #263445;
+
+// --- 渐变色 ---
+$gradient-brand: linear-gradient(135deg, #409EFF 0%, #36CFC9 100%);
+$gradient-blue: linear-gradient(135deg, #409EFF, #36CFC9);
+$gradient-green: linear-gradient(135deg, #67C23A, #95DE64);
+$gradient-orange: linear-gradient(135deg, #E6A23C, #FFD591);
+$gradient-red: linear-gradient(135deg, #F56C6C, #FF7875);
+$gradient-purple: linear-gradient(135deg, #7C3AED, #C39BD3);
+$gradient-indigo: linear-gradient(135deg, #1E40AF, #3B82F6);
+
+// --- 圆角扩展 ---
+$radius-xs: 4px;
+$radius-sm: 6px;
+$radius-lg: 12px;
+$radius-pill: 999px;
+
+// --- 阴影扩展 ---
+$shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.04);
+$shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.06);
+$shadow-lg: 0 4px 16px rgba(0, 0, 0, 0.12);
+$shadow-xl: 0 8px 32px rgba(0, 0, 0, 0.16);
+$shadow-primary: 0 4px 12px rgba(64, 158, 255, 0.15);
+
+// --- 间距扩展 ---
+$spacing-md: 12px;
+$spacing-lg: 20px;
+$page-padding-mobile: 12px;
+$card-padding: 20px;
+$card-padding-sm: 16px;
+$card-gap: 16px;
+
+// --- 字体扩展 ---
+$font-family-mono: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+$font-size-xs: 12px;
+$font-size-sm: 13px;
+$font-size-lg: 16px;
+$font-size-xl: 18px;
+$font-size-2xl: 20px;
+$font-size-3xl: 22px;
+$font-size-4xl: 28px;
+$font-weight-light: 300;
+$font-weight-medium: 500;
+$font-weight-semibold: 600;
+$font-weight-bold: 700;
+
+// --- 过渡扩展 ---
+$transition-fast: 0.15s ease;
+$transition-base: 0.2s ease;
+$transition-slow: 0.3s ease;
+
+// --- z-index 扩展 ---
+$z-index-dropdown: 2500;

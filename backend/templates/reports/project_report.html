@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>{{ title }}</title>
+    <style>
+        body { font-family: "微软雅黑", "Microsoft YaHei", sans-serif; font-size: 12px; color: #333; margin: 30px; }
+        h1 { color: #2c3e50; font-size: 22px; border-bottom: 2px solid #4472C4; padding-bottom: 8px; }
+        h2 { color: #4472C4; font-size: 16px; margin-top: 24px; border-left: 4px solid #4472C4; padding-left: 8px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        th { background-color: #4472C4; color: #fff; padding: 8px; text-align: left; font-size: 12px; }
+        td { border: 1px solid #ddd; padding: 6px 8px; font-size: 12px; }
+        tr:nth-child(even) { background-color: #f8f9fa; }
+        .kv-table td:first-child { width: 30%; font-weight: bold; background-color: #f0f4ff; }
+        .footer { margin-top: 40px; text-align: right; color: #888; font-size: 11px; border-top: 1px solid #eee; padding-top: 8px; }
+        .empty { color: #999; font-style: italic; }
+    </style>
+</head>
+<body>
+    <h1>{{ title }}</h1>
+
+    <h2>一、基础信息</h2>
+    <table class="kv-table">
+        <tr><td>项目名称</td><td>{{ project.name }}</td></tr>
+        <tr><td>项目编号</td><td>{{ project.code }}</td></tr>
+        <tr><td>项目负责人</td><td>{{ project.leader.name|default:"未指定" }}</td></tr>
+        <tr><td>当前阶段</td><td>{{ project.get_current_stage_display }}</td></tr>
+        <tr><td>项目状态</td><td>{{ project.get_status_display }}</td></tr>
+        <tr><td>开始时间</td><td>{{ project.start_date|date:"Y-m-d"|default:"未指定" }}</td></tr>
+        <tr><td>预计结束</td><td>{{ project.planned_end_date|date:"Y-m-d"|default:"未指定" }}</td></tr>
+        <tr><td>项目描述</td><td>{{ project.intro|default:"无" }}</td></tr>
+    </table>
+
+    <h2>二、经费信息</h2>
+    {% if budget %}
+    <table class="kv-table">
+        <tr><td>奖金总额</td><td>{{ budget.bonus_amount }} 元</td></tr>
+        <tr><td>其他收入</td><td>{{ budget.other_income }} 元</td></tr>
+        <tr><td>已用金额</td><td>{{ budget.used_amount }} 元</td></tr>
+        <tr><td>待报销</td><td>{{ budget.pending_reimbursement }} 元</td></tr>
+        <tr><td>剩余金额</td><td>{{ budget.remaining_amount }} 元</td></tr>
+        <tr><td>经费状态</td><td>{{ budget.get_status_display }}</td></tr>
+        <tr><td>统计周期</td><td>{{ budget.period }}</td></tr>
+    </table>
+    {% else %}
+    <p class="empty">暂无经费预算信息</p>
+    {% endif %}
+
+    <h2>三、任务信息</h2>
+    {% if tasks %}
+    <table>
+        <tr><th>任务标题</th><th>指派给</th><th>状态</th><th>截止时间</th></tr>
+        {% for task in tasks %}
+        <tr>
+            <td>{{ task.title }}</td>
+            <td>{{ task.assignee.name|default:"" }}</td>
+            <td>{{ task.get_status_display }}</td>
+            <td>{{ task.deadline|date:"Y-m-d"|default:"" }}</td>
+        </tr>
+        {% endfor %}
+    </table>
+    {% else %}
+    <p class="empty">暂无任务记录</p>
+    {% endif %}
+
+    <h2>四、贡献记录</h2>
+    {% if contributions %}
+    <table>
+        <tr><th>贡献人</th><th>贡献类型</th><th>权重</th><th>审核状态</th></tr>
+        {% for c in contributions %}
+        <tr>
+            <td>{{ c.user.name|default:"" }}</td>
+            <td>{{ c.get_contribution_type_display }}</td>
+            <td>{{ c.weight }}</td>
+            <td>{{ c.get_status_display }}</td>
+        </tr>
+        {% endfor %}
+    </table>
+    {% else %}
+    <p class="empty">暂无贡献记录</p>
+    {% endif %}
+
+    <div class="footer">报告生成时间：{% now "Y-m-d H:i" %}</div>
+</body>
+</html>
