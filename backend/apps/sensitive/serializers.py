@@ -155,6 +155,8 @@ class SensitiveAccessRequestSerializer(serializers.ModelSerializer):
 
 class SensitiveAccessRequestCreateSerializer(serializers.ModelSerializer):
     """访问申请创建序列化器"""
+    # reason 不再必填，从 usage_scenario 自动填充
+    reason = serializers.CharField(required=False, allow_blank=True)
 
     class Meta:
         model = SensitiveAccessRequest
@@ -163,6 +165,18 @@ class SensitiveAccessRequestCreateSerializer(serializers.ModelSerializer):
             'project', 'expected_use_time', 'is_download', 'request_note',
         )
         read_only_fields = ('id',)
+
+    def validate(self, attrs):
+        """如果 reason 为空但 usage_scenario 有值，自动填充"""
+        reason = attrs.get('reason', '')
+        usage_scenario = attrs.get('usage_scenario', '')
+        if not reason and usage_scenario:
+            attrs['reason'] = usage_scenario
+        elif not reason and not usage_scenario:
+            raise serializers.ValidationError({
+                'usage_scenario': '请填写使用场景或申请理由。'
+            })
+        return attrs
 
     def create(self, validated_data):
         """创建申请时自动设置申请人"""
@@ -179,4 +193,14 @@ class SensitiveAccessRequestReviewSerializer(serializers.Serializer):
     # 审批意见
     approval_opinion = serializers.CharField(required=False, allow_blank=True, default='')
     # 有效期小时数（approve 时有效，默认1小时）
-    expire_hours = serializers.IntegerField(required=False, default=1, min_value=1, max_value=24)
+    expire_hours = serializers.IntegerField(required=False, default=1, min_value=0, max_value=24)
+
+    def validate(self, attrs):
+        """reject 时 expire_hours 可为 0"""
+        action = attrs.get('action')
+        expire_hours = attrs.get('expire_hours', 1)
+        if action == 'approve' and expire_hours < 1:
+            raise serializers.ValidationError({
+                'expire_hours': '审批通过时有效期必须大于0小时。'
+            })
+        return attrs

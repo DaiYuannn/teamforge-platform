@@ -22,6 +22,18 @@ class ImportService:
             'required_fields': ['name', 'code'],
             'optional_fields': ['intro', 'priority', 'status', 'start_date', 'planned_end_date'],
         },
+        'history_projects': {
+            # 历史项目导入：导入已结项/归档的历史项目数据
+            # 额外支持字段：actual_end_date（实际结束日期）、current_stage（当前阶段）
+            # 默认 status=closed（已关闭/已结项）
+            'model': 'apps.projects.models.Project',
+            'required_fields': ['name', 'code'],
+            'optional_fields': [
+                'intro', 'priority', 'status', 'start_date', 'planned_end_date',
+                'actual_end_date', 'current_stage', 'leader_id',
+            ],
+            'defaults': {'status': 'closed'},
+        },
         'members': {
             'model': 'apps.users.models.User',
             'required_fields': ['name', 'email'],
@@ -41,6 +53,11 @@ class ImportService:
             'model': 'apps.finance.models.FinanceExpense',
             'required_fields': ['title', 'amount', 'project', 'expense_date'],
             'optional_fields': ['category', 'purpose', 'spender'],
+        },
+        'ip_applications': {
+            'model': 'apps.intellectual_property.models.IntellectualPropertyApplication',
+            'required_fields': ['title', 'application_code'],
+            'optional_fields': ['ip_type', 'related_project', 'status', 'main_writer', 'intro'],
         },
     }
 
@@ -101,7 +118,16 @@ class ImportService:
                     '类别': 'category', '用途': 'purpose',
                     '优先级': 'priority', '状态': 'status',
                     '开始日期': 'start_date', '计划结束日期': 'planned_end_date',
+                    '预计结束': 'planned_end_date', '开始时间': 'start_date',
+                    # 历史项目相关
+                    '实际结束日期': 'actual_end_date', '实际结束': 'actual_end_date',
+                    '当前阶段': 'current_stage', '负责人ID': 'leader_id',
                     '截止时间': 'deadline', '级别': 'level', '主办单位': 'organizer',
+                    # 知识产权相关
+                    '成果名称': 'title', '内部编号': 'application_code',
+                    '成果类型': 'ip_type', '关联项目': 'related_project',
+                    '关联项目编号': 'related_project', '主导撰写人': 'main_writer',
+                    '撰写人': 'main_writer',
                 }
                 if header in cn_mapping and cn_mapping[header] in all_fields:
                     mapping[header] = cn_mapping[header]
@@ -187,12 +213,19 @@ class ImportService:
         mod = importlib.import_module(module_name)
         ModelClass = getattr(mod, class_name)
 
+        # 模块级默认值（如历史项目导入默认 status=closed）
+        defaults = config.get('defaults', {})
+
         # 写入数据并记录快照
         created_ids = []
         for row_data in valid_rows:
             try:
                 # 过滤空值
                 clean_data = {k: v for k, v in row_data.items() if v != '' and v is not None}
+                # 应用模块级默认值：仅当字段未提供或为空时填充
+                for field, default_value in defaults.items():
+                    if not clean_data.get(field):
+                        clean_data[field] = default_value
                 obj = ModelClass.objects.create(**clean_data)
                 created_ids.append(obj.id)
             except Exception as e:

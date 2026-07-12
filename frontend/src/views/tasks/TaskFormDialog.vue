@@ -45,8 +45,8 @@
       <el-form-item label="开始日期" prop="start_date">
         <el-date-picker v-model="form.start_date" type="date" value-format="YYYY-MM-DD" style="width: 100%" />
       </el-form-item>
-      <el-form-item label="截止日期" prop="due_date">
-        <el-date-picker v-model="form.due_date" type="date" value-format="YYYY-MM-DD" style="width: 100%" />
+      <el-form-item label="截止日期" prop="deadline">
+        <el-date-picker v-model="form.deadline" type="date" value-format="YYYY-MM-DD" style="width: 100%" />
       </el-form-item>
       <el-form-item label="任务描述" prop="description">
         <el-input v-model="form.description" type="textarea" :rows="3" placeholder="请输入任务描述" />
@@ -100,7 +100,6 @@ const defaultForm: TaskFormData = {
   priority: 'medium',
   start_date: '',
   deadline: '',
-  due_date: '',
 }
 
 const form = reactive<TaskFormData>({ ...defaultForm })
@@ -110,7 +109,7 @@ const rules: FormRules = {
   project: [{ required: true, message: '请选择所属项目', trigger: 'change' }],
   assignee: [{ required: true, message: '请输入负责人', trigger: 'blur' }],
   start_date: [{ required: true, message: '请选择开始日期', trigger: 'change' }],
-  due_date: [{ required: true, message: '请选择截止日期', trigger: 'change' }],
+  deadline: [{ required: true, message: '请选择截止日期', trigger: 'change' }],
 }
 
 watch(

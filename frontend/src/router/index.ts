@@ -33,6 +33,18 @@ const authRoutes: RouteRecordRaw[] = [
         meta: { title: '首页驾驶舱', icon: 'Odometer', requiresAuth: true },
       },
       {
+        path: 'dashboard/calendar',
+        name: 'ProjectCalendar',
+        component: () => import('@/views/dashboard/ProjectCalendarView.vue'),
+        meta: { title: '项目日历', requiresAuth: true, hidden: true },
+      },
+      {
+        path: 'dashboard/gantt',
+        name: 'ProjectGantt',
+        component: () => import('@/views/dashboard/ProjectGanttView.vue'),
+        meta: { title: '项目历程', requiresAuth: true, hidden: true },
+      },
+      {
         path: 'projects',
         name: 'ProjectList',
         component: () => import('@/views/projects/ProjectListView.vue'),
@@ -43,6 +55,12 @@ const authRoutes: RouteRecordRaw[] = [
         name: 'ProjectDetail',
         component: () => import('@/views/projects/ProjectDetailView.vue'),
         meta: { title: '项目详情', requiresAuth: true, hidden: true },
+      },
+      {
+        path: 'projects/archive',
+        name: 'ProjectArchive',
+        component: () => import('@/views/projects/ProjectArchiveView.vue'),
+        meta: { title: '项目归档', icon: 'FolderOpened', requiresAuth: true },
       },
       {
         path: 'competitions',
@@ -199,6 +217,48 @@ const authRoutes: RouteRecordRaw[] = [
           roles: ['sys_admin'], // 仅系统管理员可访问
         },
       },
+      // 成果展示（内部访问入口）
+      {
+        path: 'public-portal',
+        name: 'InternalPublicPortal',
+        component: () => import('@/views/public/PublicPortalView.vue'),
+        meta: { title: '成果展示', icon: 'Trophy', requiresAuth: true },
+      },
+      // 个人设置
+      {
+        path: 'user/preference',
+        name: 'UserPreference',
+        component: () => import('@/views/user/PreferenceView.vue'),
+        meta: { title: '个人设置', requiresAuth: true },
+      },
+      // 个人中心
+      {
+        path: 'user/profile',
+        name: 'UserProfile',
+        component: () => import('@/views/user/UserProfileView.vue'),
+        meta: { title: '个人中心', requiresAuth: true },
+      },
+      // 公告管理
+      {
+        path: 'announcements',
+        name: 'Announcements',
+        component: () => import('@/views/announcements/AnnouncementListView.vue'),
+        meta: { title: '公告管理', icon: 'Notification', requiresAuth: true },
+      },
+      // 动态流
+      {
+        path: 'activities',
+        name: 'ActivityFeed',
+        component: () => import('@/views/activities/ActivityFeedView.vue'),
+        meta: { title: '动态', icon: 'ChatLineSquare', requiresAuth: true },
+      },
+      // 统一待办
+      {
+        path: 'todo',
+        name: 'UnifiedTodo',
+        component: () => import('@/views/todo/TodoListView.vue'),
+        meta: { title: '待办事项', icon: 'Checked', requiresAuth: true },
+      },
     ],
   },
 ]
@@ -210,10 +270,10 @@ const publicLayoutRoutes: RouteRecordRaw[] = [
     component: () => import('@/layouts/PublicLayout.vue'),
     children: [
       {
-        path: 'dashboard',
-        name: 'PublicDashboard',
-        component: () => import('@/views/dashboard/DashboardView.vue'),
-        meta: { title: '公共展示面板', requiresAuth: false },
+        path: '',
+        name: 'PublicPortal',
+        component: () => import('@/views/public/PublicPortalView.vue'),
+        meta: { title: '团队成果展示', requiresAuth: false },
       },
     ],
   },
@@ -223,10 +283,10 @@ const routes: RouteRecordRaw[] = [
   ...publicRoutes,
   ...authRoutes,
   ...publicLayoutRoutes,
-  // 404 路由
+  // 404 路由 → 跳转到门户首页
   {
     path: '/:pathMatch(.*)*',
-    redirect: '/dashboard',
+    redirect: '/',
   },
 ]
 
@@ -248,14 +308,22 @@ router.beforeEach(async (to, _from, next) => {
   // 设置页面标题
   document.title = to.meta.title ? `${to.meta.title} - 团队管理软件` : '团队管理软件'
 
+  // 根路径和旧登录页跳转到门户首页
+  if (to.path === '/' || to.path === '/login') {
+    next(false)
+    window.location.href = '/portal/index.html'
+    return
+  }
+
   const userStore = useUserStore()
   const requiresAuth = to.meta.requiresAuth !== false
 
   // 需要认证的路由
   if (requiresAuth) {
-    // 未登录跳转登录页
+    // 未登录跳转到门户首页
     if (!userStore.isLoggedIn) {
-      next({ path: '/login', query: { redirect: to.fullPath } })
+      next(false)
+      window.location.href = '/portal/index.html'
       return
     }
 
@@ -265,7 +333,8 @@ router.beforeEach(async (to, _from, next) => {
         await userStore.fetchProfile()
       } catch {
         await userStore.logout()
-        next({ path: '/login', query: { redirect: to.fullPath } })
+        next(false)
+        window.location.href = '/portal/index.html'
         return
       }
     }

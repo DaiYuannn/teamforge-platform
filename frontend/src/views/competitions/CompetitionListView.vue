@@ -13,8 +13,19 @@
       </template>
     </PageHeader>
 
+    <!-- 视图切换 -->
+    <div class="card view-switcher">
+      <el-radio-group v-model="currentView">
+        <el-radio-button value="list">列表视图</el-radio-button>
+        <el-radio-button value="matrix">矩阵视图</el-radio-button>
+        <el-radio-button value="funnel">漏斗视图</el-radio-button>
+      </el-radio-group>
+    </div>
+
+    <!-- 列表视图 -->
+    <template v-if="currentView === 'list'">
     <!-- 搜索筛选 -->
-    <div class="card search-bar">
+    <div class="card search-bar mt-16">
       <el-form :inline="true" :model="queryParams" @submit.prevent>
         <el-form-item label="关键词">
           <el-input
@@ -55,10 +66,19 @@
     <!-- 比赛列表表格 -->
     <div class="card mt-16">
       <el-table v-loading="loading" :data="competitionList" border stripe>
+        <template #empty>
+          <EmptyState text="暂无比赛" description="点击「新增比赛」开始创建比赛" accent="#9B59B6" />
+        </template>
         <el-table-column prop="name" label="比赛名称" min-width="200" show-overflow-tooltip />
-        <el-table-column prop="level" label="级别" width="100">
+        <el-table-column label="级别" width="90">
           <template #default="{ row }">
-            <el-tag :type="getCompetitionLevelTagType(row.level) as any" size="small">
+            <el-tag
+              size="small"
+              :type="getCompetitionStageTagType(row.level) as any"
+              effect="light"
+              :style="getCompetitionStageTagStyle(row.level)"
+              class="stage-tag"
+            >
               {{ getCompetitionLevelLabel(row.level) }}
             </el-tag>
           </template>
@@ -101,6 +121,13 @@
         />
       </div>
     </div>
+    </template>
+
+    <!-- 矩阵视图 -->
+    <CompetitionMatrixView v-else-if="currentView === 'matrix'" />
+
+    <!-- 漏斗视图 -->
+    <CompetitionFunnelView v-else-if="currentView === 'funnel'" />
 
     <!-- 新建/编辑弹窗 -->
     <CompetitionFormDialog
@@ -119,14 +146,22 @@ import { getCompetitions, deleteCompetition, type CompetitionQueryParams } from 
 import {
   formatDate,
   getCompetitionLevelLabel,
-  getCompetitionLevelTagType,
-  getCompetitionStatusLabel,
+  getCompetitionStageTagType,
+  getCompetitionStageTagStyle,
   getCompetitionStatusTagType,
+  getCompetitionStatusLabel,
 } from '@/utils/format'
 import { COMPETITION_LEVEL_MAP, COMPETITION_STATUS_MAP } from '@/utils/constants'
 import type { Competition, CompetitionFormData } from '@/types'
 import PageHeader from '@/components/PageHeader.vue'
+import EmptyState from '@/components/EmptyState.vue'
 import CompetitionFormDialog from './CompetitionFormDialog.vue'
+import CompetitionMatrixView from './CompetitionMatrixView.vue'
+import CompetitionFunnelView from './CompetitionFunnelView.vue'
+
+/** 当前视图模式：列表 / 矩阵 / 漏斗 */
+type ViewMode = 'list' | 'matrix' | 'funnel'
+const currentView = ref<ViewMode>('list')
 
 const loading = ref(false)
 const competitionList = ref<Competition[]>([])
@@ -197,6 +232,11 @@ onMounted(() => {
 
 <style lang="scss" scoped>
 .mt-16 { margin-top: 16px; }
+.view-switcher {
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+}
 .search-bar { padding: 16px; }
 .pagination-wrapper {
   display: flex;

@@ -176,6 +176,34 @@ class NotificationService:
 
         return len(notifications)
 
+    @classmethod
+    def broadcast(
+        cls,
+        title,
+        content,
+        category=Notification.NotificationType.SYSTEM,
+        priority=Notification.Priority.NORMAL,
+        sender=None,
+    ):
+        """
+        向所有活跃用户广播通知
+        :param title: 通知标题
+        :param content: 通知内容
+        :param category: 通知类型（system/project/task/finance/competition/announcement）
+        :param priority: 优先级（low/normal/high/urgent）
+        :param sender: 发送人（User 实例或 ID，可为空）
+        :return: 创建的通知数量
+        """
+        active_users = list(User.objects.filter(is_active=True))
+        return cls.bulk_create_notifications(
+            recipients=active_users,
+            title=title,
+            content=content,
+            category=category,
+            priority=priority,
+            sender=sender,
+        )
+
     @staticmethod
     def mark_as_read(notification_id, user):
         """

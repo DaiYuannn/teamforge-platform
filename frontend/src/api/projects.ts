@@ -13,9 +13,11 @@ import type {
 /** 项目查询参数 */
 export interface ProjectQueryParams extends PaginationParams {
   status?: string
-  leader?: number
+  leader?: number | string
   competition?: number
   current_stage?: string
+  start_date?: string
+  end_date?: string
 }
 
 /** 获取项目列表 */

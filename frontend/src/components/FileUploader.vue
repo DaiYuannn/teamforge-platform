@@ -22,9 +22,9 @@
       </template>
     </el-upload>
 
-    <!-- 权限选择 -->
-    <div class="permission-selector">
-      <span class="label">访问权限：</span>
+    <!-- 级别选择 -->
+    <div class="level-selector">
+      <span class="label">文件级别：</span>
       <el-radio-group v-model="permission">
         <el-radio-button value="public">公开</el-radio-button>
         <el-radio-button value="internal">内部</el-radio-button>
@@ -60,7 +60,7 @@ import { ref, computed } from 'vue'
 import { ElMessage } from 'element-plus'
 import type { UploadFile, UploadInstance } from 'element-plus'
 import { uploadFile } from '@/api/files'
-import type { FilePermission } from '@/types'
+import type { FileLevel } from '@/types'
 
 /**
  * 文件上传组件
@@ -100,7 +100,7 @@ const uploadTipText = computed(() => {
 
 const uploadRef = ref<UploadInstance>()
 const fileList = ref<UploadFile[]>([])
-const permission = ref<FilePermission>('internal')
+const permission = ref<FileLevel>('internal')
 const description = ref('')
 const uploading = ref(false)
 
@@ -154,7 +154,7 @@ async function handleUpload(): Promise<void> {
 
 <style lang="scss" scoped>
 .file-uploader {
-  .permission-selector {
+  .level-selector {
     margin-top: 16px;
     display: flex;
     align-items: center;

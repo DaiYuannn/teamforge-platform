@@ -1,4 +1,4 @@
-import { get, post, patch, del } from './request'
+import { get, post, put, patch, del } from './request'
 import type { User, UserFormData, PaginatedResponse, PaginationParams } from '@/types'
 
 /** 用户查询参数 */
@@ -30,4 +30,29 @@ export function deleteUser(id: number): Promise<void> {
 /** 获取用户详情 */
 export function getUser(id: number): Promise<User> {
   return get<User>(`/users/${id}/`)
+}
+
+// ============================================
+// 用户个人化偏好设置 API
+// ============================================
+
+/** 用户偏好设置数据结构 */
+export interface UserPreferenceData {
+  user_id?: number
+  dashboard_layout: Record<string, unknown>
+  theme_color: string
+  default_landing: string
+  sidebar_collapsed: boolean
+  notification_sound: boolean
+  items_per_page: number
+}
+
+/** 获取当前用户偏好设置 */
+export function getUserPreference(): Promise<UserPreferenceData> {
+  return get<UserPreferenceData>('/users/preference/')
+}
+
+/** 更新当前用户偏好设置 */
+export function updateUserPreference(data: Partial<UserPreferenceData>): Promise<UserPreferenceData> {
+  return put<UserPreferenceData>('/users/preference/', data)
 }

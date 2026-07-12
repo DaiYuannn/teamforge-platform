@@ -99,3 +99,6 @@ class Competition(models.Model):
 
     def __str__(self):
         return f'{self.project.name} - {self.name}({self.get_level_display()})'
+
+
+from .award_models import CompetitionAward  # noqa: E402,F401

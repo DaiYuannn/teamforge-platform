@@ -32,6 +32,7 @@ class TaskSerializer(serializers.ModelSerializer):
     reviewer_name = serializers.CharField(source='reviewer.name', read_only=True, default='')
     collaborators_detail = UserListSerializer(source='collaborators', many=True, read_only=True)
     status_display = serializers.CharField(source='get_status_display', read_only=True)
+    priority_display = serializers.CharField(source='get_priority_display', read_only=True)
     is_overdue = serializers.BooleanField(read_only=True)
     status_logs = TaskLogSerializer(many=True, read_only=True)
     collaborator_ids = serializers.PrimaryKeyRelatedField(
@@ -46,7 +47,8 @@ class TaskSerializer(serializers.ModelSerializer):
             'id', 'project', 'project_name', 'title', 'description',
             'assignee', 'assignee_detail', 'creator', 'creator_name',
             'collaborators', 'collaborator_ids', 'collaborators_detail',
-            'deadline', 'status', 'status_display',
+            'deadline', 'start_date', 'priority', 'priority_display',
+            'status', 'status_display',
             'completed_at', 'overdue_reminded', 'is_overdue',
             'delay_reason', 'reviewer', 'reviewer_name',
             'attachments', 'status_logs',
@@ -61,6 +63,7 @@ class TaskListSerializer(serializers.ModelSerializer):
     assignee_name = serializers.CharField(source='assignee.name', read_only=True)
     creator_name = serializers.CharField(source='creator.name', read_only=True, default='')
     status_display = serializers.CharField(source='get_status_display', read_only=True)
+    priority_display = serializers.CharField(source='get_priority_display', read_only=True)
     is_overdue = serializers.BooleanField(read_only=True)
 
     class Meta:
@@ -68,7 +71,8 @@ class TaskListSerializer(serializers.ModelSerializer):
         fields = (
             'id', 'project', 'project_name', 'title',
             'assignee', 'assignee_name', 'creator', 'creator_name',
-            'deadline', 'status', 'status_display',
+            'deadline', 'start_date', 'priority', 'priority_display',
+            'status', 'status_display',
             'completed_at', 'is_overdue', 'created_at',
         )
         read_only_fields = fields
@@ -87,7 +91,8 @@ class TaskCreateSerializer(serializers.ModelSerializer):
         fields = (
             'id', 'project', 'title', 'description',
             'assignee', 'collaborator_ids',
-            'deadline', 'status', 'reviewer', 'attachments',
+            'deadline', 'start_date', 'priority',
+            'status', 'reviewer', 'attachments',
         )
         read_only_fields = ('id',)
 

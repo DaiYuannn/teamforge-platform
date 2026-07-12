@@ -38,10 +38,8 @@ export interface User {
   username: string
   email: string
   name: string
-  real_name?: string
-  global_role: string
+  global_role: UserRole
   global_role_display?: string
-  role?: UserRole
   avatar?: string
   phone?: string
   is_active: boolean
@@ -72,7 +70,6 @@ export interface RefreshTokenResult {
 // 用户更新参数
 export interface UpdateProfileParams {
   name?: string
-  real_name?: string
   phone?: string
   avatar?: string
   email?: string
@@ -251,7 +248,6 @@ export interface Task {
   priority?: TaskPriority
   start_date?: string
   deadline: string
-  due_date?: string
   delay_reason?: string
   completed_at?: string | null
   created_at: string
@@ -268,13 +264,13 @@ export interface TaskFormData {
   priority?: TaskPriority
   start_date?: string
   deadline: string
-  due_date?: string
 }
 
 // 任务查询参数
 export interface TaskQueryParams extends PaginationParams {
   project?: number
   status?: TaskStatus
+  priority?: TaskPriority
   assignee?: number
 }
 
@@ -351,8 +347,8 @@ export interface FinanceReceipt {
 // 文件管理
 // ============================================
 
-// 文件权限级别
-export type FilePermission = 'public' | 'internal' | 'sensitive'
+// 文件级别
+export type FileLevel = 'public' | 'internal' | 'sensitive'
 
 // 文件资源
 export interface FileAsset {
@@ -362,11 +358,9 @@ export interface FileAsset {
   name: string
   file: string
   file_url?: string
-  file_type?: string
   content_type?: string
-  file_size?: number
   size?: number
-  level?: FilePermission
+  level: FileLevel
   level_display?: string
   uploader: number
   uploader_name: string
@@ -379,15 +373,14 @@ export interface FileAsset {
 // 文件上传参数
 export interface FileUploadParams {
   project: number
-  level: FilePermission
+  level: FileLevel
   description?: string
 }
 
 // 文件查询参数
 export interface FileQueryParams extends PaginationParams {
   project?: number
-  file_type?: string
-  level?: FilePermission
+  level?: FileLevel
 }
 
 // ============================================

@@ -5,7 +5,14 @@
     <!-- PC端表格 -->
     <div v-if="!isMobile" class="card mt-16">
       <el-table v-loading="loading" :data="pendingList" border stripe>
-        <el-table-column prop="project_name" label="项目" min-width="150" show-overflow-tooltip />
+        <template #empty>
+          <EmptyState text="暂无待审核贡献" description="所有贡献记录均已审核完毕" accent="#36CFC9" />
+        </template>
+        <el-table-column prop="project_name" label="项目" min-width="150" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span class="contribution-summary">{{ row.project_name }}</span>
+          </template>
+        </el-table-column>
         <el-table-column prop="user_name" label="成员" width="100" />
         <el-table-column prop="contribution_type" label="贡献类型" width="120">
           <template #default="{ row }">
@@ -14,7 +21,11 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="content" label="贡献内容" min-width="200" show-overflow-tooltip />
+        <el-table-column prop="content" label="贡献内容" min-width="200" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span class="contribution-detail">{{ row.content }}</span>
+          </template>
+        </el-table-column>
         <el-table-column prop="created_at" label="填写时间" width="120">
           <template #default="{ row }">{{ formatDate(row.created_at) }}</template>
         </el-table-column>
@@ -28,17 +39,17 @@
 
     <!-- 移动端卡片列表 -->
     <div v-else v-loading="loading" class="mobile-list">
-      <el-empty v-if="pendingList.length === 0" description="暂无待审核贡献" />
+      <EmptyState v-if="pendingList.length === 0" text="暂无待审核贡献" description="所有贡献记录均已审核完毕" accent="#36CFC9" :compact="true" />
       <el-card v-for="item in pendingList" :key="item.id" class="mobile-card" shadow="hover">
         <div class="mobile-card-header">
-          <span class="mobile-card-title">{{ item.project_name }}</span>
+          <span class="mobile-card-title contribution-summary">{{ item.project_name }}</span>
           <el-tag :type="CONTRIBUTION_TYPE_MAP[item.contribution_type]?.tagType as any" size="small">
             {{ CONTRIBUTION_TYPE_MAP[item.contribution_type]?.label || item.contribution_type }}
           </el-tag>
         </div>
         <div class="mobile-card-body">
           <div class="mobile-card-row"><span class="label">成员：</span><span>{{ item.user_name }}</span></div>
-          <div class="mobile-card-row"><span>{{ item.content }}</span></div>
+          <div class="mobile-card-row"><span class="contribution-detail">{{ item.content }}</span></div>
           <div class="mobile-card-row"><span class="label">填写时间：</span><span>{{ formatDate(item.created_at) }}</span></div>
         </div>
         <div class="mobile-card-actions">
@@ -63,6 +74,7 @@ import { formatDate } from '@/utils/format'
 import { CONTRIBUTION_TYPE_MAP } from '@/utils/constants'
 import { useDevice } from '@/composables/useDevice'
 import PageHeader from '@/components/PageHeader.vue'
+import EmptyState from '@/components/EmptyState.vue'
 import ContributionReviewDialog from './ContributionReviewDialog.vue'
 import type { Contribution } from '@/types'
 
@@ -100,6 +112,16 @@ onMounted(() => {
 <style lang="scss" scoped>
 .mt-16 {
   margin-top: 16px;
+}
+
+/* 需求F：贡献记录 - 概括蓝色、详细绿色 */
+.contribution-summary {
+  color: #409eff;
+  font-weight: 600;
+}
+
+.contribution-detail {
+  color: #67c23a;
 }
 
 /* 移动端样式 */

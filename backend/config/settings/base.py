@@ -43,6 +43,7 @@ INSTALLED_APPS = [
     'apps.exports',
     'apps.intellectual_property',
     'apps.integrations',
+    'apps.common',
 ]
 
 MIDDLEWARE = [
@@ -106,6 +107,16 @@ TIME_ZONE = 'Asia/Shanghai'
 USE_I18N = True
 USE_TZ = True
 
+# ============ 安全设置（P20）============
+# X-Frame-Options：防止点击劫持（由 XFrameOptionsMiddleware 写入响应头）
+X_FRAME_OPTIONS = 'DENY'
+# X-Content-Type-Options：防止 MIME 类型嗅探（由 SecurityMiddleware 写入响应头）
+SECURE_CONTENT_TYPE_NOSNIFF = True
+# X-XSS-Protection：启用浏览器 XSS 过滤（旧版浏览器保护，新版浏览器已内置）
+SECURE_BROWSER_XSS_FILTER = True
+# 跨域凭据
+CORS_ALLOW_CREDENTIALS = True
+
 STATIC_URL = '/static/'
 STATIC_ROOT = os.environ.get('STATIC_ROOT', str(BASE_DIR / 'staticfiles'))
 
@@ -142,8 +153,6 @@ SIMPLE_JWT = {
     'USER_ID_FIELD': 'id',
     'USER_ID_CLAIM': 'user_id',
 }
-
-CORS_ALLOW_CREDENTIALS = True
 
 CELERY_BROKER_URL = os.environ.get('CELERY_BROKER_URL', 'redis://127.0.0.1:6379/0')
 CELERY_RESULT_BACKEND = os.environ.get('CELERY_RESULT_BACKEND', 'redis://127.0.0.1:6379/0')

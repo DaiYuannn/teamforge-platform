@@ -1,23 +1,27 @@
 """
-第三方集成模型（架构预留）
+第三方集成模型
 包含 IntegrationConfig（集成配置）、IntegrationLog（集成调用日志）
-用于对接飞书/企业微信/QQ机器人/通用Webhook/邮件等第三方通知渠道
+用于对接企业微信/通用Webhook/邮件等第三方通知渠道
+（飞书/QQ机器人已移除，不再集成；群机器人推送功能后期实现）
 """
 from django.db import models
 from django.conf import settings
+
+# 导入分散在独立文件中的模型，使 Django 迁移系统能检测到它们
+from .external_models import ExternalPlatform  # noqa: F401
+from .git_models import GitRepository  # noqa: F401
 
 
 class IntegrationConfig(models.Model):
     """
     第三方集成配置模型
-    记录各类第三方通知渠道的连接配置（预留扩展）
+    记录各类第三方通知渠道的连接配置
+    保留渠道：企业微信、通用Webhook、邮件
     """
 
     class Provider(models.TextChoices):
         """第三方服务提供商"""
-        FEISHU = 'feishu', '飞书'
         WECOM = 'wecom', '企业微信'
-        QQBOT = 'qqbot', 'QQ机器人'
         WEBHOOK = 'webhook', '通用Webhook'
         EMAIL = 'email', '邮件'
 
@@ -69,9 +73,7 @@ class IntegrationLog(models.Model):
 
     class Provider(models.TextChoices):
         """第三方服务提供商（与 IntegrationConfig 保持一致）"""
-        FEISHU = 'feishu', '飞书'
         WECOM = 'wecom', '企业微信'
-        QQBOT = 'qqbot', 'QQ机器人'
         WEBHOOK = 'webhook', '通用Webhook'
         EMAIL = 'email', '邮件'
 
@@ -116,3 +118,44 @@ class IntegrationLog(models.Model):
 
     def __str__(self):
         return f'{self.get_provider_display()} - {self.event_type}({self.get_status_display()})'
+
+
+class WebhookConfig(models.Model):
+    """
+    Webhook 配置模型（事件订阅式 Webhook）
+    用于向第三方系统推送指定事件类型的回调通知
+    - name: 配置名称
+    - url: 回调地址
+    - secret: 签名密钥（用于校验请求来源）
+    - is_active: 是否启用
+    - events: 订阅的事件类型列表（JSON 数组）
+    """
+
+    # 配置名称
+    name = models.CharField('名称', max_length=100)
+    # 回调地址
+    url = models.URLField('Webhook 地址')
+    # 签名密钥
+    secret = models.CharField('签名密钥', max_length=200, blank=True, default='')
+    # 是否启用
+    is_active = models.BooleanField('是否启用', default=True)
+    # 订阅事件类型列表（JSON 数组，如 ["task.overdue", "project.closed"]）
+    events = models.JSONField('订阅事件', default=list, blank=True)
+    # 创建时间
+    created_at = models.DateTimeField('创建时间', auto_now_add=True)
+    # 更新时间
+    updated_at = models.DateTimeField('更新时间', auto_now=True)
+
+    class Meta:
+        db_table = 'webhook_configs'
+        verbose_name = 'Webhook配置'
+        verbose_name_plural = verbose_name
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f'{self.name}({self.url})'
+
+    @property
+    def is_subscribed_all(self):
+        """是否订阅全部事件（events 为空数组时视为订阅全部）"""
+        return not self.events

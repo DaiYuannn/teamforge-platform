@@ -35,6 +35,7 @@ from apps.contributions.models import Contribution, MemberRanking, RankingObject
 from apps.files.models import FileAsset, FileVersion
 from apps.finance.models import FinanceBudget, FinanceExpense, FinanceReceipt
 from apps.imports.models import ImportTask
+from apps.integrations.models import IntegrationConfig, IntegrationLog
 from apps.intellectual_property.models import (
     IntellectualPropertyApplication,
     IPApplicationContributor,
@@ -47,7 +48,7 @@ from apps.notifications.models import Notification
 from apps.projects.models import Project, ProjectMember, ProjectStageLog
 from apps.sensitive.models import SensitiveAccessRequest, SensitiveData
 from apps.tasks.models import Task, TaskLog
-from apps.users.models import User
+from apps.users.models import User, UserPreference
 
 PASSWORDS = {
     'admin': 'admin123456',
@@ -352,6 +353,11 @@ class Command(BaseCommand):
             self.create_notifications()
             self.create_import_tasks()
             self.create_operation_logs()
+            self.create_integration_configs()
+            self.create_integration_logs()
+            self.create_user_preferences()
+            self.create_assistant_skills()
+            self.post_adjust_data()
         self.print_summary()
 
     def backend_dir(self) -> Path:
@@ -760,8 +766,175 @@ class Command(BaseCommand):
                                     object_id='P3-P0-FIX', request_method='POST', request_path='/qa/frontend/p0-regression/', request_ip='127.0.0.1',
                                     response_status=200, is_success=True, description='【演示】Codex 完成 P0 前端可用性回归修复，进入截图验收和演示数据验证阶段。')
 
+    # ==================================================================
+    # v1.2 新增：集成配置、集成日志、用户偏好、协作成员技能、数据调整
+    # ==================================================================
+
+    def create_integration_configs(self):
+        """创建第三方集成配置（企业微信/Webhook/邮件）"""
+        IntegrationConfig.objects.create(
+            name='团队通知-企业微信群机器人',
+            provider=IntegrationConfig.Provider.WECOM,
+            webhook_url='https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=demo-wecom-key-0001',
+            app_id='',
+            encrypted_secret='',
+            enabled=True,
+            created_by=self.users['admin'],
+        )
+        IntegrationConfig.objects.create(
+            name='外部系统对接-通用Webhook',
+            provider=IntegrationConfig.Provider.WEBHOOK,
+            webhook_url='https://hooks.demo.example.com/team-management/notify',
+            app_id='',
+            encrypted_secret='',
+            enabled=True,
+            created_by=self.users['admin'],
+        )
+        IntegrationConfig.objects.create(
+            name='邮件通知渠道（备用）',
+            provider=IntegrationConfig.Provider.EMAIL,
+            webhook_url='',
+            app_id='smtp.demo.edu.cn',
+            encrypted_secret='',
+            enabled=False,
+            created_by=self.users['admin'],
+        )
+
+    def create_integration_logs(self):
+        """创建集成调用历史日志，模拟推送记录"""
+        log_entries = [
+            ('wecom', 'task_overdue', '企业微信群机器人', 'success',
+             {'title': '任务延期提醒: 经费票据整理与公开台账', 'content': '任务已逾期，请尽快处理。'},
+             '{"errcode":0,"errmsg":"ok"}', ''),
+            ('wecom', 'contribution_pending', '企业微信群机器人', 'success',
+             {'title': '贡献记录待审核: 智农云链', 'content': '有1条贡献记录待审核。'},
+             '{"errcode":0,"errmsg":"ok"}', ''),
+            ('webhook', 'competition_milestone', '通用Webhook', 'success',
+             {'title': '比赛节点提醒: 大挑国赛', 'content': 'DEMO-2026-001 大挑国赛答辩日临近。'},
+             '{"status":"received"}', ''),
+            ('wecom', 'sensitive_request', '企业微信群机器人', 'failed',
+             {'title': '敏感资料审批提醒', 'content': '赵若安申请查看签名页。'},
+             '{"errcode":93000,"errmsg":"invalid webhook url"}',
+             '企业微信返回错误: invalid webhook url（演示数据，URL 为模拟值）'),
+            ('webhook', 'test', '通用Webhook', 'success',
+             {'title': '群机器人推送测试', 'content': '这是一条测试消息。'},
+             '{"status":"received","code":0}', ''),
+            ('wecom', 'task_overdue', '企业微信群机器人', 'failed',
+             {'title': '任务延期提醒: 路演PPT初稿', 'content': '任务已逾期3天。'},
+             '', 'Connection timeout: 连接超时（演示数据）'),
+            ('wecom', 'custom', '企业微信群机器人', 'success',
+             {'title': '周报提醒', 'content': '请各项目负责人本周五前提交进展。'},
+             '{"errcode":0,"errmsg":"ok"}', ''),
+            ('webhook', 'contribution_pending', '通用Webhook', 'failed',
+             {'title': '贡献记录待审核: 青碳校园', 'content': '有1条贡献记录待审核。'},
+             '', 'HTTP 500: Internal Server Error（演示数据）'),
+        ]
+        for provider, event_type, target, status, payload, response, error in log_entries:
+            IntegrationLog.objects.create(
+                provider=provider,
+                event_type=event_type,
+                target=target,
+                payload=payload,
+                status=status,
+                response=response,
+                error_message=error,
+            )
+
+    def create_user_preferences(self):
+        """为部分用户创建个性化偏好设置"""
+        UserPreference.objects.create(
+            user=self.users['admin'],
+            theme_color='blue',
+            default_landing='dashboard',
+            sidebar_collapsed=False,
+            notification_sound=True,
+            items_per_page=20,
+            dashboard_layout={'cards': ['stats', 'timeline', 'gantt', 'finance']},
+        )
+        UserPreference.objects.create(
+            user=self.users['leader1'],
+            theme_color='green',
+            default_landing='projects',
+            sidebar_collapsed=False,
+            notification_sound=True,
+            items_per_page=20,
+            dashboard_layout={'cards': ['stats', 'tasks', 'timeline']},
+        )
+        UserPreference.objects.create(
+            user=self.users['teacher1'],
+            theme_color='purple',
+            default_landing='dashboard',
+            sidebar_collapsed=True,
+            notification_sound=False,
+            items_per_page=50,
+            dashboard_layout={'cards': ['stats', 'competitions', 'finance']},
+        )
+        UserPreference.objects.create(
+            user=self.users['leader4'],
+            theme_color='orange',
+            default_landing='tasks',
+            sidebar_collapsed=False,
+            notification_sound=True,
+            items_per_page=10,
+            dashboard_layout={'cards': ['stats', 'tasks']},
+        )
+
+    def create_assistant_skills(self):
+        """为 member1~8 分配技能标签（原脚本仅 leader 有技能）"""
+        skill_objs = {s.name: s for s in SkillTag.objects.filter(name__in=SKILLS)}
+        assignments = {
+            'member1': ['前端开发', '文档归档'],
+            'member2': ['数据治理', '文档归档'],
+            'member3': ['用户调研', '商业计划书'],
+            'member4': ['UI设计', 'PPT制作'],
+            'member5': ['算法建模', '后端开发'],
+            'member6': ['知识产权', '文档归档'],
+            'member7': ['财务预算', 'PPT制作'],
+            'member8': ['商业计划书', '路演答辩'],
+        }
+        for key, names in assignments.items():
+            for i, s in enumerate(names, 3):
+                MemberSkill.objects.create(
+                    user=self.users[key],
+                    skill=skill_objs[s],
+                    proficiency=min(i, 5),
+                )
+
+    def post_adjust_data(self):
+        """
+        数据微调：
+        1. 将 DEMO-2026-001（已有获奖比赛）项目阶段提升至 AWARDED
+        2. 将前 2 个项目的逾期任务 overdue_reminded 标记为 True
+        """
+        # 1. 提升项目阶段为已获奖
+        p001 = self.project_by_code.get('DEMO-2026-001')
+        if p001:
+            p001.current_stage = Project.Stage.AWARDED
+            p001.save(update_fields=['current_stage'])
+            # 补充阶段日志
+            ProjectStageLog.objects.create(
+                project=p001,
+                from_stage=Project.Stage.NATIONAL_COMP,
+                to_stage=Project.Stage.AWARDED,
+                operator=p001.leader,
+                note='DEMO-2026-001：大挑国赛获三等奖，进入成果归档阶段。',
+            )
+
+        # 2. 标记前2个项目的逾期任务已提醒
+        for p in self.projects[:2]:
+            overdue_task = Task.objects.filter(
+                project=p, status=Task.Status.OVERDUE
+            ).first()
+            if overdue_task:
+                overdue_task.overdue_reminded = True
+                overdue_task.save(update_fields=['overdue_reminded'])
+
     def clean_demo_data(self):
         self.stdout.write(self.style.WARNING('清理本命令生成的演示数据...'))
+        # v1.2 新增数据清理
+        IntegrationLog.objects.filter(provider__in=['wecom', 'webhook', 'email']).delete()
+        IntegrationConfig.objects.filter(created_by__email__endswith='@demo.com').delete()
+        UserPreference.objects.filter(user__email__endswith='@demo.com').delete()
         demo_projects = Project.objects.filter(code__startswith='DEMO-2026-')
         legacy_demo_projects = Project.objects.filter(
             code__startswith='PROJ-',
@@ -808,5 +981,6 @@ class Command(BaseCommand):
         self.stdout.write('  敏感审批：approver@demo.com / approver123456')
         self.stdout.write('  六个核心负责人：leader1~leader6@demo.com / leader123456')
         self.stdout.write('  普通协作成员：member1~member8@demo.com / member123456')
-        self.stdout.write('数据覆盖：6 项目、22 条参赛记录、小挑/大挑全覆盖、数字中国 2 组、项目历程、人员变动、方向变化、文件版本、贡献排序、IP、敏感资料、通知、日志、导入记录。')
+        self.stdout.write('数据覆盖：6 项目（001 已获奖阶段）、22 条参赛记录、小挑/大挑全覆盖、数字中国 2 组、项目历程、人员变动、方向变化、文件版本、贡献排序、IP、敏感资料、通知、日志、导入记录。')
+        self.stdout.write('v1.2 新增：3 条集成配置（企业微信+Webhook+邮件）、8 条集成日志、4 条用户偏好（蓝/绿/紫/橙主题）、8 名协作成员技能、2 个逾期任务已提醒标记。')
         self.stdout.write(self.style.WARNING('下一步：重新跑 python manage.py check、登录前端，用 Dashboard/项目/比赛/经费/移动端截图验收。'))

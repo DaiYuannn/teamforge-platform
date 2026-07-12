@@ -45,7 +45,7 @@ export const useUserStore = defineStore('user', () => {
     token.value = result.token.access
     refreshToken.value = result.token.refresh
     userInfo.value = result.user
-    role.value = (result.user as any).global_role || result.user.role
+    role.value = result.user.global_role
     setTokens(result.token.access, result.token.refresh)
   }
 
@@ -67,7 +67,7 @@ export const useUserStore = defineStore('user', () => {
   async function fetchProfile(): Promise<User> {
     const user = await authApi.getProfile()
     userInfo.value = user
-    role.value = (user as any).global_role || user.role
+    role.value = user.global_role
     return user
   }
 
@@ -75,7 +75,7 @@ export const useUserStore = defineStore('user', () => {
   async function updateProfile(data: Partial<User>): Promise<User> {
     const user = await authApi.updateProfile(data)
     userInfo.value = user
-    role.value = (user as any).global_role || user.role
+    role.value = user.global_role
     return user
   }
 

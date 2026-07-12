@@ -1,7 +1,7 @@
 """integrations 应用的 Django Admin 配置"""
 from django.contrib import admin
 
-from .models import IntegrationConfig, IntegrationLog
+from .models import IntegrationConfig, IntegrationLog, WebhookConfig
 
 
 @admin.register(IntegrationConfig)
@@ -31,3 +31,14 @@ class IntegrationLogAdmin(admin.ModelAdmin):
         'provider', 'event_type', 'target', 'payload',
         'status', 'response', 'error_message', 'created_at',
     )
+
+
+@admin.register(WebhookConfig)
+class WebhookConfigAdmin(admin.ModelAdmin):
+    """Webhook 配置管理后台"""
+    list_display = (
+        'id', 'name', 'url', 'is_active', 'events', 'created_at', 'updated_at',
+    )
+    list_filter = ('is_active',)
+    search_fields = ('name', 'url')
+    ordering = ('-created_at',)

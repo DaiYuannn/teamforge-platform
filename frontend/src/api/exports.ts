@@ -17,3 +17,12 @@ export const exportData = (type: string, format: string = 'xlsx', projectId?: nu
     responseType: 'blob',
   })
 }
+
+/**
+ * 导出项目完整报告（Word 格式）
+ * 专用接口，返回包含项目基本信息、阶段历程、比赛记录、经费统计、成员列表、知识产权、贡献汇总的完整报告
+ * @param projectId 项目ID
+ */
+export const exportProjectReport = (projectId: number) => {
+  return request.get(`/exports/project-report/${projectId}/`, { responseType: 'blob' })
+}

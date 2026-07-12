@@ -10,9 +10,12 @@
       <!-- 基本信息 -->
       <div class="card">
         <div class="member-header">
-          <el-avatar :size="64" :src="member?.avatar">
-            {{ member?.name?.charAt(0) || 'U' }}
-          </el-avatar>
+          <AvatarWithName
+            :name="member?.name || ''"
+            :avatar-url="member?.avatar"
+            :size="64"
+            :show-name="false"
+          />
           <div class="member-info">
             <h3>{{ member?.name }}</h3>
             <p>{{ member?.email }}</p>
@@ -62,6 +65,70 @@
           </el-col>
         </el-row>
       </div>
+
+      <!-- 贡献汇总 -->
+      <div class="card mt-16">
+        <h3 class="section-title">贡献汇总</h3>
+        <el-row :gutter="16">
+          <el-col :xs="12" :sm="6">
+            <div class="task-stat-card">
+              <div class="stat-value stat-blue">{{ timelineData?.contrib_summary.total ?? 0 }}</div>
+              <div class="stat-label">总贡献数</div>
+            </div>
+          </el-col>
+          <el-col :xs="12" :sm="6">
+            <div class="task-stat-card">
+              <div class="stat-value stat-green">{{ timelineData?.contrib_summary.approved ?? 0 }}</div>
+              <div class="stat-label">已通过</div>
+            </div>
+          </el-col>
+          <el-col :xs="12" :sm="6">
+            <div class="task-stat-card">
+              <div class="stat-value stat-orange">{{ timelineData?.contrib_summary.pending ?? 0 }}</div>
+              <div class="stat-label">待审核</div>
+            </div>
+          </el-col>
+          <el-col :xs="12" :sm="6">
+            <div class="task-stat-card">
+              <div class="stat-value stat-purple">{{ timelineData?.contrib_summary.total_weight ?? 0 }}</div>
+              <div class="stat-label">总权重</div>
+            </div>
+          </el-col>
+        </el-row>
+      </div>
+
+      <!-- 成长时间线 -->
+      <div class="card mt-16">
+        <h3 class="section-title">成长时间线</h3>
+        <el-timeline v-if="timelineData?.events?.length" class="growth-timeline">
+          <el-timeline-item
+            v-for="event in timelineData.events"
+            :key="event.id"
+            :timestamp="event.date ? formatDate(event.date) : '-'"
+            placement="top"
+            :color="getEventColor(event.type)"
+          >
+            <div class="growth-event">
+              <div class="growth-event-header">
+                <span class="growth-event-title">{{ event.title }}</span>
+                <el-tag
+                  size="small"
+                  effect="light"
+                  :style="{ color: getEventColor(event.type), borderColor: getEventColor(event.type) }"
+                >
+                  {{ getEventTypeLabel(event.type) }}
+                </el-tag>
+              </div>
+              <p v-if="event.description" class="growth-event-desc">{{ event.description }}</p>
+              <div v-if="event.project_name" class="growth-event-project">
+                <el-icon><Folder /></el-icon>
+                <span>{{ event.project_name }}</span>
+              </div>
+            </div>
+          </el-timeline-item>
+        </el-timeline>
+        <el-empty v-else description="暂无成长记录" :image-size="60" />
+      </div>
     </div>
   </div>
 </template>
@@ -69,25 +136,69 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
-import { ArrowLeft } from '@element-plus/icons-vue'
-import { getMember } from '@/api/members'
+import { ArrowLeft, Folder } from '@element-plus/icons-vue'
+import { getMember, getGrowthTimeline } from '@/api/members'
 import { formatDate } from '@/utils/format'
 import type { Member } from '@/types'
+import type { GrowthTimelineData } from '@/api/members'
+import AvatarWithName from '@/components/AvatarWithName.vue'
 
 const route = useRoute()
 const memberId = Number(route.params.id)
 
 const loading = ref(false)
 const member = ref<Member | null>(null)
+const timelineData = ref<GrowthTimelineData | null>(null)
+
+// 事件类型颜色映射
+const EVENT_COLOR_MAP: Record<string, string> = {
+  contribution: '#409EFF', // 蓝色
+  project_join: '#67C23A', // 绿色
+  competition: '#E6A23C', // 橙色
+  ip_contribution: '#9B59B6', // 紫色
+  task_completed: '#36CFC9', // 青色
+}
+
+// 事件类型标签映射
+const EVENT_TYPE_LABEL: Record<string, string> = {
+  contribution: '贡献',
+  project_join: '加入项目',
+  competition: '比赛',
+  ip_contribution: '知识产权',
+  task_completed: '任务完成',
+}
+
+/** 获取事件颜色 */
+function getEventColor(type: string): string {
+  return EVENT_COLOR_MAP[type] || '#909399'
+}
+
+/** 获取事件类型标签 */
+function getEventTypeLabel(type: string): string {
+  return EVENT_TYPE_LABEL[type] || type
+}
 
 async function loadData(): Promise<void> {
   loading.value = true
   try {
     member.value = await getMember(memberId)
+    // 加载成长时间线（需要 user_id）
+    const userId = member.value?.user
+    if (userId) {
+      loadTimeline(userId)
+    }
   } catch {
     // 已处理
   } finally {
     loading.value = false
+  }
+}
+
+async function loadTimeline(userId: number): Promise<void> {
+  try {
+    timelineData.value = await getGrowthTimeline(userId)
+  } catch {
+    // 忽略时间线加载错误
   }
 }
 
@@ -156,11 +267,60 @@ onMounted(() => {
     font-size: 28px;
     font-weight: 700;
     color: #409eff;
+
+    &.stat-blue { color: #409eff; }
+    &.stat-green { color: #67c23a; }
+    &.stat-orange { color: #e6a23c; }
+    &.stat-purple { color: #9b59b6; }
   }
   .stat-label {
     font-size: 13px;
     color: #909399;
     margin-top: 4px;
+  }
+}
+
+/* ==================== 成长时间线 ==================== */
+.growth-timeline {
+  padding: 8px 8px 8px 0;
+
+  .growth-event {
+    .growth-event-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 4px;
+
+      .growth-event-title {
+        font-size: 14px;
+        font-weight: 600;
+        color: #303133;
+        flex: 1;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+    }
+
+    .growth-event-desc {
+      font-size: 13px;
+      color: #606266;
+      margin: 4px 0;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    .growth-event-project {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 12px;
+      color: #909399;
+      margin-top: 4px;
+    }
   }
 }
 </style>

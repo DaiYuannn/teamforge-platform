@@ -1,9 +1,12 @@
 """
 审计日志视图
-- OperationLogViewSet: 操作日志只读查询（list/retrieve）+ 模块统计 + 最近日志
+- OperationLogViewSet: 操作日志只读查询（list/retrieve）+ 模块统计 + 最近日志 + 导出 Excel
 权限：老师或管理员（IsTeacherOrAdmin）
 """
+import io
+
 from django.db.models import Count, Q
+from django.http import HttpResponse
 from django.utils import timezone
 from datetime import timedelta
 from rest_framework.decorators import action
@@ -23,6 +26,7 @@ class OperationLogViewSet(MultiSerializerMixin, MultiPermissionMixin, ReadOnlyMo
     - retrieve: 查看操作日志详情
     - module_stats: 按模块统计操作数
     - recent: 最近 N 条操作日志
+    - export: 导出操作日志为 Excel（应用相同筛选条件）
     权限：老师或管理员
     """
     queryset = OperationLog.objects.select_related('operator').all()
@@ -37,6 +41,7 @@ class OperationLogViewSet(MultiSerializerMixin, MultiPermissionMixin, ReadOnlyMo
         'retrieve': [IsTeacherOrAdmin],
         'module_stats': [IsTeacherOrAdmin],
         'recent': [IsTeacherOrAdmin],
+        'export': [IsTeacherOrAdmin],
     }
 
     # 默认权限
@@ -146,3 +151,62 @@ class OperationLogViewSet(MultiSerializerMixin, MultiPermissionMixin, ReadOnlyMo
         queryset = self.get_queryset()[:limit]
         serializer = OperationLogListSerializer(queryset, many=True)
         return success_response(serializer.data)
+
+    @action(detail=False, methods=['get'])
+    def export(self, request):
+        """
+        导出操作日志为 Excel（应用与 list 相同的筛选条件）
+        GET /api/v1/audit/operation-logs/export/
+        查询参数: module, operator, operation_type, start_date, end_date
+        返回: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+        """
+        from openpyxl import Workbook
+        from openpyxl.utils import get_column_letter
+
+        queryset = self.filter_queryset(self.get_queryset())
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = '操作日志'
+
+        headers = [
+            'ID', '操作人', '操作类型', '操作模块', '对象类型', '对象ID',
+            '请求方法', '请求路径', '响应状态码', '是否成功',
+            '操作IP', 'User-Agent', '操作描述', '创建时间',
+        ]
+        ws.append(headers)
+
+        for log in queryset:
+            ws.append([
+                log.id,
+                log.operator.name if log.operator else '',
+                log.get_operation_type_display(),
+                log.module,
+                log.object_type,
+                log.object_id,
+                log.request_method,
+                log.request_path,
+                log.response_status,
+                '成功' if log.is_success else '失败',
+                log.request_ip or '',
+                log.user_agent,
+                log.description,
+                log.created_at.strftime('%Y-%m-%d %H:%M:%S') if log.created_at else '',
+            ])
+
+        # 自适应列宽（粗略）
+        for col_idx, header in enumerate(headers, start=1):
+            ws.column_dimensions[get_column_letter(col_idx)].width = max(len(header) * 2, 14)
+
+        buffer = io.BytesIO()
+        wb.save(buffer)
+        buffer.seek(0)
+
+        timestamp = timezone.now().strftime('%Y%m%d_%H%M%S')
+        filename = f'operation_logs_{timestamp}.xlsx'
+        response = HttpResponse(
+            buffer.getvalue(),
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        )
+        response['Content-Disposition'] = f'attachment; filename="{filename}"'
+        return response

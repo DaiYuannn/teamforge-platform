@@ -79,6 +79,19 @@ def check_task_overdue():
             task.overdue_reminded = True
             task.save(update_fields=['overdue_reminded'])
 
+        # 群机器人推送（高优先级）
+        if count > 0:
+            try:
+                from apps.integrations.services import BotPushService
+                BotPushService.push_task_reminder(
+                    task_title=overdue_tasks.first().title if overdue_tasks else '',
+                    assignee_name=overdue_tasks.first().assignee.name if overdue_tasks.first() and overdue_tasks.first().assignee else '',
+                    project_name=overdue_tasks.first().project.name if overdue_tasks.first() and overdue_tasks.first().project else '',
+                    deadline=overdue_tasks.first().deadline.strftime('%Y-%m-%d %H:%M') if overdue_tasks.first() and overdue_tasks.first().deadline else '',
+                )
+            except Exception as e:
+                logger.warning('群机器人推送失败: %s', e)
+
         logger.info('任务延期提醒完成，共提醒 %d 个任务', count)
         return f'已完成 {count} 个任务的延期提醒'
     except Exception as e:

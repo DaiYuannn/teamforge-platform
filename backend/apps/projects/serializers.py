@@ -52,7 +52,8 @@ class ProjectListSerializer(serializers.ModelSerializer):
             'current_stage', 'current_stage_display',
             'status', 'status_display', 'priority', 'priority_display',
             'start_date', 'planned_end_date', 'actual_end_date',
-            'last_leader_update', 'member_count', 'created_at',
+            'last_leader_update', 'archived_at', 'is_archived',
+            'member_count', 'created_at',
         )
         read_only_fields = fields
 
@@ -73,10 +74,11 @@ class ProjectSerializer(serializers.ModelSerializer):
             'current_stage', 'current_stage_display',
             'status', 'status_display', 'priority', 'priority_display',
             'start_date', 'planned_end_date', 'actual_end_date',
-            'intro', 'last_leader_update', 'members', 'stage_logs',
+            'intro', 'last_leader_update', 'archived_at', 'is_archived',
+            'members', 'stage_logs',
             'created_at', 'updated_at',
         )
-        read_only_fields = ('id', 'last_leader_update', 'created_at', 'updated_at')
+        read_only_fields = ('id', 'last_leader_update', 'archived_at', 'created_at', 'updated_at')
 
 
 class ProjectCreateSerializer(serializers.ModelSerializer):

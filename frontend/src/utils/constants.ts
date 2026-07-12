@@ -103,6 +103,31 @@ export const COMPETITION_LEVEL_MAP: Record<string, { label: string; tagType: str
   enterprise: { label: '企业级', tagType: 'success' },
 }
 
+// 比赛级别颜色映射（需求C：校赛→国际赛，由低到高，蓝→绿→橙→红→紫）
+// 同时兼容 school/city/province/national/international 与现有 national/provincial/municipal/school/enterprise 两套命名
+export const STAGE_COLOR_MAP: Record<string, string> = {
+  school: 'primary', // 校赛/院赛 - 蓝色
+  city: 'success', // 市赛 - 绿色
+  municipal: 'success', // 市赛 - 绿色（兼容 municipal 命名）
+  province: 'warning', // 省赛 - 橙色
+  provincial: 'warning', // 省赛 - 橙色（兼容 provincial 命名）
+  national: 'danger', // 国赛 - 红色
+  international: '', // 国际赛 - 紫色（自定义）
+  enterprise: 'success', // 企业级 - 绿色（兼容）
+}
+
+// 比赛级别对应的十六进制颜色（用于时间线节点、矩阵单元格等非 el-tag 场景）
+export const STAGE_HEX_COLOR_MAP: Record<string, string> = {
+  school: '#409EFF', // 校赛 - 蓝色
+  city: '#67C23A', // 市赛 - 绿色
+  municipal: '#67C23A', // 市赛 - 绿色
+  province: '#E6A23C', // 省赛 - 橙色
+  provincial: '#E6A23C', // 省赛 - 橙色
+  national: '#F56C6C', // 国赛 - 红色
+  international: '#9B59B6', // 国际赛 - 紫色
+  enterprise: '#67C23A', // 企业级 - 绿色
+}
+
 // 比赛状态映射
 export const COMPETITION_STATUS_MAP: Record<string, { label: string; tagType: string }> = {
   upcoming: { label: '即将开始', tagType: 'info' },
@@ -112,8 +137,8 @@ export const COMPETITION_STATUS_MAP: Record<string, { label: string; tagType: st
   completed: { label: '已结束', tagType: 'info' },
 }
 
-// 文件权限级别映射
-export const FILE_PERMISSION_MAP: Record<string, { label: string; tagType: string }> = {
+// 文件级别映射
+export const FILE_LEVEL_MAP: Record<string, { label: string; tagType: string }> = {
   public: { label: '公开', tagType: 'success' },
   internal: { label: '内部', tagType: 'warning' },
   sensitive: { label: '敏感', tagType: 'danger' },
@@ -397,9 +422,7 @@ export const ACCESS_REQUEST_STATUS_MAP: Record<string, { label: string; tagType:
 
 // 集成 Provider 映射
 export const INTEGRATION_PROVIDER_MAP: Record<string, { label: string; tagType: string }> = {
-  feishu: { label: '飞书', tagType: 'success' },
   wecom: { label: '企业微信', tagType: 'success' },
-  qqbot: { label: 'QQ机器人', tagType: '' },
   webhook: { label: 'Webhook', tagType: 'warning' },
   email: { label: '邮件', tagType: 'info' },
 }

@@ -45,12 +45,12 @@ export function clearTokens(): void {
   localStorage.removeItem(REFRESH_TOKEN_KEY)
 }
 
-/** 跳转登录页 */
+/** 跳转门户首页（登录入口） */
 function redirectToLogin(): void {
   clearTokens()
-  // 避免在登录页重复跳转
-  if (window.location.pathname !== '/login') {
-    window.location.href = '/login'
+  // 避免在门户首页重复跳转
+  if (window.location.pathname !== '/portal/index.html') {
+    window.location.href = '/portal/index.html'
   }
 }
 

@@ -2,6 +2,9 @@
 from django.contrib import admin
 
 from .models import Project, ProjectMember, ProjectStageLog
+from .milestone_models import Milestone
+from .risk_models import ProjectRisk
+from .template_models import ProjectTemplate
 
 
 @admin.register(Project)
@@ -30,3 +33,30 @@ class ProjectStageLogAdmin(admin.ModelAdmin):
     list_filter = ('to_stage',)
     search_fields = ('project__name', 'note')
     raw_id_fields = ('project', 'operator')
+
+
+@admin.register(Milestone)
+class MilestoneAdmin(admin.ModelAdmin):
+    """项目里程碑管理后台"""
+    list_display = ('id', 'project', 'title', 'due_date', 'is_completed', 'sort_order', 'created_at')
+    list_filter = ('is_completed',)
+    search_fields = ('title', 'project__name')
+    raw_id_fields = ('project',)
+
+
+@admin.register(ProjectRisk)
+class ProjectRiskAdmin(admin.ModelAdmin):
+    """项目风险管理后台"""
+    list_display = ('id', 'project', 'title', 'level', 'status', 'identified_by', 'identified_at', 'resolved_at')
+    list_filter = ('level', 'status')
+    search_fields = ('title', 'project__name')
+    raw_id_fields = ('project', 'identified_by')
+
+
+@admin.register(ProjectTemplate)
+class ProjectTemplateAdmin(admin.ModelAdmin):
+    """项目模板管理后台"""
+    list_display = ('id', 'name', 'category', 'created_by', 'is_active', 'created_at')
+    list_filter = ('is_active', 'category')
+    search_fields = ('name', 'description', 'category')
+    raw_id_fields = ('created_by',)

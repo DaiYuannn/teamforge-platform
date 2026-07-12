@@ -5,6 +5,8 @@
 - internal: 项目成员可下载
 - sensitive: 走审批流程（第三期实现）
 """
+import hashlib
+
 from django.db import models
 from django.conf import settings
 
@@ -56,6 +58,10 @@ class FileAsset(models.Model):
     )
     # 版本号
     version = models.IntegerField('版本号', default=1)
+    # 文件哈希（SHA-256，上传时自动计算）
+    file_hash = models.CharField('文件哈希', max_length=64, blank=True, default='')
+    # 水印文字（可选，下载水印版本时使用）
+    watermark_text = models.CharField('水印文字', max_length=200, blank=True, default='')
     # 创建时间
     created_at = models.DateTimeField('创建时间', auto_now_add=True)
     # 更新时间
@@ -69,6 +75,40 @@ class FileAsset(models.Model):
 
     def __str__(self):
         return self.name
+
+    def save(self, *args, **kwargs):
+        """
+        重写保存逻辑：
+        - 调用父类保存（文件会通过 pre_save 写入存储）
+        - 保存后计算 SHA-256 哈希，若哈希有变化则单独更新
+        """
+        super().save(*args, **kwargs)
+        self._update_file_hash_if_needed()
+
+    def _compute_sha256(self):
+        """计算文件 SHA-256 哈希，文件不可读时返回 None"""
+        if not self.file:
+            return None
+        try:
+            self.file.open('rb')
+            try:
+                sha256 = hashlib.sha256()
+                for chunk in iter(lambda: self.file.read(8192), b''):
+                    sha256.update(chunk)
+                return sha256.hexdigest()
+            finally:
+                self.file.close()
+        except Exception:
+            # 文件不存在或不可读（如测试中的虚拟路径），跳过
+            return None
+
+    def _update_file_hash_if_needed(self):
+        """计算并更新文件哈希（仅在哈希变化时写入数据库）"""
+        new_hash = self._compute_sha256()
+        if new_hash and new_hash != self.file_hash:
+            self.file_hash = new_hash
+            # 使用查询集更新，避免再次触发 save 逻辑
+            type(self).objects.filter(pk=self.pk).update(file_hash=new_hash)
 
 
 class FileVersion(models.Model):
@@ -107,3 +147,8 @@ class FileVersion(models.Model):
 
     def __str__(self):
         return f'{self.file_asset.name} v{self.version}'
+
+
+# 导入文件标签模型（独立文件，避免迁移冲突）
+from .tag_models import FileTag, FileTagRelation  # noqa: E402,F401
+from .share_models import FileShareLink  # noqa: E402,F401

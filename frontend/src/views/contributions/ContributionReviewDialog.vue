@@ -7,12 +7,24 @@
   >
     <!-- 贡献信息展示 -->
     <el-descriptions v-if="contribution" :column="1" border class="contribution-info">
-      <el-descriptions-item label="项目">{{ contribution.project_name }}</el-descriptions-item>
+      <el-descriptions-item label="项目">
+        <span class="contribution-summary">{{ contribution.project_name }}</span>
+      </el-descriptions-item>
       <el-descriptions-item label="成员">{{ contribution.user_name }}</el-descriptions-item>
       <el-descriptions-item label="贡献类型">
         {{ CONTRIBUTION_TYPE_MAP[contribution.contribution_type]?.label || contribution.contribution_type }}
+        <el-tag
+          v-if="contribution.weight != null"
+          class="weight-tag"
+          size="small"
+          effect="dark"
+        >
+          权重 {{ contribution.weight }}
+        </el-tag>
       </el-descriptions-item>
-      <el-descriptions-item label="贡献内容">{{ contribution.content }}</el-descriptions-item>
+      <el-descriptions-item label="贡献内容">
+        <span class="contribution-detail">{{ contribution.content }}</span>
+      </el-descriptions-item>
     </el-descriptions>
 
     <el-divider />
@@ -148,6 +160,24 @@ watch(
 <style lang="scss" scoped>
 .contribution-info {
   margin-bottom: 16px;
+}
+
+/* 需求F：贡献记录 - 概括蓝色、详细绿色、权重紫色 */
+.contribution-summary {
+  color: #409eff;
+  font-weight: 600;
+}
+
+.contribution-detail {
+  color: #67c23a;
+}
+
+.weight-tag {
+  background-color: #9b59b6 !important;
+  border-color: #9b59b6 !important;
+  color: #fff !important;
+  font-weight: 600;
+  margin-left: 8px;
 }
 
 .form-help {

@@ -1,8 +1,10 @@
 <template>
   <div class="page-container" v-permission="'sys_admin'">
-    <PageHeader title="第三方集成配置" subtitle="管理飞书、企业微信等第三方集成">
+    <PageHeader title="第三方集成配置" subtitle="管理企业微信、Webhook、邮件等通知渠道">
       <template #actions>
+        <el-button type="success" :icon="Promotion" @click="handleTestPush" :loading="pushLoading">测试群机器人推送</el-button>
         <el-button type="primary" :icon="Plus" @click="handleCreate">新增配置</el-button>
+        <el-button :icon="Refresh" @click="loadConfigs">刷新</el-button>
       </template>
     </PageHeader>
 
@@ -103,13 +105,14 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
-import { Plus } from '@element-plus/icons-vue'
+import { Plus, Refresh, Promotion } from '@element-plus/icons-vue'
 import {
   getIntegrationConfigs,
   createIntegrationConfig,
   updateIntegrationConfig,
   deleteIntegrationConfig,
   getIntegrationLogs,
+  testBotPush,
 } from '@/api/integrations'
 import { formatDateTime } from '@/utils/format'
 import { INTEGRATION_PROVIDER_MAP, INTEGRATION_LOG_STATUS_MAP } from '@/utils/constants'
@@ -248,6 +251,41 @@ async function handleDelete(row: any): Promise<void> {
     loadConfigs()
   } catch {
     // 取消
+  }
+}
+
+// ============================================
+// 群机器人推送测试
+// ============================================
+const pushLoading = ref(false)
+
+async function handleTestPush() {
+  try {
+    await ElMessageBox.confirm(
+      '将向所有已启用的集成配置发送一条测试消息，确认继续？',
+      '测试群机器人推送',
+      { type: 'info', confirmButtonText: '发送测试', cancelButtonText: '取消' }
+    )
+  } catch {
+    return
+  }
+
+  pushLoading.value = true
+  try {
+    const resp = await testBotPush({
+      title: '群机器人推送测试',
+      content: '这是一条来自团队管理系统的测试消息，收到此消息说明推送配置正常工作。',
+    })
+    const data = resp.data || resp
+    if (data.total === 0) {
+      ElMessage.warning('未找到已启用的集成配置，请先添加并启用企业微信或 Webhook 配置')
+    } else {
+      ElMessage.success(`推送完成: ${data.success} 成功, ${data.failed} 失败`)
+    }
+  } catch {
+    ElMessage.error('推送测试失败')
+  } finally {
+    pushLoading.value = false
   }
 }
 

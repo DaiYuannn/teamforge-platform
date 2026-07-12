@@ -36,6 +36,20 @@ class IsSysAdmin(RolePermission):
     required_roles = ['sys_admin']
 
 
+class IsSysAdminOrReadOnly(BasePermission):
+    """系统管理员可写，其他认证用户只读"""
+
+    def has_permission(self, request, view):
+        if not request.user or not request.user.is_authenticated:
+            return False
+        if request.method in SAFE_METHODS:
+            return True
+        return request.user.global_role == 'sys_admin'
+
+    def has_object_permission(self, request, view, obj):
+        return self.has_permission(request, view)
+
+
 class IsTeacher(RolePermission):
     """老师权限"""
     required_roles = ['teacher']

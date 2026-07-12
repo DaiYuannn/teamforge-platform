@@ -28,18 +28,26 @@
 
     <!-- 经费支出表格 -->
     <el-table :data="expenses" border stripe style="width: 100%" class="expense-table">
+      <template #empty>
+        <EmptyState text="暂无经费记录" description="添加支出后将在此展示" :illustration="true" accent="#F56C6C" />
+      </template>
       <el-table-column prop="expense_date" label="日期" width="120">
         <template #default="{ row }">{{ formatDate(row.expense_date) }}</template>
       </el-table-column>
       <el-table-column prop="category" label="类别" width="100">
         <template #default="{ row }">
-          <el-tag :color="getFinanceCategoryColor(row.category)" effect="plain" size="small">
+          <el-tag
+            :color="getFinanceCategoryColor(row.category)"
+            effect="dark"
+            size="small"
+            class="finance-category-tag"
+          >
             {{ getFinanceCategoryLabel(row.category) }}
           </el-tag>
         </template>
       </el-table-column>
       <el-table-column prop="title" label="说明" min-width="150" show-overflow-tooltip />
-      <el-table-column prop="amount" label="金额" width="120" align="right">
+      <el-table-column prop="amount" label="金额" width="130" align="right">
         <template #default="{ row }">
           <span class="amount">{{ formatMoneyWithComma(row.amount) }}</span>
         </template>
@@ -112,6 +120,7 @@ import {
   getFinanceExpenseStatusTagType,
 } from '@/utils/format'
 import type { FinanceExpense, FinanceReceipt } from '@/types'
+import EmptyState from '@/components/EmptyState.vue'
 
 /**
  * 经费表格组件
@@ -203,6 +212,13 @@ function getFileName(filePath: string | undefined): string {
   .amount {
     font-weight: 600;
     color: #f56c6c;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* 需求E：支出类型标签深底浅字 */
+  .finance-category-tag {
+    color: #fff !important;
+    border: none;
   }
 
   .text-muted {

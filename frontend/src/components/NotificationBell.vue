@@ -1,5 +1,5 @@
 <template>
-  <el-popover placement="bottom-end" :width="360" trigger="click" @show="loadRecent">
+  <el-popover placement="bottom-end" :width="360" trigger="click" @show="handlePopoverShow">
     <template #reference>
       <el-badge :value="unreadCount" :max="99" :hidden="unreadCount === 0" class="bell-badge">
         <el-icon size="20" class="bell-icon"><Bell /></el-icon>
@@ -72,6 +72,12 @@ async function loadRecent(): Promise<void> {
   } finally {
     loading.value = false
   }
+}
+
+// 弹出面板展开时：刷新最近通知并同步未读数（需求H：保证实时性）
+function handlePopoverShow(): void {
+  loadRecent()
+  loadUnreadCount()
 }
 
 // 点击单条通知

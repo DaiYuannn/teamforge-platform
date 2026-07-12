@@ -15,10 +15,12 @@ class ImportTask(models.Model):
     class Module(models.TextChoices):
         """导入模块"""
         PROJECTS = 'projects', '项目'
+        HISTORY_PROJECTS = 'history_projects', '历史项目'
         MEMBERS = 'members', '成员'
         COMPETITIONS = 'competitions', '比赛'
         TASKS = 'tasks', '任务'
         FINANCE = 'finance', '经费'
+        IP_APPLICATIONS = 'ip_applications', '知识产权'
 
     class Status(models.TextChoices):
         """导入状态"""

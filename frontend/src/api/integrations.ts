@@ -25,3 +25,11 @@ export const deleteIntegrationConfig = (id: number) => request.delete(`${BASE}/c
 
 /** 获取集成日志列表 */
 export const getIntegrationLogs = (params?: any) => request.get(`${BASE}/logs/`, { params })
+
+// ============================================
+// 群机器人推送 API
+// ============================================
+
+/** 测试群机器人推送 */
+export const testBotPush = (data?: { title?: string; content?: string; markdown?: string }) =>
+  request.post(`${BASE}/bot-push/test/`, data || {})

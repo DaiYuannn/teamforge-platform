@@ -8,13 +8,19 @@ from django.conf import settings
 from django.utils import timezone
 
 from apps.projects.models import Project
+from apps.common.soft_delete import SoftDeleteMixin, SoftDeleteManager
 
 
-class Task(models.Model):
+class Task(SoftDeleteMixin, models.Model):
     """
     任务模型
     支持任务分配、协作者、审核、状态流转等
+    支持软删除（回收站）：删除后进入回收站，可恢复或永久删除
     """
+
+    # 默认管理器：仅返回未软删除的任务；回收站请使用 all_objects
+    objects = SoftDeleteManager()
+    all_objects = models.Manager()
 
     class Status(models.TextChoices):
         """任务状态"""
@@ -26,6 +32,13 @@ class Task(models.Model):
         PAUSED = 'paused', '暂停'
         CANCELLED = 'cancelled', '已取消'
         NEED_HELP = 'need_help', '需要帮助'
+
+    class Priority(models.TextChoices):
+        """任务优先级"""
+        LOW = 'low', '低'
+        MEDIUM = 'medium', '中'
+        HIGH = 'high', '高'
+        URGENT = 'urgent', '紧急'
 
     # 所属项目
     project = models.ForeignKey(
@@ -62,6 +75,15 @@ class Task(models.Model):
     description = models.TextField('任务描述', blank=True, default='')
     # 截止时间
     deadline = models.DateTimeField('截止时间', null=True, blank=True)
+    # 开始时间
+    start_date = models.DateTimeField('开始时间', null=True, blank=True)
+    # 任务优先级
+    priority = models.CharField(
+        '优先级',
+        max_length=10,
+        choices=Priority.choices,
+        default=Priority.MEDIUM,
+    )
     # 任务状态
     status = models.CharField(
         '任务状态',
@@ -152,3 +174,8 @@ class TaskLog(models.Model):
 
     def __str__(self):
         return f'{self.task.title}: {self.from_status} -> {self.to_status}'
+
+
+from .subtask_models import SubTask  # noqa: E402,F401
+from .dependency_models import TaskDependency  # noqa: E402,F401
+from .comment_models import TaskComment  # noqa: E402,F401

@@ -43,9 +43,12 @@ class TaskViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet):
         'change_status': [IsAuthenticated],
     }
 
-    filterset_fields = ['project', 'assignee', 'creator', 'status', 'reviewer']
+    filterset_fields = ['project', 'assignee', 'creator', 'status', 'priority', 'reviewer']
     search_fields = ['title', 'description', 'project__name']
-    ordering_fields = ['created_at', 'deadline', 'status']
+    ordering_fields = [
+        'created_at', 'updated_at', 'title', 'status', 'priority',
+        'deadline', 'start_date',
+    ]
 
     def create(self, request, *args, **kwargs):
         """创建任务"""
@@ -69,11 +72,15 @@ class TaskViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet):
         return success_response(TaskSerializer(task).data, message='任务更新成功')
 
     def destroy(self, request, *args, **kwargs):
-        """删除任务"""
+        """删除任务（软删除，移入回收站）"""
         instance = self.get_object()
         self.check_object_permissions(request, instance)
-        instance.delete()
-        return success_response(message='任务删除成功')
+        self.perform_destroy(instance)
+        return success_response(message='任务已移入回收站')
+
+    def perform_destroy(self, instance):
+        """软删除而非物理删除，可通过回收站恢复"""
+        instance.soft_delete(getattr(self.request, 'user', None))
 
     @action(detail=True, methods=['post'])
     def change_status(self, request, pk=None):

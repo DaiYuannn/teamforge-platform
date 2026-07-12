@@ -8,6 +8,7 @@ from django.db import models
 from django.conf import settings
 
 from apps.projects.models import Project
+from apps.common.soft_delete import SoftDeleteMixin, SoftDeleteManager
 
 
 class FinanceBudget(models.Model):
@@ -69,12 +70,17 @@ class FinanceBudget(models.Model):
         return self.total_income - self.used_amount
 
 
-class FinanceExpense(models.Model):
+class FinanceExpense(SoftDeleteMixin, models.Model):
     """
     经费明细模型
     记录每笔经费支出
     关键：经费明细对所有认证用户可见
+    支持软删除（回收站）：删除后进入回收站，可恢复或永久删除
     """
+
+    # 默认管理器：仅返回未软删除的经费明细；回收站请使用 all_objects
+    objects = SoftDeleteManager()
+    all_objects = models.Manager()
 
     class Category(models.TextChoices):
         """经费类别"""

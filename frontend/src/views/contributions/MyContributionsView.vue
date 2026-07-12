@@ -10,7 +10,14 @@
     <!-- PC端表格 -->
     <div v-if="!isMobile" class="card mt-16">
       <el-table v-loading="loading" :data="contributionList" border stripe>
-        <el-table-column prop="project_name" label="项目" min-width="150" show-overflow-tooltip />
+        <template #empty>
+          <EmptyState text="暂无贡献记录" description="点击「填写贡献」记录你的项目贡献" accent="#36CFC9" />
+        </template>
+        <el-table-column prop="project_name" label="项目" min-width="150" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span class="contribution-summary">{{ row.project_name }}</span>
+          </template>
+        </el-table-column>
         <el-table-column prop="contribution_type" label="贡献类型" width="120">
           <template #default="{ row }">
             <el-tag :type="CONTRIBUTION_TYPE_MAP[row.contribution_type]?.tagType as any" size="small">
@@ -18,7 +25,24 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="content" label="贡献内容" min-width="200" show-overflow-tooltip />
+        <el-table-column prop="content" label="贡献内容" min-width="200" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span class="contribution-detail">{{ row.content }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="权重" width="90" align="center">
+          <template #default="{ row }">
+            <el-tag
+              v-if="row.weight != null"
+              class="weight-tag"
+              size="small"
+              effect="dark"
+            >
+              {{ row.weight }}
+            </el-tag>
+            <span v-else class="text-muted">-</span>
+          </template>
+        </el-table-column>
         <el-table-column prop="status" label="状态" width="100">
           <template #default="{ row }">
             <el-tag :type="CONTRIBUTION_STATUS_MAP[row.status]?.tagType as any" size="small">
@@ -43,10 +67,10 @@
 
     <!-- 移动端卡片列表 -->
     <div v-else v-loading="loading" class="mobile-list">
-      <el-empty v-if="contributionList.length === 0" description="暂无贡献记录" />
+      <EmptyState v-if="contributionList.length === 0" text="暂无贡献记录" description="点击「填写贡献」记录你的项目贡献" accent="#36CFC9" :compact="true" />
       <el-card v-for="item in contributionList" :key="item.id" class="mobile-card" shadow="hover">
         <div class="mobile-card-header">
-          <span class="mobile-card-title">{{ item.project_name }}</span>
+          <span class="mobile-card-title contribution-summary">{{ item.project_name }}</span>
           <el-tag :type="CONTRIBUTION_STATUS_MAP[item.status]?.tagType as any" size="small">
             {{ CONTRIBUTION_STATUS_MAP[item.status]?.label || item.status }}
           </el-tag>
@@ -56,8 +80,11 @@
             <el-tag :type="CONTRIBUTION_TYPE_MAP[item.contribution_type]?.tagType as any" size="small">
               {{ CONTRIBUTION_TYPE_MAP[item.contribution_type]?.label || item.contribution_type }}
             </el-tag>
+            <el-tag v-if="item.weight != null" class="weight-tag" size="small" effect="dark">
+              权重 {{ item.weight }}
+            </el-tag>
           </div>
-          <div class="mobile-card-row"><span>{{ item.content }}</span></div>
+          <div class="mobile-card-row"><span class="contribution-detail">{{ item.content }}</span></div>
           <div class="mobile-card-row" v-if="item.reviewer_name">
             <span class="label">审核人：</span><span>{{ item.reviewer_name }}</span>
           </div>
@@ -88,6 +115,7 @@ import { formatDate } from '@/utils/format'
 import { CONTRIBUTION_TYPE_MAP, CONTRIBUTION_STATUS_MAP } from '@/utils/constants'
 import { useDevice } from '@/composables/useDevice'
 import PageHeader from '@/components/PageHeader.vue'
+import EmptyState from '@/components/EmptyState.vue'
 import ContributionFormDialog from './ContributionFormDialog.vue'
 import type { Contribution } from '@/types'
 
@@ -162,6 +190,27 @@ onMounted(() => {
   margin-top: 16px;
 }
 
+/* 需求F：贡献记录 - 概括蓝色、详细绿色、权重紫色 */
+.contribution-summary {
+  color: #409eff;
+  font-weight: 600;
+}
+
+.contribution-detail {
+  color: #67c23a;
+}
+
+.weight-tag {
+  background-color: #9b59b6 !important;
+  border-color: #9b59b6 !important;
+  color: #fff !important;
+  font-weight: 600;
+}
+
+.text-muted {
+  color: #c0c4cc;
+}
+
 /* 移动端样式 */
 .mobile-list {
   .mobile-card {
@@ -185,6 +234,9 @@ onMounted(() => {
         font-size: 13px;
         color: #606266;
         margin-bottom: 4px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
 
         .label {
           color: #909399;

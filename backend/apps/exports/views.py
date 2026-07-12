@@ -8,7 +8,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
 from common.response import error_response
-from .services import ExcelExportService
+from .services import ExcelExportService, CsvExportService
 from .word_service import WordExportService
 from .pdf_service import PdfExportService
 
@@ -16,6 +16,10 @@ from .pdf_service import PdfExportService
 # 导入模板表头映射（type -> 表头列表）
 _TEMPLATE_HEADERS = {
     'projects': ['项目名称', '项目编号', '负责人', '当前阶段', '状态', '开始时间', '预计结束'],
+    'history_projects': [
+        '项目名称', '项目编号', '负责人ID', '当前阶段', '状态',
+        '开始时间', '预计结束', '实际结束', '简介', '优先级',
+    ],
     'finance_budget': ['项目编号', '奖金总额', '其他收入', '统计周期'],
     'tasks': ['任务标题', '项目编号', '指派给', '截止时间'],
     'contributions': ['项目编号', '贡献人', '贡献类型', '贡献内容', '权重', '统计周期'],
@@ -98,6 +102,10 @@ class ExportView(APIView):
                     return ExcelExportService.export_contributions(project_id)
                 elif export_type == 'ip_applications':
                     return ExcelExportService.export_ip_applications()
+                elif export_type == 'members':
+                    return ExcelExportService.export_members()
+                elif export_type == 'competitions':
+                    return ExcelExportService.export_competitions()
 
             # ============ Word 导出 ============
             elif fmt == 'docx':
@@ -118,6 +126,29 @@ class ExportView(APIView):
                     return PdfExportService.export_project_report(project_id)
                 elif export_type == 'finance_report':
                     return PdfExportService.export_finance_report(project_id)
+
+            # ============ CSV 导出 ============
+            elif fmt == 'csv':
+                if export_type == 'projects':
+                    return CsvExportService.export_projects()
+                elif export_type == 'finance_budget':
+                    return CsvExportService.export_finance_budget()
+                elif export_type == 'finance_detail':
+                    if not project_id:
+                        return error_response(message='经费明细导出需提供 project_id', code=1001)
+                    return CsvExportService.export_finance_detail(project_id)
+                elif export_type == 'tasks':
+                    return CsvExportService.export_tasks(project_id)
+                elif export_type == 'contributions':
+                    if not project_id:
+                        return error_response(message='贡献记录导出需提供 project_id', code=1001)
+                    return CsvExportService.export_contributions(project_id)
+                elif export_type == 'ip_applications':
+                    return CsvExportService.export_ip_applications()
+                elif export_type == 'members':
+                    return CsvExportService.export_members()
+                elif export_type == 'competitions':
+                    return CsvExportService.export_competitions()
 
             # 不支持的类型/格式组合
             return error_response(

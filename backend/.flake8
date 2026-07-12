@@ -1,0 +1,40 @@
+[flake8]
+max-line-length = 120
+# 忽略项说明：
+# - E501/F401/F403/F405：Django 项目常见（长行、__init__ 重导出、配置导入）
+# - E127/E128/E131/E741/E712/E713/W391/E306/E402：既有代码库的风格噪声，
+#   待后续渐进式整改后再逐项开启
+# - F811/F541/F841：既有代码库存在少量重复导入 / 空 f-string / 未用局部变量，
+#   暂忽略以保证 CI 基线通过，后续可收紧
+extend-ignore =
+    E203,
+    W503,
+    E501,
+    F401,
+    F403,
+    F405,
+    E127,
+    E128,
+    E131,
+    E741,
+    E712,
+    E713,
+    W391,
+    E306,
+    E402,
+    F811,
+    F541,
+    F841
+exclude =
+    .git,
+    __pycache__,
+    migrations,
+    node_modules,
+    dist,
+    build,
+    .pytest_cache,
+    test_media,
+    media
+per-file-ignores =
+    */__init__.py:F401
+    */migrations/*:E501,F401

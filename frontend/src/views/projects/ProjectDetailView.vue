@@ -7,6 +7,9 @@
       <el-tag v-if="project" :type="getProjectStatusTagType(project.status) as any">
         {{ getProjectStatusLabel(project.status) }}
       </el-tag>
+      <div class="header-actions">
+        <el-button type="primary" :icon="Download" :loading="exportingReport" @click="handleExportReport">导出报告</el-button>
+      </div>
     </div>
 
     <!-- Tab 页 -->
@@ -77,7 +80,12 @@
             <el-descriptions v-else :column="2" border>
               <el-descriptions-item label="比赛名称">{{ competitionInfo?.name || '暂无数据' }}</el-descriptions-item>
               <el-descriptions-item label="比赛级别">
-                <el-tag :type="getCompetitionLevelTagType(competitionInfo?.level || '') as any" size="small">
+                <el-tag
+                  :type="getCompetitionStageTagType(competitionInfo?.level || '') as any"
+                  size="small"
+                  effect="light"
+                  :style="getCompetitionStageTagStyle(competitionInfo?.level || '')"
+                >
                   {{ competitionInfo?.level_display || getCompetitionLevelLabel(competitionInfo?.level || '') }}
                 </el-tag>
               </el-descriptions-item>
@@ -121,10 +129,10 @@
             <el-table-column prop="size" label="大小" width="100">
               <template #default="{ row }">{{ formatFileSize(row.size) }}</template>
             </el-table-column>
-            <el-table-column prop="level" label="权限" width="100">
+            <el-table-column prop="level" label="级别" width="100">
               <template #default="{ row }">
-                <el-tag :type="FILE_PERMISSION_MAP[row.level]?.tagType as any" size="small">
-                  {{ row.level_display || FILE_PERMISSION_MAP[row.level]?.label || row.level }}
+                <el-tag :type="FILE_LEVEL_MAP[row.level]?.tagType as any" size="small">
+                  {{ row.level_display || FILE_LEVEL_MAP[row.level]?.label || row.level }}
                 </el-tag>
               </template>
             </el-table-column>
@@ -246,6 +254,13 @@
           </el-table>
         </div>
       </el-tab-pane>
+
+      <!-- 时间线 Tab -->
+      <el-tab-pane label="时间线" name="timeline">
+        <div class="card">
+          <ProjectTimeline :project-id="projectId" />
+        </div>
+      </el-tab-pane>
     </el-tabs>
 
     <!-- 提交异议弹窗 -->
@@ -329,7 +344,7 @@ import {
   leaderReviewObjection,
   teacherConfirmObjection,
 } from '@/api/contributions'
-import { exportData } from '@/api/exports'
+import { exportProjectReport } from '@/api/exports'
 import { useUserStore } from '@/stores/user'
 import {
   formatDate,
@@ -339,13 +354,14 @@ import {
   getProjectStatusLabel,
   getProjectStatusTagType,
   getCompetitionLevelLabel,
-  getCompetitionLevelTagType,
+  getCompetitionStageTagType,
+  getCompetitionStageTagStyle,
   getCompetitionStatusLabel,
   getCompetitionStatusTagType,
   downloadBlob,
 } from '@/utils/format'
 import {
-  FILE_PERMISSION_MAP,
+  FILE_LEVEL_MAP,
   RANKING_STATUS_MAP,
   OBJECTION_TYPE_MAP,
   OBJECTION_STATUS_MAP,
@@ -355,6 +371,7 @@ import StageStepper from '@/components/StageStepper.vue'
 import TaskBoard from '@/components/TaskBoard.vue'
 import FinanceTable from '@/components/FinanceTable.vue'
 import FileUploader from '@/components/FileUploader.vue'
+import ProjectTimeline from '@/components/ProjectTimeline.vue'
 
 const route = useRoute()
 const userStore = useUserStore()
@@ -371,6 +388,9 @@ const competitionLoading = ref(false)
 const expenses = ref<FinanceExpense[]>([])
 const totalBudget = ref(0)
 const files = ref<FileAsset[]>([])
+
+// 导出报告加载状态
+const exportingReport = ref(false)
 
 // 排序相关状态
 const rankingLoading = ref(false)
@@ -599,15 +619,18 @@ async function handleConfirmReviewObjection(): Promise<void> {
   }
 }
 
-// 导出项目报告（Word）
+// 导出项目完整报告（Word，使用专用报告接口）
 async function handleExportReport(): Promise<void> {
+  exportingReport.value = true
   try {
-    const res: any = await exportData('project_report', 'word', projectId)
+    const res: any = await exportProjectReport(projectId)
     const blobData = res.data ? res.data : res
-    downloadBlob(new Blob([blobData]), `project_report_${projectId}_${Date.now()}.docx`)
+    downloadBlob(new Blob([blobData]), `项目报告_${project.value?.name || projectId}_${Date.now()}.docx`)
     ElMessage.success('导出成功')
   } catch {
     // 错误已处理
+  } finally {
+    exportingReport.value = false
   }
 }
 
@@ -632,6 +655,9 @@ function handleTabChange(tabName: any): void {
     case 'ranking':
       loadRankings()
       loadObjections()
+      break
+    case 'timeline':
+      // 时间线组件内部自行加载数据
       break
   }
 }
@@ -723,6 +749,10 @@ onMounted(() => {
     font-weight: 600;
     color: #303133;
     margin: 0;
+  }
+
+  .header-actions {
+    margin-left: auto;
   }
 }
 

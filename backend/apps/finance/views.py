@@ -106,7 +106,9 @@ class FinanceExpenseViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelVie
 
     filterset_fields = ['project', 'category', 'spender', 'expense_date']
     search_fields = ['title', 'purpose', 'project__name']
-    ordering_fields = ['expense_date', 'amount', 'created_at']
+    ordering_fields = [
+        'created_at', 'updated_at', 'title', 'amount', 'expense_date',
+    ]
 
     def create(self, request, *args, **kwargs):
         """创建经费明细"""
@@ -133,11 +135,15 @@ class FinanceExpenseViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelVie
         return success_response(FinanceExpenseSerializer(expense).data, message='经费明细更新成功')
 
     def destroy(self, request, *args, **kwargs):
-        """删除经费明细"""
+        """删除经费明细（软删除，移入回收站）"""
         instance = self.get_object()
         self.check_object_permissions(request, instance)
-        instance.delete()
-        return success_response(message='经费明细删除成功')
+        self.perform_destroy(instance)
+        return success_response(message='经费明细已移入回收站')
+
+    def perform_destroy(self, instance):
+        """软删除而非物理删除，可通过回收站恢复"""
+        instance.soft_delete(getattr(self.request, 'user', None))
 
 
 class FinanceReceiptViewSet(MultiSerializerMixin, ModelViewSet):

@@ -2,18 +2,23 @@
 驾驶舱看板视图
 返回项目总览、经费总表、任务状态、人员状态、风险提醒、公告区等聚合数据
 """
+import os
+import subprocess
 from datetime import timedelta
+from django.conf import settings
 from django.utils import timezone
 from django.db.models import Sum, Count, Q
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
 
 from common.response import success_response
+from common.permissions import IsTeacherOrAdmin
 from apps.projects.models import Project, ProjectMember
 from apps.tasks.models import Task
 from apps.finance.models import FinanceBudget, FinanceExpense
 from apps.competitions.models import Competition
 from apps.users.models import User
+from apps.notifications.models import Announcement
 
 
 class DashboardView(APIView):
@@ -198,11 +203,28 @@ class DashboardView(APIView):
             'items': risks,
         }
 
-        # ============ 6. 公告区（架构预留）============
+        # ============ 6. 公告区 ============
+        # 已发布公告，按置顶优先、发布时间倒序取最新 5 条
+        latest_announcements = Announcement.objects.select_related('author').filter(
+            status=Announcement.Status.PUBLISHED,
+        ).order_by('-is_pinned', '-published_at', '-created_at')[:5]
+        announcement_items = []
+        for ann in latest_announcements:
+            announcement_items.append({
+                'id': ann.id,
+                'title': ann.title,
+                'content': ann.content,
+                'category': ann.category,
+                'category_display': ann.get_category_display(),
+                'is_pinned': ann.is_pinned,
+                'is_public': ann.is_public,
+                'author_name': ann.author.name if ann.author else '',
+                'published_at': ann.published_at.strftime('%Y-%m-%d %H:%M') if ann.published_at else None,
+            })
+
         announcements = {
-            'total': 0,
-            'items': [],
-            'note': '公告功能将在后续版本实现',
+            'total': Announcement.objects.filter(status=Announcement.Status.PUBLISHED).count(),
+            'items': announcement_items,
         }
 
         # ============ 汇总返回 ============
@@ -216,4 +238,94 @@ class DashboardView(APIView):
             'generated_at': now.strftime('%Y-%m-%d %H:%M:%S'),
         }
 
+        return success_response(data, message='success')
+
+
+class SystemInfoView(APIView):
+    """
+    系统信息接口（P19）
+    GET /api/v1/dashboard/system-info/
+    返回: 版本号、Git 分支、Django 版本、已安装应用数量
+    权限：老师或管理员
+    """
+
+    permission_classes = [IsTeacherOrAdmin]
+
+    @staticmethod
+    def _read_version():
+        """读取 VERSION 文件中的版本号"""
+        version_file = settings.BASE_DIR / 'VERSION'
+        try:
+            with open(version_file, 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith('#'):
+                        continue
+                    if line.startswith('VERSION='):
+                        return line.split('=', 1)[1].strip()
+            # 兜底：取第一个非注释非空行
+            with open(version_file, 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith('#'):
+                        return line
+        except OSError:
+            return 'unknown'
+        return 'unknown'
+
+    @staticmethod
+    def _get_git_branch():
+        """获取当前 Git 分支（不可用时返回 None）"""
+        # 方式一：subprocess 调用 git
+        try:
+            result = subprocess.run(
+                ['git', 'rev-parse', '--abbrev-ref', 'HEAD'],
+                cwd=str(settings.BASE_DIR),
+                capture_output=True,
+                text=True,
+                timeout=3,
+            )
+            if result.returncode == 0:
+                branch = result.stdout.strip()
+                if branch:
+                    return branch
+        except (OSError, subprocess.SubprocessError):
+            pass
+
+        # 方式二：读取 .git/HEAD
+        try:
+            git_head = settings.BASE_DIR / '.git' / 'HEAD'
+            if git_head.exists():
+                content = git_head.read_text(encoding='utf-8').strip()
+                # 形如 ref: refs/heads/main
+                if content.startswith('ref:'):
+                    return content.split('/')[-1]
+                return content[:8]
+        except OSError:
+            pass
+        return None
+
+    def get(self, request):
+        """获取系统信息"""
+        import django
+
+        # 业务应用数量（排除 Django 内置及第三方框架应用）
+        built_in_prefixes = (
+            'django.', 'rest_framework', 'corsheaders',
+            'django_filters', 'django_celery',
+        )
+        business_apps = [
+            app for app in settings.INSTALLED_APPS
+            if not app.startswith(built_in_prefixes) and app != 'debug_toolbar'
+        ]
+
+        data = {
+            'version': self._read_version(),
+            'git_branch': self._get_git_branch(),
+            'django_version': django.get_version(),
+            'python_version': '{}.{}.{}'.format(*__import__('sys').version_info[:3]),
+            'installed_apps_count': len(settings.INSTALLED_APPS),
+            'business_apps_count': len(business_apps),
+            'debug': settings.DEBUG,
+        }
         return success_response(data, message='success')

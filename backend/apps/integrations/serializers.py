@@ -3,7 +3,7 @@
 """
 from rest_framework import serializers
 
-from .models import IntegrationConfig, IntegrationLog
+from .models import IntegrationConfig, IntegrationLog, WebhookConfig
 
 
 class IntegrationConfigSerializer(serializers.ModelSerializer):
@@ -47,3 +47,24 @@ class IntegrationLogSerializer(serializers.ModelSerializer):
             'created_at',
         )
         read_only_fields = fields
+
+
+class WebhookConfigSerializer(serializers.ModelSerializer):
+    """Webhook 配置序列化器"""
+
+    class Meta:
+        model = WebhookConfig
+        fields = (
+            'id', 'name', 'url', 'secret', 'is_active', 'events',
+            'created_at', 'updated_at',
+        )
+        read_only_fields = ('id', 'created_at', 'updated_at')
+
+    def validate_events(self, value):
+        """校验 events 必须为列表"""
+        if not isinstance(value, list):
+            raise serializers.ValidationError('events 必须为数组类型')
+        for item in value:
+            if not isinstance(item, str):
+                raise serializers.ValidationError('events 数组中的每一项必须为字符串')
+        return value

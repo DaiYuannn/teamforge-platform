@@ -1,6 +1,6 @@
 """
 第三方通知 Provider 抽象基类
-所有具体渠道（飞书/企业微信/QQ机器人/Webhook/邮件）需继承本类并实现相关方法
+具体渠道（企业微信/Webhook/邮件）需继承本类并实现相关方法
 """
 from apps.integrations.models import IntegrationConfig, IntegrationLog
 

@@ -72,8 +72,8 @@
           <h3 class="card-title">比赛节点日历</h3>
           <el-timeline class="competition-timeline">
             <el-timeline-item
-              v-for="event in competitionEvents"
-              :key="event.id"
+              v-for="(event, idx) in competitionEvents"
+              :key="event.id ?? idx"
               :timestamp="formatDate(event.start)"
               placement="top"
               :color="getCompetitionColor(event)"
@@ -122,7 +122,7 @@
           </el-table>
           <!-- 移动端卡片 -->
           <div v-else class="finance-mobile-list">
-            <div v-for="item in financeTop5" :key="item.project_name" class="finance-mobile-item">
+            <div v-for="(item, idx) in financeTop5" :key="item.project_name ?? idx" class="finance-mobile-item">
               <div class="finance-mobile-name">{{ item.project_name }}</div>
               <div class="finance-mobile-rows">
                 <span><span class="label">预算：</span>{{ formatMoneyWithComma(item.budget) }}</span>
@@ -147,7 +147,7 @@
         <div class="card">
           <h3 class="card-title">知识产权申请状态</h3>
           <div class="ip-status-list">
-            <div v-for="ip in ipApplications" :key="ip.id" class="ip-status-item">
+            <div v-for="(ip, idx) in ipApplications" :key="ip.id ?? idx" class="ip-status-item">
               <div class="ip-status-header">
                 <span class="ip-status-title" @click="goToIPDetail(ip.id)">{{ ip.title }}</span>
                 <el-tag :type="getIPStatusTagType(ip.status)" size="small" effect="dark">
@@ -197,8 +197,8 @@
           <h3 class="card-title">最近贡献动态</h3>
           <el-timeline class="contribution-timeline">
             <el-timeline-item
-              v-for="item in recentContributions"
-              :key="item.id"
+              v-for="(item, idx) in recentContributions"
+              :key="item.id ?? idx"
               :timestamp="formatRelativeTime(item.created_at)"
               placement="top"
               :color="getContributionColor(item.contribution_type)"
@@ -241,7 +241,7 @@
         <div class="card">
           <h3 class="card-title">最近通知</h3>
           <div class="notification-list">
-            <div v-for="notice in recentNotifications" :key="notice.id" class="notification-item">
+            <div v-for="(notice, idx) in recentNotifications" :key="notice.id ?? idx" class="notification-item">
               <div class="notification-header">
                 <el-tag :type="getNoticeTagType(notice.category)" size="small">
                   {{ getNoticeLabel(notice.category) }}
@@ -264,8 +264,8 @@
           <h3 class="card-title">待我处理事项</h3>
           <el-row :gutter="12">
             <el-col
-              v-for="todo in myTodos"
-              :key="todo.application_id + todo.type"
+              v-for="(todo, idx) in myTodos"
+              :key="(todo.application_id ?? idx) + '_' + todo.type"
               :xs="24" :sm="12" :md="8" :lg="6"
             >
               <div
@@ -533,72 +533,161 @@ function goToIPDetail(id: number): void {
   router.push(`/intellectual-property/${id}`)
 }
 
+// ==================== 图表统一配色与样式（P3-3） ====================
+
+/** 统一配色方案：主色 #409EFF，辅色 #67C23A / #E6A23C / #F56C6C / #9B59B6 */
+const CHART_COLORS = ['#409EFF', '#67C23A', '#E6A23C', '#F56C6C', '#9B59B6', '#36CFC9']
+
+/** 通用 tooltip 样式 */
+const CHART_TOOLTIP_STYLE = {
+  backgroundColor: 'rgba(255, 255, 255, 0.96)',
+  borderColor: '#e4e7ed',
+  borderWidth: 1,
+  padding: [8, 12],
+  textStyle: {
+    color: '#303133',
+    fontSize: 12,
+  },
+  extraCssText: 'box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12); border-radius: 6px;',
+}
+
+/** 生成线性渐变（用于柱状图填充） */
+function makeLinearGradient(color: string, direction: 'vertical' | 'horizontal' = 'vertical'): any {
+  const coords = direction === 'vertical' ? { x: 0, y: 0, x2: 0, y2: 1 } : { x: 0, y: 0, x2: 1, y2: 0 }
+  return {
+    type: 'linear',
+    ...coords,
+    colorStops: [
+      { offset: 0, color: color },
+      { offset: 1, color: color + '66' }, // 40% 透明度
+    ],
+  }
+}
+
 // ==================== 图表渲染 ====================
 
 // 渲染项目进度环形图
 function renderProjectChart(): void {
   if (!projectChartRef.value || !dashboardData.value) return
 
-  projectChart = echarts.init(projectChartRef.value)
+  if (!projectChart) {
+    projectChart = echarts.init(projectChartRef.value)
+  }
+  projectChart.showLoading('default', {
+    text: '加载中...',
+    color: CHART_COLORS[0],
+    textColor: '#909399',
+    maskColor: 'rgba(255, 255, 255, 0.8)',
+    zlevel: 0,
+  })
+
   const stats = dashboardData.value.project_overview || ({} as any)
 
-  const data = [
-    { value: stats.active, name: '进行中', itemStyle: { color: '#409EFF' } },
-    { value: stats.closed, name: '已完成', itemStyle: { color: '#67C23A' } },
-    { value: stats.paused, name: '规划中', itemStyle: { color: '#E6A23C' } },
+  const series = [
+    { value: stats.active, name: '进行中' },
+    { value: stats.closed, name: '已完成' },
+    { value: stats.paused, name: '规划中' },
   ].filter((d) => d.value > 0)
 
+  const pieData = series.map((d, i) => ({
+    ...d,
+    itemStyle: {
+      color: makeLinearGradient(CHART_COLORS[i], 'vertical'),
+      borderRadius: 6,
+      borderColor: '#fff',
+      borderWidth: 2,
+    },
+  }))
+
   projectChart.setOption({
-    tooltip: { trigger: 'item', formatter: '{b}: {c} ({d}%)' },
-    legend: { bottom: '5%', left: 'center', textStyle: { fontSize: 12 } },
+    color: CHART_COLORS,
+    tooltip: {
+      trigger: 'item',
+      formatter: '{b}: <b>{c}</b> ({d}%)',
+      ...CHART_TOOLTIP_STYLE,
+    },
+    legend: { bottom: '5%', left: 'center', textStyle: { fontSize: 12, color: '#606266' } },
     series: [
       {
         type: 'pie',
-        radius: ['40%', '65%'],
+        radius: ['42%', '68%'],
         center: ['50%', '45%'],
         avoidLabelOverlap: false,
         itemStyle: { borderRadius: 6, borderColor: '#fff', borderWidth: 2 },
         label: { show: false },
         emphasis: {
-          label: { show: true, fontSize: 14, fontWeight: 'bold' },
+          label: { show: true, fontSize: 14, fontWeight: 'bold', color: '#303133' },
+          itemStyle: { shadowBlur: 12, shadowColor: 'rgba(0, 0, 0, 0.15)' },
         },
-        data: data.length > 0 ? data : [{ value: 1, name: '暂无数据', itemStyle: { color: '#e0e0e0' } }],
+        data: pieData.length > 0 ? pieData : [{ value: 1, name: '暂无数据', itemStyle: { color: '#e0e0e0' } }],
       },
     ],
   } as any)
+  projectChart.hideLoading()
 }
 
 // 渲染任务状态柱状图
 function renderTaskChart(): void {
   if (!taskChartRef.value || !dashboardData.value) return
 
-  taskChart = echarts.init(taskChartRef.value)
+  if (!taskChart) {
+    taskChart = echarts.init(taskChartRef.value)
+  }
+  taskChart.showLoading('default', {
+    text: '加载中...',
+    color: CHART_COLORS[0],
+    textColor: '#909399',
+    maskColor: 'rgba(255, 255, 255, 0.8)',
+    zlevel: 0,
+  })
+
   const stats = dashboardData.value.task_overview || ({} as any)
   const dist = stats.status_distribution || {}
 
+  const barColors = ['#909399', '#409EFF', '#67C23A', '#F56C6C']
+  const categories = ['待办', '进行中', '已完成', '已逾期']
+
   taskChart.setOption({
-    tooltip: { trigger: 'axis' },
-    grid: { left: '10%', right: '10%', bottom: '10%', top: '15%' },
+    color: barColors,
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'shadow', shadowStyle: { color: 'rgba(64, 158, 255, 0.08)' } },
+      ...CHART_TOOLTIP_STYLE,
+      formatter: (params: any) => {
+        const p = Array.isArray(params) ? params[0] : params
+        return `<b>${p.name}</b><br/>数量：<b style="color:${p.color}">${p.value}</b>`
+      },
+    },
+    grid: { left: '8%', right: '8%', bottom: '12%', top: '18%', containLabel: true },
     xAxis: {
       type: 'category',
-      data: ['待办', '进行中', '已完成', '已逾期'],
-      axisLabel: { fontSize: 12 },
+      data: categories,
+      axisLabel: { fontSize: 12, color: '#606266' },
+      axisLine: { lineStyle: { color: '#dcdfe6' } },
+      axisTick: { show: false },
     },
-    yAxis: { type: 'value' },
+    yAxis: {
+      type: 'value',
+      axisLabel: { fontSize: 12, color: '#909399' },
+      splitLine: { lineStyle: { color: '#ebeef5', type: 'dashed' } },
+    },
     series: [
       {
         type: 'bar',
-        data: [
-          { value: dist?.todo?.count || 0, itemStyle: { color: '#909399' } },
-          { value: dist?.doing?.count || 0, itemStyle: { color: '#409EFF' } },
-          { value: dist?.done?.count || 0, itemStyle: { color: '#67C23A' } },
-          { value: dist?.overdue?.count || 0, itemStyle: { color: '#F56C6C' } },
-        ],
-        barWidth: '40%',
-        label: { show: true, position: 'top' },
+        data: categories.map((_, i) => {
+          const key = ['todo', 'doing', 'done', 'overdue'][i]
+          return {
+            value: dist?.[key]?.count || 0,
+            itemStyle: { color: makeLinearGradient(barColors[i], 'vertical'), borderRadius: [4, 4, 0, 0] },
+          }
+        }),
+        barWidth: '42%',
+        label: { show: true, position: 'top', color: '#606266', fontSize: 12, fontWeight: 600 },
+        emphasis: { itemStyle: { shadowBlur: 10, shadowColor: 'rgba(0, 0, 0, 0.15)' } },
       },
     ],
   } as any)
+  taskChart.hideLoading()
 }
 
 // ==================== 数据加载 ====================

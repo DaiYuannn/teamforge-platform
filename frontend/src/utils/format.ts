@@ -9,6 +9,8 @@ import {
   FINANCE_EXPENSE_STATUS_MAP,
   COMPETITION_LEVEL_MAP,
   COMPETITION_STATUS_MAP,
+  STAGE_COLOR_MAP,
+  STAGE_HEX_COLOR_MAP,
 } from './constants'
 
 // ============================================
@@ -177,6 +179,36 @@ export function getCompetitionLevelLabel(level: string): string {
 /** 获取比赛级别标签类型 */
 export function getCompetitionLevelTagType(level: string): string {
   return COMPETITION_LEVEL_MAP[level]?.tagType || 'info'
+}
+
+/**
+ * 获取比赛级别的 el-tag type（需求C：基于 STAGE_COLOR_MAP）
+ * 兼容 school/city/province/national/international 与 national/provincial/municipal/school/enterprise 两套命名
+ */
+export function getCompetitionStageTagType(level: string): string {
+  return STAGE_COLOR_MAP[level] ?? COMPETITION_LEVEL_MAP[level]?.tagType ?? 'info'
+}
+
+/**
+ * 获取比赛级别的十六进制颜色（需求C：用于时间线节点、矩阵单元格等非 el-tag 场景）
+ */
+export function getCompetitionStageColor(level: string): string {
+  return STAGE_HEX_COLOR_MAP[level] || '#909399'
+}
+
+/**
+ * 获取比赛级别 el-tag 的自定义样式（需求C：international 为紫色自定义，需深底浅字）
+ * 仅在 level 为 international 时返回紫色背景样式，其余返回空对象（交由 el-tag type 控制配色）
+ */
+export function getCompetitionStageTagStyle(level: string): Record<string, string> {
+  if (level === 'international') {
+    return {
+      backgroundColor: '#9B59B6',
+      borderColor: '#9B59B6',
+      color: '#ffffff',
+    }
+  }
+  return {}
 }
 
 /** 获取比赛状态标签 */

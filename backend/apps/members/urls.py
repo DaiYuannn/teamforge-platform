@@ -18,6 +18,7 @@ from .views import (
     MemberSkillViewSet,
     FlexibleWorkScheduleViewSet,
     MemberDetailView,
+    MemberGrowthTimelineView,
 )
 
 # 创建路由器并注册 ViewSet
@@ -34,5 +35,7 @@ router.register(r'', MemberViewSet, basename='member')
 urlpatterns = [
     # 成员详情（基本信息+技能+灵活工时+项目+任务）
     path('member-detail/', MemberDetailView.as_view(), name='member-detail'),
+    # P2: 成员成长时间线
+    path('growth-timeline/', MemberGrowthTimelineView.as_view(), name='growth-timeline'),
     path('', include(router.urls)),
 ]

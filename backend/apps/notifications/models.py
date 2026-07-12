@@ -94,3 +94,44 @@ class Notification(models.Model):
 
     def __str__(self):
         return f'{self.title}({self.get_notification_type_display()})'
+
+
+class Announcement(models.Model):
+    """公告"""
+    class Category(models.TextChoices):
+        SYSTEM = 'system', '系统公告'
+        PROJECT = 'project', '项目公告'
+        ACTIVITY = 'activity', '活动公告'
+        OTHER = 'other', '其他'
+
+    class Status(models.TextChoices):
+        DRAFT = 'draft', '草稿'
+        PUBLISHED = 'published', '已发布'
+        ARCHIVED = 'archived', '已归档'
+
+    title = models.CharField('标题', max_length=200)
+    content = models.TextField('内容')
+    category = models.CharField(
+        '类别', max_length=20, choices=Category.choices, default=Category.OTHER
+    )
+    status = models.CharField(
+        '状态', max_length=20, choices=Status.choices, default=Status.DRAFT
+    )
+    is_pinned = models.BooleanField('置顶', default=False)
+    is_public = models.BooleanField('是否公开', default=False)  # 公开可见（无需登录）
+    author = models.ForeignKey(
+        'users.User', on_delete=models.SET_NULL, null=True,
+        related_name='announcements', verbose_name='发布人',
+    )
+    published_at = models.DateTimeField('发布时间', null=True, blank=True)
+    created_at = models.DateTimeField('创建时间', auto_now_add=True)
+    updated_at = models.DateTimeField('更新时间', auto_now=True)
+
+    class Meta:
+        db_table = 'announcements'
+        ordering = ['-is_pinned', '-published_at', '-created_at']
+        verbose_name = '公告'
+        verbose_name_plural = verbose_name
+
+    def __str__(self):
+        return f'{self.title}({self.get_status_display()})'

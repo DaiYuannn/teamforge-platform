@@ -1,11 +1,12 @@
 <template>
   <div class="public-layout">
-    <!-- 公共展示面板头部 -->
+    <!-- 公共展示面板顶部导航栏 -->
     <div class="public-header">
       <div class="header-logo">
-        <el-icon size="24" color="#409EFF"><DataBoard /></el-icon>
-        <span class="logo-text">团队管理 - 公共展示面板</span>
+        <el-icon size="24" color="#667eea"><Trophy /></el-icon>
+        <span class="logo-text">创新团队 · 成果展示</span>
       </div>
+      <el-button type="primary" :icon="User" @click="goLogin">登录</el-button>
     </div>
 
     <!-- 主内容区 -->
@@ -13,16 +14,23 @@
       <router-view />
     </div>
 
-    <!-- 底部信息 -->
+    <!-- 底部版权信息 -->
     <div class="public-footer">
-      <span>团队管理软件 - 公共展示面板</span>
+      <span>© {{ new Date().getFullYear() }} 创新团队管理软件 · 团队成果展示平台</span>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-// 公共展示面板布局（架构预留）
-// 未来用于大屏展示项目进度、比赛成绩等公共信息
+import { useRouter } from 'vue-router'
+import { Trophy, User } from '@element-plus/icons-vue'
+
+const router = useRouter()
+
+/** 跳转登录页 */
+function goLogin(): void {
+  router.push('/login')
+}
 </script>
 
 <style lang="scss" scoped>
@@ -37,9 +45,13 @@
   height: 60px;
   display: flex;
   align-items: center;
+  justify-content: space-between;
   padding: 0 24px;
   background: #fff;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+  position: sticky;
+  top: 0;
+  z-index: 100;
 
   .header-logo {
     display: flex;
@@ -56,18 +68,17 @@
 
 .public-content {
   flex: 1;
-  padding: 24px;
   overflow-y: auto;
 }
 
 .public-footer {
-  height: 40px;
+  height: 48px;
   display: flex;
   align-items: center;
   justify-content: center;
   background: #fff;
   border-top: 1px solid #ebeef5;
-  font-size: 12px;
+  font-size: 13px;
   color: #909399;
 }
 </style>

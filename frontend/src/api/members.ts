@@ -77,3 +77,38 @@ export const getScheduleByUser = (userId: number) => get('/members/flexible-sche
 
 /** 获取成员详情（不传 userId 则获取当前用户） */
 export const getMemberDetail = (userId?: number) => get('/members/member-detail/', userId ? { user_id: userId } : {})
+
+// ============================================
+// P2: 成员成长时间线
+// ============================================
+
+/** 成长时间线事件 */
+export interface GrowthEvent {
+  id: string
+  type: string
+  title: string
+  description: string
+  timestamp: string | null
+  date: string | null
+  project_name: string
+  metadata: Record<string, any>
+}
+
+/** 成长时间线数据 */
+export interface GrowthTimelineData {
+  user_id: number
+  user_name: string
+  contrib_summary: {
+    total: number
+    approved: number
+    pending: number
+    total_weight: number
+  }
+  events: GrowthEvent[]
+  total_events: number
+}
+
+/** 获取成员成长时间线 */
+export function getGrowthTimeline(userId?: number): Promise<GrowthTimelineData> {
+  return get('/members/growth-timeline/', userId ? { user_id: userId } : {})
+}

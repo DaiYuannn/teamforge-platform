@@ -422,3 +422,139 @@ class MemberDetailView(APIView):
 
         serializer = MemberDetailSerializer(user)
         return success_response(serializer.data)
+
+
+class MemberGrowthTimelineView(APIView):
+    """
+    成员成长时间线
+    GET /api/v1/members/growth-timeline/?user_id=1
+    聚合成员的贡献记录、项目参与、比赛、知识产权、任务完成等,按时间倒序返回成长事件
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from apps.contributions.models import Contribution
+        from apps.competitions.models import Competition
+        from apps.intellectual_property.models import (
+            IntellectualPropertyApplication,
+            IPApplicationContributor,
+        )
+        from apps.tasks.models import Task
+        from apps.projects.models import ProjectMember
+
+        user_id = request.query_params.get('user_id') or request.user.id
+
+        try:
+            user = User.objects.get(id=user_id, is_active=True)
+        except User.DoesNotExist:
+            return error_response(message='用户不存在', code=1004,
+                                  http_status=status.HTTP_404_NOT_FOUND)
+
+        events = []
+
+        # 1. 贡献记录
+        contribs = Contribution.objects.filter(user=user).select_related('project').order_by('-created_at')
+        contrib_summary = {
+            'total': contribs.count(),
+            'approved': contribs.filter(status='approved').count(),
+            'pending': contribs.filter(status='pending').count(),
+            'total_weight': sum(c.weight for c in contribs),
+        }
+        for c in contribs[:100]:
+            events.append({
+                'id': f'contrib_{c.id}',
+                'type': 'contribution',
+                'title': c.get_contribution_type_display(),
+                'description': c.content[:80] if c.content else c.description[:80],
+                'timestamp': c.created_at.isoformat() if c.created_at else None,
+                'date': c.created_at.date().isoformat() if c.created_at else None,
+                'project_name': c.project.name if c.project else '',
+                'metadata': {
+                    'status': c.status,
+                    'weight': str(c.weight),
+                    'score': str(c.score),
+                },
+            })
+
+        # 2. 项目参与
+        memberships = ProjectMember.objects.filter(user=user).select_related('project').order_by('-joined_at')
+        for m in memberships:
+            events.append({
+                'id': f'project_join_{m.id}',
+                'type': 'project_join',
+                'title': f'加入项目: {m.project.name}',
+                'description': f'角色: {m.get_role_in_project_display()}',
+                'timestamp': m.joined_at.isoformat() if m.joined_at else None,
+                'date': m.joined_at.date().isoformat() if m.joined_at else None,
+                'project_name': m.project.name,
+                'metadata': {
+                    'project_id': m.project_id,
+                    'role_in_project': m.role_in_project,
+                },
+            })
+
+        # 3. 比赛参与(通过项目关联)
+        comp_qs = Competition.objects.filter(project__members__user=user).select_related('project').distinct()
+        for comp in comp_qs:
+            if comp.result_date:
+                events.append({
+                    'id': f'competition_{comp.id}',
+                    'type': 'competition',
+                    'title': f'比赛: {comp.name}',
+                    'description': f'{comp.get_level_display()} - {"获奖: " + comp.award_level if comp.is_awarded else "未获奖"}',
+                    'timestamp': f'{comp.result_date}T00:00:00',
+                    'date': comp.result_date.isoformat(),
+                    'project_name': comp.project.name if comp.project else '',
+                    'metadata': {
+                        'level': comp.level,
+                        'is_awarded': comp.is_awarded,
+                        'award_level': comp.award_level,
+                        'is_promoted': comp.is_promoted,
+                    },
+                })
+
+        # 4. 知识产权贡献
+        ip_contribs = IPApplicationContributor.objects.filter(user=user).select_related(
+            'application'
+        ).order_by('-created_at')
+        for ic in ip_contribs:
+            events.append({
+                'id': f'ip_contrib_{ic.id}',
+                'type': 'ip_contribution',
+                'title': f'知识产权: {ic.application.title}',
+                'description': f'{ic.get_role_display()} - {ic.contribution_description[:60] if ic.contribution_description else ""}',
+                'timestamp': ic.created_at.isoformat() if ic.created_at else None,
+                'date': ic.created_at.date().isoformat() if ic.created_at else None,
+                'project_name': ic.application.related_project.name if ic.application.related_project else '',
+                'metadata': {
+                    'ip_id': ic.application_id,
+                    'ip_status': ic.application.status,
+                    'is_confirmed': ic.is_confirmed,
+                },
+            })
+
+        # 5. 任务完成
+        done_tasks = Task.objects.filter(assignee=user, status='done').select_related('project').order_by('-completed_at')
+        for t in done_tasks[:50]:
+            events.append({
+                'id': f'task_done_{t.id}',
+                'type': 'task_completed',
+                'title': f'完成任务: {t.title}',
+                'description': f'{t.project.name if t.project else ""}',
+                'timestamp': t.completed_at.isoformat() if t.completed_at else None,
+                'date': t.completed_at.date().isoformat() if t.completed_at else None,
+                'project_name': t.project.name if t.project else '',
+                'metadata': {'task_id': t.id},
+            })
+
+        # 按时间倒序
+        events.sort(key=lambda x: x.get('timestamp') or '', reverse=True)
+
+        data = {
+            'user_id': user.id,
+            'user_name': user.name,
+            'contrib_summary': contrib_summary,
+            'events': events[:200],
+            'total_events': len(events),
+        }
+        return success_response(data, message='success')

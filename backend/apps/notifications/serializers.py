@@ -3,7 +3,7 @@
 """
 from rest_framework import serializers
 
-from .models import Notification
+from .models import Notification, Announcement
 
 
 class NotificationListSerializer(serializers.ModelSerializer):
@@ -35,6 +35,30 @@ class NotificationListSerializer(serializers.ModelSerializer):
             'created_at',
         )
         read_only_fields = fields
+
+
+class AnnouncementSerializer(serializers.ModelSerializer):
+    """公告序列化器"""
+    # 类别显示
+    category_display = serializers.CharField(
+        source='get_category_display', read_only=True
+    )
+    # 状态显示
+    status_display = serializers.CharField(
+        source='get_status_display', read_only=True
+    )
+    # 发布人姓名
+    author_name = serializers.CharField(source='author.name', read_only=True, default='')
+
+    class Meta:
+        model = Announcement
+        fields = (
+            'id', 'title', 'content', 'category', 'category_display',
+            'status', 'status_display', 'is_pinned', 'is_public',
+            'author', 'author_name', 'published_at',
+            'created_at', 'updated_at',
+        )
+        read_only_fields = ('id', 'category_display', 'status_display', 'author_name', 'created_at', 'updated_at')
 
 
 class NotificationSerializer(serializers.ModelSerializer):

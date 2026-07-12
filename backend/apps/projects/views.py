@@ -55,7 +55,10 @@ class ProjectViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet):
 
     filterset_fields = ['status', 'priority', 'current_stage', 'leader']
     search_fields = ['name', 'code', 'intro']
-    ordering_fields = ['created_at', 'start_date', 'planned_end_date', 'priority']
+    ordering_fields = [
+        'created_at', 'updated_at', 'name', 'status', 'priority',
+        'start_date', 'planned_end_date', 'archived_at',
+    ]
 
     def create(self, request, *args, **kwargs):
         """创建项目"""
@@ -80,11 +83,15 @@ class ProjectViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet):
         return success_response(ProjectSerializer(project).data, message='项目更新成功')
 
     def destroy(self, request, *args, **kwargs):
-        """删除项目"""
+        """删除项目（软删除，移入回收站）"""
         instance = self.get_object()
         self.check_object_permissions(request, instance)
-        instance.delete()
-        return success_response(message='项目删除成功')
+        self.perform_destroy(instance)
+        return success_response(message='项目已移入回收站')
+
+    def perform_destroy(self, instance):
+        """软删除而非物理删除，可通过回收站恢复"""
+        instance.soft_delete(getattr(self.request, 'user', None))
 
     @action(detail=True, methods=['post'])
     def stage(self, request, pk=None):

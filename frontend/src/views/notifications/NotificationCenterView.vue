@@ -32,6 +32,9 @@
     <!-- PC端表格 -->
     <div v-if="!isMobile" class="card mt-16">
       <el-table v-loading="loading" :data="notificationList" border stripe>
+        <template #empty>
+          <EmptyState text="暂无通知" description="所有消息都已处理完毕" accent="#E6A23C" />
+        </template>
         <el-table-column prop="title" label="标题" min-width="180" show-overflow-tooltip>
           <template #default="{ row }">
             <span :class="{ 'unread-title': !row.is_read }">{{ row.title }}</span>
@@ -82,7 +85,7 @@
 
     <!-- 移动端卡片列表 -->
     <div v-else v-loading="loading" class="mobile-list">
-      <el-empty v-if="notificationList.length === 0" description="暂无通知" />
+      <EmptyState v-if="notificationList.length === 0" text="暂无通知" description="所有消息都已处理完毕" accent="#E6A23C" :compact="true" />
       <el-card v-for="item in notificationList" :key="item.id" class="mobile-card" shadow="hover">
         <div class="mobile-card-header">
           <span class="mobile-card-title" :class="{ 'unread-title': !item.is_read }">{{ item.title }}</span>
@@ -139,6 +142,7 @@ import { formatDateTime } from '@/utils/format'
 import { NOTIFICATION_CATEGORY_MAP } from '@/utils/constants'
 import { useDevice } from '@/composables/useDevice'
 import PageHeader from '@/components/PageHeader.vue'
+import EmptyState from '@/components/EmptyState.vue'
 import type { Notification } from '@/types'
 
 const { isMobile } = useDevice()

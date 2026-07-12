@@ -1,6 +1,6 @@
 """
 通知视图
-- NotificationViewSet: 通知只读查询 + 标记已读 + 未读数量统计
+- NotificationViewSet: 通知查询 + 标记已读 + 未读数量统计 + 删除/清空
 """
 from rest_framework import status
 from rest_framework.decorators import action
@@ -17,11 +17,14 @@ from .services import NotificationService
 class NotificationViewSet(MultiSerializerMixin, ReadOnlyModelViewSet):
     """
     通知 ViewSet
-    - list: 当前用户的通知列表，支持按 is_read/category 筛选
+    - list: 当前用户的通知列表，支持按 is_read/notification_type/category/channel 筛选
     - retrieve: 通知详情
     - mark_as_read: POST 标记单条通知已读
     - mark_all_as_read: POST 标记全部已读
     - unread_count: GET 获取未读数量
+    - delete: DELETE/POST 删除单条通知
+    - clear_all: POST 清空当前用户全部已读通知
+    - delete_read: POST 删除当前用户全部已读通知
     """
     serializer_classes_by_action = {
         'list': NotificationListSerializer,
@@ -43,7 +46,12 @@ class NotificationViewSet(MultiSerializerMixin, ReadOnlyModelViewSet):
             elif is_read.lower() in ('false', '0'):
                 queryset = queryset.filter(is_read=False)
 
-        # 按通知类型筛选
+        # 按通知类型筛选（notification_type，与 category 等价，兼容两种参数名）
+        notification_type = self.request.query_params.get('notification_type')
+        if notification_type:
+            queryset = queryset.filter(notification_type=notification_type)
+
+        # 按通知类型筛选（兼容旧参数名 category）
         category = self.request.query_params.get('category')
         if category:
             queryset = queryset.filter(notification_type=category)
@@ -103,3 +111,41 @@ class NotificationViewSet(MultiSerializerMixin, ReadOnlyModelViewSet):
         """
         count = NotificationService.get_unread_count(request.user)
         return success_response(data={'count': count})
+
+    @action(detail=True, methods=['delete', 'post'])
+    def delete(self, request, pk=None):
+        """
+        删除单条通知（仅可删除自己的通知）
+        DELETE/POST /api/v1/notifications/{id}/delete/
+        """
+        instance = self.get_object()
+        instance.delete()
+        return success_response(message='通知已删除')
+
+    @action(detail=False, methods=['post'])
+    def clear_all(self, request):
+        """
+        清空当前用户全部已读通知
+        POST /api/v1/notifications/clear_all/
+        """
+        count, _ = Notification.objects.filter(
+            recipient=request.user, is_read=True
+        ).delete()
+        return success_response(
+            data={'count': count},
+            message=f'已清空 {count} 条已读通知',
+        )
+
+    @action(detail=False, methods=['post'])
+    def delete_read(self, request):
+        """
+        删除当前用户全部已读通知
+        POST /api/v1/notifications/delete_read/
+        """
+        count, _ = Notification.objects.filter(
+            recipient=request.user, is_read=True
+        ).delete()
+        return success_response(
+            data={'count': count},
+            message=f'已删除 {count} 条已读通知',
+        )

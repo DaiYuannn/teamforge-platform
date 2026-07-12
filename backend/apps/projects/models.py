@@ -4,13 +4,21 @@
 """
 from django.db import models
 from django.conf import settings
+from django.utils import timezone
+
+from apps.common.soft_delete import SoftDeleteMixin, SoftDeleteManager
 
 
-class Project(models.Model):
+class Project(SoftDeleteMixin, models.Model):
     """
     项目模型
     包含 16 个阶段的生命周期管理
+    支持软删除（回收站）：删除后进入回收站，可恢复或永久删除
     """
+
+    # 默认管理器：仅返回未软删除的项目；回收站请使用 all_objects
+    objects = SoftDeleteManager()
+    all_objects = models.Manager()
 
     class Stage(models.IntegerChoices):
         """项目阶段（16个阶段）"""
@@ -84,6 +92,8 @@ class Project(models.Model):
     intro = models.TextField('项目简介', blank=True, default='')
     # 负责人最近更新时间（打卡）
     last_leader_update = models.DateTimeField('负责人最近更新时间', null=True, blank=True)
+    # 归档时间（项目状态变为 closed 时自动设置，重新激活时清除）
+    archived_at = models.DateTimeField('归档时间', null=True, blank=True)
     # 创建时间
     created_at = models.DateTimeField('创建时间', auto_now_add=True)
     # 更新时间
@@ -98,10 +108,34 @@ class Project(models.Model):
     def __str__(self):
         return f'{self.code} - {self.name}'
 
+    def save(self, *args, **kwargs):
+        """
+        重写保存逻辑：
+        - 当状态变为 closed 时自动设置 archived_at
+        - 当状态从 closed 变为其他时自动清除 archived_at（取消归档）
+        """
+        if self.status == self.Status.CLOSED:
+            if not self.archived_at:
+                self.archived_at = timezone.now()
+        else:
+            # 状态非 closed：若此前已归档，则清除归档时间
+            if self.pk and self.archived_at:
+                old_status = type(self).objects.filter(
+                    pk=self.pk
+                ).values_list('status', flat=True).first()
+                if old_status == self.Status.CLOSED:
+                    self.archived_at = None
+        super().save(*args, **kwargs)
+
     @property
     def stage_name(self):
         """获取当前阶段名称"""
         return self.get_current_stage_display()
+
+    @property
+    def is_archived(self):
+        """是否已归档"""
+        return self.status == self.Status.CLOSED and self.archived_at is not None
 
 
 class ProjectMember(models.Model):
@@ -189,3 +223,11 @@ class ProjectStageLog(models.Model):
 
     def __str__(self):
         return f'{self.project.name}: {self.from_stage} -> {self.to_stage}'
+
+
+from .review_models import ProjectReview  # noqa: E402,F401
+from .milestone_models import Milestone  # noqa: E402,F401
+from .risk_models import ProjectRisk  # noqa: E402,F401
+from .template_models import ProjectTemplate  # noqa: E402,F401
+from .discussion_models import DiscussionTopic, DiscussionReply  # noqa: E402,F401
+from .knowledge_models import KnowledgeArticle  # noqa: E402,F401

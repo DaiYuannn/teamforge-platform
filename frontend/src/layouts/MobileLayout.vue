@@ -51,17 +51,25 @@
     <!-- 侧滑菜单（更多功能） -->
     <el-drawer v-model="showMenu" direction="rtl" size="70%" :show-close="false" class="mobile-drawer">
       <template #header>
-        <div class="drawer-header">
-          <el-avatar :size="40" :src="userInfo?.avatar" :alt="userInfo?.name || '用户头像'">
-            {{ userInfo?.name?.charAt(0) || 'U' }}
-          </el-avatar>
+        <div class="drawer-header" role="button" tabindex="0" @click="goProfile" @keydown.enter="goProfile">
+          <AvatarWithName
+            :name="userInfo?.name || ''"
+            :avatar-url="userInfo?.avatar"
+            :size="40"
+            :show-name="false"
+          />
           <div class="drawer-user-info">
             <div class="drawer-user-name">{{ userInfo?.name || '用户' }}</div>
             <div class="drawer-user-role">{{ roleLabel }}</div>
           </div>
+          <el-icon class="drawer-arrow"><ArrowRight /></el-icon>
         </div>
       </template>
       <el-menu :default-active="activeMenu" @select="handleMenuSelect">
+        <el-menu-item index="/user/profile">
+          <el-icon><UserFilled /></el-icon>
+          <span>个人中心</span>
+        </el-menu-item>
         <el-menu-item v-for="item in allMenuList" :key="item.path" :index="item.path">
           <el-icon><component :is="item.icon" /></el-icon>
           <span>{{ item.title }}</span>
@@ -72,6 +80,9 @@
         </el-menu-item>
       </el-menu>
     </el-drawer>
+
+    <!-- 移动端快捷操作 FAB 按钮 -->
+    <MobileFab />
   </div>
 </template>
 
@@ -79,9 +90,12 @@
 import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessageBox } from 'element-plus'
+import { ArrowRight, UserFilled } from '@element-plus/icons-vue'
 import { useUserStore } from '@/stores/user'
 import { getRoleLabel } from '@/utils/format'
 import NotificationBell from '@/components/NotificationBell.vue'
+import AvatarWithName from '@/components/AvatarWithName.vue'
+import MobileFab from '@/components/MobileFab.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -135,6 +149,12 @@ function isActive(path: string): boolean {
 // 切换 Tab
 function switchTab(path: string): void {
   router.push(path)
+}
+
+// 跳转个人中心
+function goProfile(): void {
+  showMenu.value = false
+  router.push('/user/profile')
 }
 
 // 菜单选择
@@ -209,10 +229,13 @@ async function handleMenuSelect(index: string): Promise<void> {
   overflow-x: hidden;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
+  // 为固定定位的 FAB 按钮预留底部空间，避免遮挡末尾内容
+  padding-bottom: 80px;
 }
 
 .mobile-tabbar {
   height: 56px;
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: space-around;
@@ -249,8 +272,17 @@ async function handleMenuSelect(index: string): Promise<void> {
   display: flex;
   align-items: center;
   gap: 12px;
+  cursor: pointer;
+  transition: opacity 0.2s ease;
+
+  &:active {
+    opacity: 0.7;
+  }
 
   .drawer-user-info {
+    flex: 1;
+    min-width: 0;
+
     .drawer-user-name {
       font-size: 16px;
       font-weight: 600;
@@ -261,6 +293,11 @@ async function handleMenuSelect(index: string): Promise<void> {
       color: #909399;
       margin-top: 2px;
     }
+  }
+
+  .drawer-arrow {
+    color: #c0c4cc;
+    flex-shrink: 0;
   }
 }
 

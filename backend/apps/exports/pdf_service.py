@@ -12,14 +12,30 @@ from django.template.loader import render_to_string
 def _render_html_to_pdf(html_string, filename):
     """
     将 HTML 字符串渲染为 PDF 并包装为 HttpResponse
-    惰性导入 weasyprint
+    惰性导入 weasyprint；若依赖不可用，回退为 HTML 文件下载并附说明
     """
     try:
         from weasyprint import HTML
     except Exception as e:  # pragma: no cover - 依赖环境
-        raise RuntimeError(
-            f'PDF 导出依赖 weasyprint，当前环境不可用（可能缺少 GTK/Pango 原生库）: {e}'
+        # PDF 依赖不可用：回退为 HTML 文件下载，并附加提示信息
+        fallback_note = (
+            '<div style="padding:16px;border:1px solid #f0ad4e;background:#fcf8e3;'
+            'color:#8a6d3b;margin-bottom:16px;font-size:14px;">'
+            '提示：服务器未安装 PDF 渲染依赖（weasyprint/GTK/Pango），暂无法生成 PDF，'
+            '已自动回退为 HTML 文件下载。如需 PDF，请联系管理员安装相关服务端依赖。'
+            f'<br><span style="color:#a94442;font-size:12px;">依赖错误：{e}</span>'
+            '</div>'
         )
+        fallback_html = (
+            '<!DOCTYPE html><html><head><meta charset="utf-8">'
+            f'<title>{filename}</title></head><body>'
+            + fallback_note
+            + html_string
+            + '</body></html>'
+        )
+        response = HttpResponse(fallback_html, content_type='text/html')
+        response['Content-Disposition'] = f"attachment; filename*=UTF-8''{filename}.html"
+        return response
 
     pdf = HTML(string=html_string).write_pdf()
     response = HttpResponse(pdf, content_type='application/pdf')

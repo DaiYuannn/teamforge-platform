@@ -35,6 +35,45 @@ urlpatterns = [
     path('api/v1/exports/', include('apps.exports.urls')),
     path('api/v1/intellectual-property/', include('apps.intellectual_property.urls')),
     path('api/v1/integrations/', include('apps.integrations.urls')),
+    # 回收站（软删除恢复 / 永久删除）
+    path('api/v1/recycle-bin/', include('apps.common.recycle_urls')),
+    # 动态流（Activity Feed）
+    path('api/v1/activities/', include('apps.common.activity_urls')),
+    # 统一待办（聚合任务/审批/贡献审核等）
+    path('api/v1/todo/', include('apps.common.todo_urls')),
+
+    # ============ N34-N47 平台特性 ============
+    # 多团队支持（N40）
+    path('api/v1/teams/', include('apps.common.team_urls')),
+    path('api/v1/team-members/', include('apps.common.team_member_urls')),
+    # 审批流程（N41）
+    path('api/v1/approvals/', include('apps.common.approval_urls')),
+    # 敏感操作确认（N37）
+    path('api/v1/common/confirmations/', include('apps.common.confirmation_urls')),
+    # 备份与恢复（N38）
+    path('api/v1/common/backup/', include('apps.common.backup_urls')),
+    # 安全扫描（N39）
+    path('api/v1/common/security-scan/', include('apps.common.security_urls')),
+    # 自定义表单（N42）- forms/ 与 form-submissions/ 挂在 common 下
+    path('api/v1/common/', include('apps.common.form_urls')),
+    # 日历同步（N46）
+    path('api/v1/common/calendar/', include('apps.common.calendar_urls')),
+    # Open API 文档（N47）
+    path('api/v1/common/api-docs/', include('apps.common.api_docs_urls')),
+
+    # ============ N56-N62 工程质量特性 ============
+    # 健康检查（N58，无需认证，供负载均衡探针）
+    path('api/v1/common/health/', include('apps.common.health_check_urls')),
+    # 前端错误监控（N57）
+    path('api/v1/common/error-logs/', include('apps.common.error_urls')),
+    # 性能监控（N59）
+    path('api/v1/common/performance/', include('apps.common.performance_urls')),
+    # OpenAPI Schema（N60）
+    path('api/v1/common/openapi/', include('apps.common.openapi_urls')),
+    # 无障碍 / API 可访问性报告（N61）
+    path('api/v1/common/accessibility/', include('apps.common.accessibility_urls')),
+    # 国际化与主题（N62）
+    path('api/v1/common/i18n/', include('apps.common.i18n_urls')),
 ]
 
 # 开发环境提供媒体文件访问
