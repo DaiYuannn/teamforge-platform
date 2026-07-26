@@ -9,6 +9,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
 from common.response import success_response
+from common.project_access import scope_project_queryset
 from .models import Contribution
 
 
@@ -28,7 +29,11 @@ class ContributionLeaderboardView(APIView):
         period = params.get('period')
         limit_param = params.get('limit')
 
-        queryset = Contribution.objects.filter(status=Contribution.Status.APPROVED)
+        queryset = scope_project_queryset(
+            Contribution.objects.filter(status=Contribution.Status.APPROVED),
+            request.user,
+            project_lookup='project',
+        )
         if project_id:
             queryset = queryset.filter(project_id=project_id)
         if period:

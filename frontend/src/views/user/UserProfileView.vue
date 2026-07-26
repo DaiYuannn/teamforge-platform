@@ -2,9 +2,9 @@
   <div class="page-container">
     <PageHeader title="个人中心" subtitle="查看与编辑个人信息" />
 
-    <div v-loading="loading" class="profile-content">
+    <section v-loading="loading" class="surface-panel profile-content">
       <!-- 左侧：头像与概览 -->
-      <div class="profile-aside card">
+      <aside class="profile-aside">
         <AvatarWithName
           :name="form.name || userInfo?.name || ''"
           :avatar-url="userInfo?.avatar"
@@ -17,7 +17,7 @@
           :before-upload="handleAvatarUpload"
           accept="image/jpeg,image/png,image/gif,image/webp"
         >
-          <el-button size="small" :loading="uploadingAvatar">更换头像</el-button>
+          <el-button size="small" :icon="Upload" :loading="uploadingAvatar">更换头像</el-button>
         </el-upload>
         <span class="avatar-tip">支持 JPG/PNG/GIF/WebP，最大 5MB</span>
         <h3 class="profile-name">{{ userInfo?.name || '用户' }}</h3>
@@ -43,16 +43,20 @@
             <span class="meta-value">{{ formatDateTime(userInfo?.last_login) }}</span>
           </div>
         </div>
-      </div>
+      </aside>
 
       <!-- 右侧：编辑表单 -->
-      <div class="profile-main card">
-        <h3 class="card-title">编辑资料</h3>
+      <div class="profile-main">
+        <div class="section-header">
+          <h2>编辑资料</h2>
+          <span>更新可公开的基本联系信息</span>
+        </div>
         <el-form
           ref="formRef"
           :model="form"
           :rules="rules"
-          label-width="100px"
+          :label-width="isMobile ? 'auto' : '84px'"
+          :label-position="isMobile ? 'top' : 'right'"
           class="profile-form"
         >
           <el-form-item label="姓名" prop="name">
@@ -70,7 +74,7 @@
           </el-form-item>
         </el-form>
       </div>
-    </div>
+    </section>
   </div>
 </template>
 
@@ -82,6 +86,10 @@ import { formatDate, formatDateTime, getRoleLabel, getRoleTagType } from '@/util
 import type { UpdateProfileParams } from '@/types'
 import PageHeader from '@/components/PageHeader.vue'
 import AvatarWithName from '@/components/AvatarWithName.vue'
+import { Upload } from '@element-plus/icons-vue'
+import { useDevice } from '@/composables/useDevice'
+
+const { isMobile } = useDevice()
 
 /**
  * 个人中心页面（需求G）
@@ -204,15 +212,18 @@ onMounted(() => {
 
 <style lang="scss" scoped>
 .profile-content {
-  display: flex;
-  gap: 16px;
-  align-items: flex-start;
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  align-items: stretch;
+  padding: 0;
+  overflow: hidden;
 
   .profile-aside {
-    width: 280px;
-    flex-shrink: 0;
-    padding: 24px;
+    min-width: 0;
+    padding: 24px 20px;
     text-align: center;
+    background: var(--color-surface-subtle);
+    border-right: 1px solid var(--color-border-light);
 
     .profile-avatar {
       justify-content: center;
@@ -228,7 +239,7 @@ onMounted(() => {
     .profile-name {
       font-size: 18px;
       font-weight: 600;
-      color: #303133;
+      color: var(--color-text);
       margin: 14px 0 8px;
     }
 
@@ -243,11 +254,11 @@ onMounted(() => {
         padding: 6px 0;
 
         .meta-label {
-          color: #909399;
+          color: var(--color-text-muted);
         }
 
         .meta-value {
-          color: #303133;
+          color: var(--color-text);
           max-width: 160px;
           overflow: hidden;
           text-overflow: ellipsis;
@@ -258,46 +269,79 @@ onMounted(() => {
   }
 
   .profile-main {
-    flex: 1;
     min-width: 0;
     padding: 24px;
 
-    .card-title {
-      font-size: 16px;
-      font-weight: 600;
-      color: #303133;
-      margin-bottom: 20px;
+    .section-header {
       display: flex;
-      align-items: center;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+      padding-bottom: 14px;
+      margin-bottom: 20px;
+      border-bottom: 1px solid var(--color-border-light);
 
-      &::before {
-        content: '';
-        width: 4px;
-        height: 16px;
-        background: #409eff;
-        border-radius: 2px;
-        margin-right: 8px;
+      h2 {
+        margin: 0;
+        color: var(--color-text);
+        font-size: 16px;
+        font-weight: 600;
+      }
+
+      span {
+        color: var(--color-text-muted);
+        font-size: 12px;
       }
     }
 
     .profile-form {
-      max-width: 480px;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0 16px;
+      max-width: 720px;
+
+      :deep(.el-form-item:nth-child(3)),
+      :deep(.el-form-item:last-child) {
+        grid-column: 1 / -1;
+      }
     }
   }
 }
 
-.card {
-  background: #fff;
-  border-radius: 8px;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
-}
-
 @media screen and (max-width: 768px) {
   .profile-content {
-    flex-direction: column;
+    grid-template-columns: 1fr;
 
     .profile-aside {
       width: 100%;
+      padding: 20px 16px;
+      border-right: 0;
+      border-bottom: 1px solid var(--color-border-light);
+
+      .profile-meta {
+        max-width: 420px;
+        margin: 0 auto;
+      }
+    }
+
+    .profile-main {
+      padding: 16px 12px;
+
+      .section-header {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 3px;
+        margin-bottom: 14px;
+      }
+
+      .profile-form {
+        display: block;
+        max-width: none;
+
+        :deep(.el-form-item__label) {
+          margin-bottom: 4px;
+        }
+      }
     }
   }
 }

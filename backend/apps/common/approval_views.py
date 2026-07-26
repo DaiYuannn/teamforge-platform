@@ -7,9 +7,11 @@ from rest_framework import serializers, status
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
+from django.db.models import Q
 
 from common.response import success_response, error_response
 from common.mixins import MultiSerializerMixin
+from common.permissions import IsTeacherOrAdminOrReadOnly
 from .approval_models import ApprovalFlow, ApprovalRequest
 
 
@@ -61,10 +63,16 @@ class ApprovalFlowViewSet(ModelViewSet):
     """审批流程管理 ViewSet"""
     queryset = ApprovalFlow.objects.all().order_by('-created_at')
     serializer_class = ApprovalFlowSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsTeacherOrAdminOrReadOnly]
     filterset_fields = ['flow_type', 'is_active']
     search_fields = ['name', 'flow_type']
     ordering_fields = ['created_at', 'name']
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        if self.request.user.global_role in ('teacher', 'sys_admin'):
+            return queryset
+        return queryset.filter(is_active=True)
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
@@ -101,16 +109,27 @@ class ApprovalRequestViewSet(MultiSerializerMixin, ModelViewSet):
     ordering_fields = ['created_at', 'updated_at']
 
     def get_queryset(self):
-        # 普通成员仅查看自己的申请；管理员可查看全部
+        # 管理角色可查看全部；其他成员可看自己的申请和当前轮到自己审批的申请。
         user = self.request.user
         qs = super().get_queryset().select_related('applicant', 'flow')
         if user.global_role in ('sys_admin', 'teacher'):
             return qs
-        return qs.filter(applicant=user)
+        reviewable_ids = [
+            req.id
+            for req in qs.filter(status=ApprovalRequest.Status.PENDING)
+            if self._is_authorized_reviewer(user, req)
+        ]
+        return qs.filter(Q(applicant=user) | Q(id__in=reviewable_ids))
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        if not serializer.validated_data['flow'].is_active:
+            return error_response(
+                message='审批流程已停用',
+                code=2504,
+                http_status=status.HTTP_400_BAD_REQUEST,
+            )
         req = serializer.save(applicant=request.user, status=ApprovalRequest.Status.PENDING)
         return success_response(
             ApprovalRequestSerializer(req).data,
@@ -124,6 +143,12 @@ class ApprovalRequestViewSet(MultiSerializerMixin, ModelViewSet):
         req = self.get_object()
         if req.status != ApprovalRequest.Status.PENDING:
             return error_response(message='仅待审批的申请可操作', code=2501)
+        if not self._is_authorized_reviewer(request.user, req):
+            return error_response(
+                message='当前审批节点未授权该用户审批',
+                code=2502,
+                http_status=status.HTTP_403_FORBIDDEN,
+            )
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
@@ -149,6 +174,12 @@ class ApprovalRequestViewSet(MultiSerializerMixin, ModelViewSet):
         req = self.get_object()
         if req.status != ApprovalRequest.Status.PENDING:
             return error_response(message='仅待审批的申请可操作', code=2501)
+        if not self._is_authorized_reviewer(request.user, req):
+            return error_response(
+                message='当前审批节点未授权该用户审批',
+                code=2502,
+                http_status=status.HTTP_403_FORBIDDEN,
+            )
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
@@ -185,3 +216,62 @@ class ApprovalRequestViewSet(MultiSerializerMixin, ModelViewSet):
             serializer = ApprovalRequestSerializer(page, many=True)
             return self.get_paginated_response(serializer.data)
         return success_response(ApprovalRequestSerializer(qs, many=True).data)
+
+    @staticmethod
+    def _as_set(value):
+        if value in (None, ''):
+            return set()
+        if isinstance(value, (list, tuple, set)):
+            values = value
+        else:
+            values = [value]
+        return {str(item) for item in values if item not in (None, '')}
+
+    @classmethod
+    def _is_authorized_reviewer(cls, user, req):
+        """Match the current flow step by explicit reviewer IDs or roles."""
+        if (
+            not user
+            or not user.is_authenticated
+            or req.applicant_id == user.id
+            or req.status != ApprovalRequest.Status.PENDING
+        ):
+            return False
+
+        steps = req.flow.steps or []
+        step = (
+            steps[req.current_step]
+            if 0 <= req.current_step < len(steps)
+            and isinstance(steps[req.current_step], dict)
+            else {}
+        )
+
+        reviewer_ids = set()
+        reviewer_roles = set()
+        for key in (
+            'reviewer_id', 'reviewer_ids', 'approver_id', 'approver_ids',
+            'user_id', 'user_ids',
+        ):
+            reviewer_ids.update(cls._as_set(step.get(key)))
+        for key in (
+            'reviewer_role', 'reviewer_roles', 'approver_role',
+            'approver_roles', 'required_role', 'required_roles',
+            'role', 'roles',
+        ):
+            reviewer_roles.update(cls._as_set(step.get(key)))
+
+        reviewer = step.get('reviewer')
+        if isinstance(reviewer, dict):
+            reviewer_ids.update(cls._as_set(reviewer.get('id')))
+            reviewer_roles.update(cls._as_set(reviewer.get('role')))
+        elif reviewer not in (None, ''):
+            reviewer_ids.update(cls._as_set(reviewer))
+
+        if reviewer_ids or reviewer_roles:
+            return (
+                str(user.id) in reviewer_ids
+                or str(user.global_role) in reviewer_roles
+            )
+
+        # Legacy flows only carried a display name for each step.
+        return user.global_role in ('teacher', 'sys_admin')

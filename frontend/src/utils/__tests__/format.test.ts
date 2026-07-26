@@ -1,9 +1,22 @@
-import { describe, it, expect } from 'vitest'
+import { afterEach, describe, it, expect, vi } from 'vitest'
 import {
+  downloadBlob,
   formatDate,
   formatMoneyWithComma,
   formatFileSize,
+  getProjectRoleLabel,
+  getProjectStatusLabel,
+  getTaskPriorityLabel,
+  getCompetitionLevelLabel,
+  getCompetitionStatusLabel,
+  normalizePercentage,
 } from '@/utils/format'
+
+afterEach(() => {
+  vi.useRealTimers()
+  vi.restoreAllMocks()
+  vi.unstubAllGlobals()
+})
 
 // ============================================
 // formatDate
@@ -113,5 +126,57 @@ describe('formatFileSize', () => {
 
   it('formats exactly 1 GB', () => {
     expect(formatFileSize(1073741824)).toBe('1.00 GB')
+  })
+})
+
+describe('domain enum labels', () => {
+  it('formats project status and member role values', () => {
+    expect(getProjectStatusLabel('active')).toBe('进行中')
+    expect(getProjectRoleLabel('leader')).toBe('项目负责人')
+  })
+
+  it('formats task priority values', () => {
+    expect(getTaskPriorityLabel('urgent')).toBe('紧急')
+  })
+
+  it('formats current competition level and status values', () => {
+    expect(getCompetitionLevelLabel('province')).toBe('省赛')
+    expect(getCompetitionStatusLabel('preparing')).toBe('准备中')
+  })
+})
+
+describe('normalizePercentage', () => {
+  it('keeps backend percentages below one as percentage points', () => {
+    expect(normalizePercentage(0.5)).toBe(0.5)
+    expect(normalizePercentage(1)).toBe(1)
+  })
+
+  it('clamps values to a valid display range', () => {
+    expect(normalizePercentage(-2)).toBe(0)
+    expect(normalizePercentage(125)).toBe(100)
+  })
+})
+
+describe('downloadBlob', () => {
+  it('delays object URL cleanup until the browser has started the download', () => {
+    vi.useFakeTimers()
+    const blob = new Blob(['backup'], { type: 'application/zip' })
+    const createObjectURL = vi.fn(() => 'blob:backup-download')
+    const revokeObjectURL = vi.fn()
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+    vi.stubGlobal('URL', { createObjectURL, revokeObjectURL })
+
+    downloadBlob(blob, 'team-backup.zip')
+
+    expect(createObjectURL).toHaveBeenCalledWith(blob)
+    expect(click).toHaveBeenCalledOnce()
+    expect(revokeObjectURL).not.toHaveBeenCalled()
+
+    vi.advanceTimersByTime(999)
+    expect(revokeObjectURL).not.toHaveBeenCalled()
+
+    vi.advanceTimersByTime(1)
+    expect(revokeObjectURL).toHaveBeenCalledOnce()
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:backup-download')
   })
 })

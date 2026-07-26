@@ -2,11 +2,11 @@ import dayjs from 'dayjs'
 import {
   PROJECT_STAGES,
   PROJECT_STATUS_MAP,
+  PROJECT_ROLE_MAP,
   TASK_STATUS_MAP,
   TASK_PRIORITY_MAP,
   ROLE_MAP,
   FINANCE_CATEGORY_MAP,
-  FINANCE_EXPENSE_STATUS_MAP,
   COMPETITION_LEVEL_MAP,
   COMPETITION_STATUS_MAP,
   STAGE_COLOR_MAP,
@@ -49,6 +49,14 @@ export function formatRelativeTime(date: string | Date | null | undefined): stri
   if (diffHours < 24) return `${diffHours}小时前`
   if (diffDays < 30) return `${diffDays}天前`
   return formatDate(date)
+}
+
+/** 将后端的 0-100 百分比约束到可展示范围。 */
+export function normalizePercentage(value: number | string | null | undefined): number | null {
+  if (value === null || value === undefined || value === '') return null
+  const numericValue = Number(value)
+  if (!Number.isFinite(numericValue)) return null
+  return Math.min(100, Math.max(0, numericValue))
 }
 
 // ============================================
@@ -116,6 +124,11 @@ export function getProjectStatusTagType(status: string): string {
   return PROJECT_STATUS_MAP[status]?.type || 'info'
 }
 
+/** 获取项目成员角色标签 */
+export function getProjectRoleLabel(role: string): string {
+  return PROJECT_ROLE_MAP[role]?.label || role
+}
+
 /** 获取任务状态标签 */
 export function getTaskStatusLabel(status: string): string {
   return TASK_STATUS_MAP[status]?.label || status
@@ -159,16 +172,6 @@ export function getFinanceCategoryLabel(category: string): string {
 /** 获取经费类别颜色 */
 export function getFinanceCategoryColor(category: string): string {
   return FINANCE_CATEGORY_MAP[category]?.color || '#909399'
-}
-
-/** 获取经费支出状态标签 */
-export function getFinanceExpenseStatusLabel(status: string): string {
-  return FINANCE_EXPENSE_STATUS_MAP[status]?.label || status
-}
-
-/** 获取经费支出状态标签类型 */
-export function getFinanceExpenseStatusTagType(status: string): string {
-  return FINANCE_EXPENSE_STATUS_MAP[status]?.tagType || 'info'
 }
 
 /** 获取比赛级别标签 */
@@ -253,7 +256,7 @@ export function downloadBlob(blob: Blob, filename: string): void {
   document.body.appendChild(link)
   link.click()
   document.body.removeChild(link)
-  window.URL.revokeObjectURL(url)
+  window.setTimeout(() => window.URL.revokeObjectURL(url), 1000)
 }
 
 /** 获取文件扩展名 */

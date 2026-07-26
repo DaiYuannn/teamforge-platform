@@ -6,7 +6,6 @@
 - FlexibleWorkScheduleViewSet: 灵活工时管理（每半月一次填写）
 - MemberDetailView: 获取成员详情（基本信息+技能+灵活工时+项目+任务）
 """
-from datetime import timedelta
 
 from django.utils import timezone
 from rest_framework import status
@@ -18,8 +17,11 @@ from rest_framework.views import APIView
 from common.response import success_response, error_response
 from common.mixins import MultiSerializerMixin, MultiPermissionMixin
 from common.permissions import IsSysAdmin
+from common.project_access import is_external_collaborator
 from apps.users.models import User
+from apps.users.serializers import ExternalCollaboratorUserSerializer
 from .models import SkillTag, MemberSkill, FlexibleWorkSchedule
+from .periods import get_half_month_period
 from .serializers import (
     SkillTagSerializer,
     MemberSkillSerializer,
@@ -37,7 +39,7 @@ class MemberViewSet(MultiSerializerMixin, ReadOnlyModelViewSet):
     - list: 所有认证用户可查看成员列表（含联系方式）
     - retrieve: 所有认证用户可查看成员详情（含联系方式和参与项目）
     """
-    queryset = User.objects.filter(is_active=True).order_by('-date_joined')
+    queryset = User.objects.all().order_by('-date_joined')
 
     serializer_classes_by_action = {
         'list': MemberListSerializer,
@@ -46,9 +48,22 @@ class MemberViewSet(MultiSerializerMixin, ReadOnlyModelViewSet):
 
     permission_classes = [IsAuthenticated]
 
-    filterset_fields = ['global_role', 'is_student', 'grade', 'major']
+    filterset_fields = [
+        'global_role', 'membership_status', 'is_active', 'is_student', 'grade', 'major'
+    ]
     search_fields = ['username', 'name', 'email', 'phone']
     ordering_fields = ['date_joined', 'name']
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        if is_external_collaborator(self.request.user):
+            return queryset.filter(pk=self.request.user.pk)
+        return queryset
+
+    def get_serializer_class(self):
+        if is_external_collaborator(self.request.user):
+            return ExternalCollaboratorUserSerializer
+        return super().get_serializer_class()
 
     def list(self, request, *args, **kwargs):
         """成员列表"""
@@ -222,6 +237,15 @@ class MemberSkillViewSet(MultiSerializerMixin, ModelViewSet):
         user_id = request.query_params.get('user_id')
         if not user_id:
             return error_response(message='请提供 user_id 参数')
+        if (
+            is_external_collaborator(request.user)
+            and str(request.user.id) != str(user_id)
+        ):
+            return error_response(
+                message='外部协作者只能查看自己的技能',
+                code=1003,
+                http_status=status.HTTP_403_FORBIDDEN,
+            )
 
         try:
             user = User.objects.get(id=user_id, is_active=True)
@@ -340,16 +364,7 @@ class FlexibleWorkScheduleViewSet(MultiSerializerMixin, ModelViewSet):
         返回当前半月周期的起止日期及当前用户是否已填写
         """
         today = timezone.now().date()
-        if today.day <= 15:
-            period_start = today.replace(day=1)
-            period_end = (period_start + timedelta(days=15))
-        else:
-            period_start = today.replace(day=16)
-            # 计算月末
-            if today.month == 12:
-                period_end = today.replace(year=today.year + 1, month=1, day=1) - timedelta(days=1)
-            else:
-                period_end = today.replace(month=today.month + 1, day=1) - timedelta(days=1)
+        period_start, period_end = get_half_month_period(today)
 
         # 检查当前用户是否已填写
         filled = FlexibleWorkSchedule.objects.filter(
@@ -372,6 +387,13 @@ class FlexibleWorkScheduleViewSet(MultiSerializerMixin, ModelViewSet):
         GET /api/v1/members/work-schedules/all_latest/
         返回每个成员最新的一条灵活工时记录
         """
+        if is_external_collaborator(request.user):
+            return error_response(
+                message='外部协作者无权查看团队排期',
+                code=1003,
+                http_status=status.HTTP_403_FORBIDDEN,
+            )
+
         # 获取所有活跃用户的最新灵活工时
         users = User.objects.filter(is_active=True).order_by('name')
         result = []
@@ -390,6 +412,15 @@ class FlexibleWorkScheduleViewSet(MultiSerializerMixin, ModelViewSet):
         user_id = request.query_params.get('user_id')
         if not user_id:
             return error_response(message='请提供 user_id 参数')
+        if (
+            is_external_collaborator(request.user)
+            and str(request.user.id) != str(user_id)
+        ):
+            return error_response(
+                message='外部协作者只能查看自己的灵活工时',
+                code=1003,
+                http_status=status.HTTP_403_FORBIDDEN,
+            )
 
         try:
             user = User.objects.get(id=user_id, is_active=True)
@@ -413,6 +444,15 @@ class MemberDetailView(APIView):
     def get(self, request):
         """获取成员详情"""
         user_id = request.query_params.get('user_id') or request.user.id
+        if (
+            is_external_collaborator(request.user)
+            and str(request.user.id) != str(user_id)
+        ):
+            return error_response(
+                message='外部协作者只能查看自己的成员档案',
+                code=1003,
+                http_status=status.HTTP_403_FORBIDDEN,
+            )
 
         try:
             user = User.objects.get(id=user_id, is_active=True)
@@ -440,12 +480,22 @@ class MemberGrowthTimelineView(APIView):
             IPApplicationContributor,
         )
         from apps.tasks.models import Task
-        from apps.projects.models import ProjectMember
+        from apps.projects.models import ProjectMember, ProjectMembershipEvent
+        from apps.users.models import UserLifecycleEvent
 
         user_id = request.query_params.get('user_id') or request.user.id
+        if (
+            is_external_collaborator(request.user)
+            and str(request.user.id) != str(user_id)
+        ):
+            return error_response(
+                message='外部协作者只能查看自己的成长记录',
+                code=1003,
+                http_status=status.HTTP_403_FORBIDDEN,
+            )
 
         try:
-            user = User.objects.get(id=user_id, is_active=True)
+            user = User.objects.get(id=user_id)
         except User.DoesNotExist:
             return error_response(message='用户不存在', code=1004,
                                   http_status=status.HTTP_404_NOT_FOUND)
@@ -491,6 +541,57 @@ class MemberGrowthTimelineView(APIView):
                     'project_id': m.project_id,
                     'role_in_project': m.role_in_project,
                 },
+            })
+
+        # 2.1 项目角色、暂离、退出和交接记录
+        membership_events = ProjectMembershipEvent.objects.filter(
+            membership__user=user
+        ).select_related('membership__project', 'handover_to__user', 'operator')
+        for item in membership_events:
+            if item.event_type == ProjectMembershipEvent.EventType.JOINED:
+                continue
+            detail_parts = []
+            if item.from_role != item.to_role:
+                detail_parts.append(f'角色：{item.from_role or "-"} → {item.to_role or "-"}')
+            if item.from_status != item.to_status:
+                detail_parts.append(f'状态：{item.from_status or "-"} → {item.to_status or "-"}')
+            if item.handover_to:
+                detail_parts.append(f'交接给：{item.handover_to.user.name}')
+            if item.reason:
+                detail_parts.append(f'原因：{item.reason}')
+            events.append({
+                'id': f'project_membership_{item.id}',
+                'type': 'project_membership',
+                'title': f'{item.get_event_type_display()}: {item.membership.project.name}',
+                'description': '；'.join(detail_parts),
+                'timestamp': item.created_at.isoformat(),
+                'date': item.created_at.date().isoformat(),
+                'project_name': item.membership.project.name,
+                'metadata': {'event_type': item.event_type},
+            })
+
+        # 2.2 团队成员生命周期
+        for item in UserLifecycleEvent.objects.filter(user=user).select_related(
+            'handover_to', 'operator'
+        ):
+            detail_parts = []
+            if item.from_status != item.to_status:
+                detail_parts.append(f'状态：{item.from_status or "-"} → {item.to_status or "-"}')
+            if item.from_role != item.to_role:
+                detail_parts.append(f'角色：{item.from_role or "-"} → {item.to_role or "-"}')
+            if item.handover_to:
+                detail_parts.append(f'交接给：{item.handover_to.name}')
+            if item.reason:
+                detail_parts.append(f'原因：{item.reason}')
+            events.append({
+                'id': f'user_lifecycle_{item.id}',
+                'type': 'member_status',
+                'title': item.get_event_type_display(),
+                'description': '；'.join(detail_parts),
+                'timestamp': item.created_at.isoformat(),
+                'date': item.created_at.date().isoformat(),
+                'project_name': '',
+                'metadata': {'event_type': item.event_type},
             })
 
         # 3. 比赛参与(通过项目关联)

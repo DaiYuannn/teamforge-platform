@@ -7,13 +7,11 @@
 #   postgres       数据库（不暴露端口）
 #   redis          缓存/消息队列（不暴露端口）
 #   backend        Django + gunicorn（migrate + collectstatic 由 entrypoint 执行）
-#   celery-worker  Celery Worker（架构预留，需 --profile celery 启用）
-#   celery-beat    Celery Beat（架构预留，需 --profile celery 启用）
+#   celery-worker  定时报表与异步任务执行器
+#   celery-beat    定时报表调度器
 #   frontend       前端构建器（构建 dist 输出到共享卷，完成后退出）
 #   nginx          反向代理 + SPA 托管 (80/443)
 # ============================================================
-version: "3.8"
-
 services:
   # ---------- PostgreSQL 数据库 ----------
   postgres:
@@ -66,10 +64,11 @@ services:
       DJANGO_SETTINGS_MODULE: config.settings.prod
     # 生产环境使用镜像内构建产物，不挂载源码
     # entrypoint 会先执行 migrate + collectstatic，再启动 gunicorn
-    command: gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 4 --threads 2 --timeout 120
+    command: gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 2 --worker-class gevent --worker-connections 256 --timeout 0 --graceful-timeout 30
     volumes:
       - media_data:/app/media
       - static_data:/app/staticfiles
+      - demo_backup_data:/app/demo_backups
     depends_on:
       postgres:
         condition: service_healthy
@@ -82,10 +81,8 @@ services:
       retries: 5
       start_period: 40s
 
-  # ---------- Celery Worker（架构预留，默认不启动）----------
-  # 启用前需在 backend/requirements/prod.txt 中添加 celery
+  # ---------- Celery Worker ----------
   celery-worker:
-    profiles: ["celery"]
     build:
       context: ../backend
       dockerfile: ../deploy/dockerfiles/backend.Dockerfile
@@ -97,6 +94,8 @@ services:
       - env/backend.prod.env
     environment:
       DJANGO_SETTINGS_MODULE: config.settings.prod
+    volumes:
+      - media_data:/app/media
     # 清空 entrypoint，celery 不需要 migrate/collectstatic
     entrypoint: []
     command: celery -A config worker -l info
@@ -106,9 +105,8 @@ services:
       backend:
         condition: service_healthy
 
-  # ---------- Celery Beat（架构预留，默认不启动）----------
+  # ---------- Celery Beat ----------
   celery-beat:
-    profiles: ["celery"]
     build:
       context: ../backend
       dockerfile: ../deploy/dockerfiles/backend.Dockerfile
@@ -166,4 +164,5 @@ volumes:
   redis_data:
   media_data:
   static_data:
+  demo_backup_data:
   frontend_dist:

@@ -1,0 +1,196 @@
+import type { UserRole } from '@/types'
+
+export interface AppNavigationItem {
+  path: string
+  title: string
+  icon: string
+  roles?: readonly UserRole[]
+}
+
+export interface AppNavigationGroup {
+  key: string
+  title: string
+  icon: string
+  items: readonly AppNavigationItem[]
+}
+
+export interface MobilePrimaryNavigationItem {
+  path: string
+  label: string
+  icon: string
+}
+
+export const NAVIGATION_GROUPS: readonly AppNavigationGroup[] = [
+  {
+    key: 'workspace',
+    title: '工作台',
+    icon: 'Odometer',
+    items: [
+      { path: '/dashboard', title: '首页', icon: 'Odometer' },
+      { path: '/todo', title: '待办事项', icon: 'Checked' },
+      { path: '/notifications', title: '通知中心', icon: 'Bell' },
+      { path: '/announcements', title: '公告管理', icon: 'Notification' },
+      { path: '/activities', title: '团队动态', icon: 'ChatLineSquare' },
+      { path: '/reports', title: '定时报表', icon: 'DataAnalysis' },
+    ],
+  },
+  {
+    key: 'execution',
+    title: '项目执行',
+    icon: 'Folder',
+    items: [
+      { path: '/projects', title: '项目管理', icon: 'Folder' },
+      { path: '/projects/archive', title: '项目归档', icon: 'FolderOpened' },
+      { path: '/competitions', title: '比赛管理', icon: 'Trophy' },
+      { path: '/tasks', title: '任务管理', icon: 'List' },
+    ],
+  },
+  {
+    key: 'resources',
+    title: '人员与资源',
+    icon: 'User',
+    items: [
+      { path: '/team', title: '团队组织', icon: 'OfficeBuilding' },
+      { path: '/members', title: '成员管理', icon: 'User' },
+      { path: '/members/schedule', title: '我的灵活工时', icon: 'Clock' },
+      { path: '/members/team-schedule', title: '团队灵活工时', icon: 'DataAnalysis' },
+      { path: '/members/skills', title: '技能标签', icon: 'Collection' },
+      { path: '/finance', title: '经费管理', icon: 'Money' },
+      { path: '/files', title: '文件管理', icon: 'Document' },
+      { path: '/imports', title: '导入中心', icon: 'Upload' },
+    ],
+  },
+  {
+    key: 'outcomes',
+    title: '成果与审批',
+    icon: 'Medal',
+    items: [
+      { path: '/intellectual-property', title: '成果与知识产权', icon: 'Medal' },
+      { path: '/intellectual-property/todo', title: '待我处理', icon: 'Bell' },
+      { path: '/contributions', title: '我的贡献', icon: 'Trophy' },
+      { path: '/contributions/pending', title: '贡献审核', icon: 'CircleCheck' },
+      { path: '/sensitive', title: '敏感资料', icon: 'Lock' },
+      { path: '/sensitive/my-data', title: '我的资料', icon: 'Files' },
+      { path: '/sensitive/requests', title: '查看申请', icon: 'View' },
+      { path: '/sensitive/pending', title: '资料审批', icon: 'CircleCheck', roles: ['sys_admin', 'sens_approver', 'teacher'] },
+    ],
+  },
+  {
+    key: 'administration',
+    title: '平台管理',
+    icon: 'Setting',
+    items: [
+      {
+        path: '/audit/logs',
+        title: '操作日志',
+        icon: 'Document',
+        roles: ['sys_admin', 'teacher'],
+      },
+      {
+        path: '/admin/integrations',
+        title: '第三方集成',
+        icon: 'Connection',
+        roles: ['sys_admin'],
+      },
+      {
+        path: '/admin/users',
+        title: '用户管理',
+        icon: 'Setting',
+        roles: ['sys_admin'],
+      },
+      {
+        path: '/admin/backups',
+        title: '演示数据备份',
+        icon: 'Box',
+        roles: ['sys_admin'],
+      },
+      {
+        path: '/admin/public-portal',
+        title: '公开门户',
+        icon: 'View',
+        roles: ['sys_admin', 'teacher'],
+      },
+    ],
+  },
+]
+
+export const MOBILE_PRIMARY_NAVIGATION: readonly MobilePrimaryNavigationItem[] = [
+  { path: '/dashboard', label: '首页', icon: 'Odometer' },
+  { path: '/projects', label: '项目', icon: 'Folder' },
+  { path: '/todo', label: '待办', icon: 'Checked' },
+  { path: '/notifications', label: '通知', icon: 'Bell' },
+  { path: '/user/profile', label: '我的', icon: 'User' },
+]
+
+const EXTERNAL_NAVIGATION_PREFIXES = [
+  '/projects',
+  '/competitions',
+  '/tasks',
+  '/files',
+  '/notifications',
+  '/contributions',
+] as const
+
+const EXTERNAL_ROUTE_PREFIXES = [
+  ...EXTERNAL_NAVIGATION_PREFIXES,
+  '/user',
+  '/public-portal',
+  '/public',
+] as const
+
+const EXTERNAL_MOBILE_NAVIGATION: readonly MobilePrimaryNavigationItem[] = [
+  { path: '/projects', label: '项目', icon: 'Folder' },
+  { path: '/tasks', label: '任务', icon: 'List' },
+  { path: '/files', label: '文件', icon: 'Document' },
+  { path: '/notifications', label: '通知', icon: 'Bell' },
+  { path: '/user/profile', label: '我的', icon: 'User' },
+]
+
+export function isExternalRouteAllowed(path: string): boolean {
+  return EXTERNAL_ROUTE_PREFIXES.some(
+    (prefix) => path === prefix || path.startsWith(`${prefix}/`),
+  )
+}
+
+export function getMobilePrimaryNavigation(
+  membershipStatus?: string,
+): readonly MobilePrimaryNavigationItem[] {
+  return membershipStatus === 'external'
+    ? EXTERNAL_MOBILE_NAVIGATION
+    : MOBILE_PRIMARY_NAVIGATION
+}
+
+export function getVisibleNavigationGroups(
+  role: string,
+  membershipStatus?: string,
+): AppNavigationGroup[] {
+  return NAVIGATION_GROUPS.map((group) => ({
+    ...group,
+    items: group.items.filter((item) => {
+      if (item.roles && !item.roles.includes(role as UserRole)) return false
+      if (membershipStatus !== 'external') return true
+      return EXTERNAL_NAVIGATION_PREFIXES.some(
+        (prefix) => item.path === prefix || item.path.startsWith(`${prefix}/`),
+      )
+    }),
+  })).filter((group) => group.items.length > 0)
+}
+
+export function findNavigationItem(
+  path: string,
+  groups: readonly AppNavigationGroup[] = NAVIGATION_GROUPS,
+): AppNavigationItem | undefined {
+  return groups
+    .flatMap((group) => group.items)
+    .filter((item) => path === item.path || path.startsWith(`${item.path}/`))
+    .sort((a, b) => b.path.length - a.path.length)[0]
+}
+
+export function findNavigationGroup(
+  path: string,
+  groups: readonly AppNavigationGroup[] = NAVIGATION_GROUPS,
+): AppNavigationGroup | undefined {
+  return groups.find((group) =>
+    group.items.some((item) => path === item.path || path.startsWith(`${item.path}/`)),
+  )
+}

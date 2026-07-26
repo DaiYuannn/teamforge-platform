@@ -6,11 +6,11 @@
 #   postgres  数据库 (5432)
 #   redis     缓存/消息队列 (6379)
 #   backend   Django runserver (8000)
+#   celery-worker  定时报表与异步任务执行器
+#   celery-beat    定时报表调度器
 #   frontend  Vite 开发服务器 (3000)
 #   nginx     反向代理统一入口 (80)，代理 /api /admin 到后端，其余到前端
 # ============================================================
-version: "3.8"
-
 services:
   # ---------- PostgreSQL 数据库 ----------
   postgres:
@@ -78,6 +78,52 @@ services:
       timeout: 5s
       retries: 5
       start_period: 30s
+
+  # ---------- Celery 异步任务执行 ----------
+  celery-worker:
+    build:
+      context: ../backend
+      dockerfile: ../deploy/dockerfiles/backend.Dockerfile
+      args:
+        ENVIRONMENT: dev
+    container_name: team_celery_worker_dev
+    restart: unless-stopped
+    env_file:
+      - env/backend.env
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.dev
+    volumes:
+      - ../backend:/app
+      - ../media:/app/media
+    command: celery -A config worker -l info
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # ---------- Celery 定时调度 ----------
+  celery-beat:
+    build:
+      context: ../backend
+      dockerfile: ../deploy/dockerfiles/backend.Dockerfile
+      args:
+        ENVIRONMENT: dev
+    container_name: team_celery_beat_dev
+    restart: unless-stopped
+    env_file:
+      - env/backend.env
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.dev
+    volumes:
+      - ../backend:/app
+      - ../media:/app/media
+    command: celery -A config beat -l info
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
 
   # ---------- Vue 3 前端（开发模式 Vite HMR）----------
   frontend:

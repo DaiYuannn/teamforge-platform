@@ -1,4 +1,4 @@
-import { get } from './request'
+import { get, patch } from './request'
 import type { DashboardData } from '@/types'
 
 /** 获取首页驾驶舱数据 */
@@ -138,7 +138,7 @@ export interface GanttProject {
 
 /** 获取 Gantt 历程条数据 */
 export function getProjectGantt(params?: { project_id?: number; status?: string }): Promise<{ total: number; projects: GanttProject[] }> {
-  return get('/dashboard/gantt/')
+  return get('/dashboard/gantt/', params)
 }
 
 // ============================================
@@ -164,6 +164,8 @@ export interface PublicAwardedProject {
   leader_name: string
   start_date: string
   awards: { competition_name: string; level: string; level_display: string; award_level: string }[]
+  is_featured?: boolean
+  image_url?: string
 }
 
 /** 公共展示知识产权成果 */
@@ -175,6 +177,8 @@ export interface PublicIPResult {
   application_code: string
   authorized_date: string
   intro: string
+  is_featured?: boolean
+  image_url?: string
 }
 
 /** 公共展示核心成员 */
@@ -186,17 +190,105 @@ export interface PublicCoreMember {
   grade: string
   major: string
   project_count: number
+  summary?: string
+  is_featured?: boolean
+}
+
+export interface PublicPortalSettings {
+  team_name: string
+  tagline: string
+  summary: string
+  about_title: string
+  about_text: string
+  logo_url: string
+  hero_image_url: string
+  story_image_url: string
+  contact_email: string
+  join_title: string
+  join_message: string
+  join_url: string
+  updated_at?: string
+}
+
+export interface PortalPublicationItem {
+  content_type: 'project' | 'ip_application' | 'member'
+  object_id: number
+  name: string
+  code: string
+  secondary: string
+  status: string
+  is_public: boolean
+  is_featured: boolean
+  member_consent: boolean
+  display_order: number
+  custom_title: string
+  custom_summary: string
+  image_url: string
+}
+
+export interface PortalManagementData {
+  settings: PublicPortalSettings
+  projects: PortalPublicationItem[]
+  ip_applications: PortalPublicationItem[]
+  members: PortalPublicationItem[]
 }
 
 /** 公共展示主页数据 */
 export interface PublicPortalData {
   stats: PublicPortalStats
+  project_statistics: {
+    total_projects: number
+    active_projects: number
+    completed_projects: number
+  }
+  announcements: Array<{
+    id: number
+    title: string
+    content: string
+    category: string
+    category_display: string
+    is_pinned: boolean
+    author_name: string
+    published_at: string
+  }>
   awarded_projects: PublicAwardedProject[]
   ip_results: PublicIPResult[]
   core_members: PublicCoreMember[]
+  settings: PublicPortalSettings
 }
 
 /** 获取公共展示主页数据(无需认证) */
 export function getPublicPortal(): Promise<PublicPortalData> {
   return get('/dashboard/public-portal/')
+}
+
+export function getPortalManagement(): Promise<PortalManagementData> {
+  return get('/dashboard/public-portal/manage/')
+}
+
+export function updatePortalSettings(
+  data: Partial<PublicPortalSettings>,
+): Promise<PublicPortalSettings> {
+  return patch('/dashboard/public-portal/manage/', data)
+}
+
+export function updatePortalPublication(
+  item: Pick<PortalPublicationItem, 'content_type' | 'object_id'> &
+    Partial<PortalPublicationItem>,
+): Promise<PortalPublicationItem> {
+  const { content_type, object_id, ...data } = item
+  return patch(
+    `/dashboard/public-portal/publications/${content_type}/${object_id}/`,
+    data,
+  )
+}
+
+export function getMyPortalConsent(): Promise<{ consent: boolean; is_public: boolean }> {
+  return get('/dashboard/public-portal/member-consent/')
+}
+
+export function updateMyPortalConsent(
+  consent: boolean,
+): Promise<{ consent: boolean; is_public: boolean }> {
+  return patch('/dashboard/public-portal/member-consent/', { consent })
 }

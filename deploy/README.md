@@ -94,7 +94,7 @@ docker compose exec backend python manage.py createsuperuser
 | 后端 API | http://localhost:8000/api/v1/ |
 | Django Admin | http://localhost:8000/admin/ |
 
-> 开发环境通过 Nginx（80 端口）统一访问，`/api/`、`/admin/`、`/static/`、`/media/` 代理到后端，其余请求代理到前端 Vite（支持 HMR WebSocket）。
+> 开发环境通过 Nginx（80 端口）统一访问。只有 `/media/public/` 资产可直接读取；其他上传文件使用后端签发的限时 `/api/v1/common/media/` 地址。
 
 ---
 
@@ -107,8 +107,8 @@ docker compose exec backend python manage.py createsuperuser
 | postgres | postgres:16-alpine | 不暴露 | 数据库 |
 | redis | redis:7-alpine | 不暴露 | 缓存 / Celery broker |
 | backend | 自构建 | 8000(内部) | gunicorn + migrate + collectstatic |
-| celery-worker | 同 backend | - | 架构预留（profile: celery）|
-| celery-beat | 同 backend | - | 架构预留（profile: celery）|
+| celery-worker | 同 backend | - | 默认启动，执行异步任务与报表生成 |
+| celery-beat | 同 backend | - | 默认启动，调度提醒与定时报表 |
 | frontend | 自构建 | - | 构建产物输出到共享卷后退出 |
 | nginx | nginx:alpine | 80 / 443 | 反向代理 + SPA 托管 |
 
@@ -135,14 +135,13 @@ docker compose -f docker-compose.prod.yml build
 docker compose -f docker-compose.prod.yml up -d
 ```
 
-### 启用 Celery（架构预留）
+### Celery Worker 与 Beat
 
-Celery 依赖尚未加入 `requirements/prod.txt`，启用前需先添加 `celery` 到该文件并重新构建后端镜像：
+Celery 已列入后端标准依赖，生产编排会默认启动 Worker 与 Beat。部署后应确认两个服务均为健康运行状态：
 
 ```bash
-# 1. 在 backend/requirements/prod.txt 添加 celery==5.x
-# 2. 启用 celery 服务
-docker compose -f docker-compose.prod.yml --profile celery up -d
+docker compose -f docker-compose.prod.yml up -d celery-worker celery-beat
+docker compose -f docker-compose.prod.yml ps celery-worker celery-beat
 ```
 
 ### 启用 HTTPS
@@ -168,6 +167,8 @@ docker compose -f docker-compose.prod.yml --profile celery up -d
 | `DB_USER` | postgres | postgres | 数据库用户 |
 | `DB_PASSWORD` | postgres | **必须强密码** | 数据库密码（须与 compose 中 postgres 一致）|
 | `DB_HOST` | postgres | postgres | 数据库主机（容器名）|
+| `PROTECTED_MEDIA_URL_TTL` | 7200 | 7200 | 非公开媒体签名 URL 的有效期（秒，默认与登录访问令牌一致）|
+| `PROTECTED_MEDIA_USE_X_ACCEL_REDIRECT` | False | **True** | 生产环境由 Nginx internal location 发送受保护媒体 |
 | `DB_PORT` | 5432 | 5432 | 数据库端口 |
 | `CELERY_BROKER_URL` | redis://redis:6379/0 | 同左 | Celery broker |
 | `CELERY_RESULT_BACKEND` | redis://redis:6379/1 | 同左 | Celery 结果后端 |
@@ -240,8 +241,8 @@ docker compose -f docker-compose.prod.yml logs -f
 docker compose -f docker-compose.prod.yml build backend
 docker compose -f docker-compose.prod.yml up -d backend
 
-# 启用 Celery
-docker compose -f docker-compose.prod.yml --profile celery up -d
+# 检查 Celery
+docker compose -f docker-compose.prod.yml ps celery-worker celery-beat
 
 # 查看服务状态
 docker compose -f docker-compose.prod.yml ps

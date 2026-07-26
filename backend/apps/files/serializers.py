@@ -10,6 +10,7 @@ from .tag_models import FileTag, FileTagRelation
 class FileVersionSerializer(serializers.ModelSerializer):
     """文件版本序列化器"""
     uploader_name = serializers.CharField(source='uploader.name', read_only=True, default='')
+    file = serializers.FileField(write_only=True)
 
     class Meta:
         model = FileVersion
@@ -19,6 +20,7 @@ class FileVersionSerializer(serializers.ModelSerializer):
 
 class FileAssetSerializer(serializers.ModelSerializer):
     """文件资源序列化器"""
+    file = serializers.FileField(write_only=True)
     uploader_name = serializers.CharField(source='uploader.name', read_only=True, default='')
     project_name = serializers.CharField(source='project.name', read_only=True, default='')
     level_display = serializers.CharField(source='get_level_display', read_only=True)
@@ -37,12 +39,21 @@ class FileAssetSerializer(serializers.ModelSerializer):
 
     def get_file_url(self, obj):
         """获取文件访问URL"""
+        if obj.level == FileAsset.Level.SENSITIVE:
+            return None
         if obj.file:
             request = self.context.get('request')
             if request:
                 return request.build_absolute_uri(obj.file.url)
             return obj.file.url
         return None
+
+    def to_representation(self, instance):
+        """敏感文件响应中不生成、也不返回任何签名文件地址。"""
+        data = super().to_representation(instance)
+        if instance.level == FileAsset.Level.SENSITIVE:
+            data.pop('file_url', None)
+        return data
 
 
 class FileAssetListSerializer(serializers.ModelSerializer):

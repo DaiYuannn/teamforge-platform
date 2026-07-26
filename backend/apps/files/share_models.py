@@ -6,6 +6,7 @@ N33: 文件分享链接模型
 """
 import uuid
 
+from django.core.exceptions import ValidationError
 from django.db import models
 
 
@@ -48,6 +49,19 @@ class FileShareLink(models.Model):
     def __str__(self):
         return f'{self.file.name} - {self.token[:8]}...'
 
+    def save(self, *args, **kwargs):
+        """敏感文件不能创建或重新启用公开分享链接。"""
+        if self.file_id:
+            from .models import FileAsset
+
+            is_sensitive = FileAsset.objects.filter(
+                pk=self.file_id,
+                level=FileAsset.Level.SENSITIVE,
+            ).exists()
+            if is_sensitive and (self._state.adding or self.is_active):
+                raise ValidationError('敏感文件禁止创建或启用公开分享链接')
+        return super().save(*args, **kwargs)
+
     @classmethod
     def generate_token(cls):
         """生成唯一的分享令牌"""
@@ -76,6 +90,7 @@ class FileShareLink(models.Model):
         """链接是否仍有效（未撤销、未过期、未超访问次数）"""
         return (
             self.is_active
+            and self.file.level != 'sensitive'
             and not self.is_expired
             and not self.is_view_limit_reached
         )

@@ -35,6 +35,13 @@ export const PROJECT_STATUS_MAP: Record<string, { label: string; type: string }>
   closed: { label: '已关闭', type: 'info' },
 }
 
+// 项目成员角色映射
+export const PROJECT_ROLE_MAP: Record<string, { label: string; tagType: string }> = {
+  leader: { label: '项目负责人', tagType: 'danger' },
+  core: { label: '核心成员', tagType: 'warning' },
+  participant: { label: '参与成员', tagType: 'info' },
+}
+
 // 任务状态映射
 export const TASK_STATUS_MAP: Record<string, { label: string; type: string }> = {
   todo: { label: '待办', type: 'info' },
@@ -59,7 +66,7 @@ export const TASK_STATUS_LIST = [
 // 任务优先级映射
 export const TASK_PRIORITY_MAP: Record<string, { label: string; tagType: string }> = {
   low: { label: '低', tagType: 'info' },
-  medium: { label: '中', tagType: '' },
+  medium: { label: '中', tagType: 'primary' },
   high: { label: '高', tagType: 'warning' },
   urgent: { label: '紧急', tagType: 'danger' },
 }
@@ -68,13 +75,12 @@ export const TASK_PRIORITY_MAP: Record<string, { label: string; tagType: string 
 export const ROLE_MAP: Record<string, { label: string; tagType: string }> = {
   sys_admin: { label: '系统管理员', tagType: 'danger' },
   teacher: { label: '老师', tagType: 'warning' },
-  member: { label: '普通成员', tagType: '' },
+  member: { label: '普通成员', tagType: 'primary' },
   sens_approver: { label: '敏感审批人', tagType: 'success' },
 }
 
 // 经费类别映射
 export const FINANCE_CATEGORY_MAP: Record<string, { label: string; color: string }> = {
-  registration: { label: '报名费', color: '#409EFF' },
   material: { label: '材料费', color: '#67C23A' },
   printing: { label: '打印费', color: '#3498DB' },
   travel: { label: '差旅费', color: '#E6A23C' },
@@ -86,21 +92,12 @@ export const FINANCE_CATEGORY_MAP: Record<string, { label: string; color: string
   other: { label: '其他', color: '#909399' },
 }
 
-// 经费支出状态映射
-export const FINANCE_EXPENSE_STATUS_MAP: Record<string, { label: string; tagType: string }> = {
-  pending: { label: '待审批', tagType: 'info' },
-  approved: { label: '已批准', tagType: 'success' },
-  rejected: { label: '已驳回', tagType: 'danger' },
-  reimbursed: { label: '已报销', tagType: '' },
-}
-
 // 比赛级别映射
 export const COMPETITION_LEVEL_MAP: Record<string, { label: string; tagType: string }> = {
-  national: { label: '国家级', tagType: 'danger' },
-  provincial: { label: '省级', tagType: 'warning' },
-  municipal: { label: '市级', tagType: '' },
-  school: { label: '校级', tagType: 'info' },
-  enterprise: { label: '企业级', tagType: 'success' },
+  school: { label: '校赛', tagType: 'info' },
+  city: { label: '市赛', tagType: 'success' },
+  province: { label: '省赛', tagType: 'warning' },
+  national: { label: '国赛', tagType: 'danger' },
 }
 
 // 比赛级别颜色映射（需求C：校赛→国际赛，由低到高，蓝→绿→橙→红→紫）
@@ -130,12 +127,25 @@ export const STAGE_HEX_COLOR_MAP: Record<string, string> = {
 
 // 比赛状态映射
 export const COMPETITION_STATUS_MAP: Record<string, { label: string; tagType: string }> = {
-  upcoming: { label: '即将开始', tagType: 'info' },
-  registering: { label: '报名中', tagType: '' },
+  preparing: { label: '准备中', tagType: 'info' },
   ongoing: { label: '进行中', tagType: 'success' },
-  judging: { label: '评审中', tagType: 'warning' },
   completed: { label: '已结束', tagType: 'info' },
 }
+
+// 比赛流程阶段建议值。后端允许自定义文本，表单在保留这些标准选项的同时支持录入特殊阶段。
+export const COMPETITION_STAGE_OPTIONS = [
+  '报名准备',
+  '材料提交',
+  '网评审核',
+  '答辩准备',
+  '校赛',
+  '市赛',
+  '省赛',
+  '国赛',
+  '结果公示',
+  '获奖归档',
+  '已结束',
+] as const
 
 // 文件级别映射
 export const FILE_LEVEL_MAP: Record<string, { label: string; tagType: string }> = {
@@ -146,19 +156,22 @@ export const FILE_LEVEL_MAP: Record<string, { label: string; tagType: string }> 
 
 // 导入模块映射
 export const IMPORT_MODULE_MAP: Record<string, string> = {
-  users: '用户',
   projects: '项目',
+  history_projects: '历史项目',
   members: '成员',
   tasks: '任务',
   competitions: '比赛',
+  finance: '经费明细',
+  ip_applications: '知识产权',
 }
 
 // 导入任务状态映射
 export const IMPORT_TASK_STATUS_MAP: Record<string, { label: string; tagType: string }> = {
   pending: { label: '待处理', tagType: 'info' },
-  previewing: { label: '预览中', tagType: '' },
+  previewing: { label: '预览中', tagType: 'primary' },
+  previewed: { label: '待确认', tagType: 'warning' },
   confirming: { label: '导入中', tagType: 'warning' },
-  completed: { label: '已完成', tagType: 'success' },
+  confirmed: { label: '已确认', tagType: 'success' },
   failed: { label: '失败', tagType: 'danger' },
   rolled_back: { label: '已回滚', tagType: 'info' },
 }
@@ -295,28 +308,28 @@ export const IP_OBJECTION_STATUS_MAP: Record<string, { label: string; color: str
 
 // 操作日志模块映射
 export const AUDIT_MODULE_MAP: Record<string, { label: string; tagType: string }> = {
-  projects: { label: '项目管理', tagType: '' },
+  projects: { label: '项目管理', tagType: 'primary' },
   tasks: { label: '任务管理', tagType: 'success' },
   finance: { label: '经费管理', tagType: 'warning' },
   files: { label: '文件管理', tagType: 'info' },
-  contributions: { label: '贡献记录', tagType: '' },
+  contributions: { label: '贡献记录', tagType: 'primary' },
   sensitive: { label: '敏感资料', tagType: 'danger' },
   intellectual_property: { label: '知识产权', tagType: 'success' },
-  members: { label: '人员管理', tagType: '' },
+  members: { label: '人员管理', tagType: 'primary' },
   competitions: { label: '比赛管理', tagType: 'warning' },
   users: { label: '用户管理', tagType: 'danger' },
   notifications: { label: '通知', tagType: 'info' },
-  integrations: { label: '第三方集成', tagType: '' },
+  integrations: { label: '第三方集成', tagType: 'primary' },
   exports: { label: '数据导出', tagType: 'info' },
 }
 
 // 操作类型映射
 export const AUDIT_ACTION_MAP: Record<string, { label: string; tagType: string }> = {
   create: { label: '创建', tagType: 'success' },
-  update: { label: '更新', tagType: '' },
+  update: { label: '更新', tagType: 'primary' },
   delete: { label: '删除', tagType: 'danger' },
   retrieve: { label: '查询', tagType: 'info' },
-  login: { label: '登录', tagType: '' },
+  login: { label: '登录', tagType: 'primary' },
   logout: { label: '退出', tagType: 'info' },
   upload: { label: '上传', tagType: 'success' },
   download: { label: '下载', tagType: 'info' },
@@ -343,6 +356,7 @@ export const NOTIFICATION_CATEGORY_MAP: Record<string, { label: string; type: st
   competition: { label: '比赛', type: 'success' },
   finance: { label: '经费', type: 'warning' },
   announcement: { label: '公告', type: 'warning' },
+  report: { label: '定时报表', type: 'primary' },
   system: { label: '系统', type: 'info' },
 }
 
@@ -352,13 +366,24 @@ export const NOTIFICATION_CATEGORY_MAP: Record<string, { label: string; type: st
 
 // 贡献类型映射
 export const CONTRIBUTION_TYPE_MAP: Record<string, { label: string; tagType: string }> = {
-  code: { label: '代码开发', tagType: '' },
-  document: { label: '文档撰写', tagType: 'success' },
-  design: { label: '设计制图', tagType: 'warning' },
-  test: { label: '测试验证', tagType: 'info' },
-  research: { label: '调研分析', tagType: '' },
-  management: { label: '项目管理', tagType: 'danger' },
-  presentation: { label: '答辩展示', tagType: 'success' },
+  task_complete: { label: '任务完成', tagType: 'success' },
+  project_lead: { label: '项目负责人', tagType: 'primary' },
+  competition: { label: '比赛参与', tagType: 'warning' },
+  finance_manage: { label: '经费管理', tagType: 'success' },
+  file_upload: { label: '文件上传', tagType: 'info' },
+  ip_writing: { label: '软著/专利撰写', tagType: 'primary' },
+  ip_execution: { label: '软著/专利申请执行', tagType: 'primary' },
+  ip_return_fix: { label: '软著/专利退回修改', tagType: 'warning' },
+  ip_archive: { label: '成果归档', tagType: 'success' },
+  ip_material: { label: '材料整理', tagType: 'info' },
+  project_leader: { label: '项目负责人统筹', tagType: 'primary' },
+  core: { label: '核心成员', tagType: 'danger' },
+  long_term: { label: '长期贡献', tagType: 'success' },
+  stage_task: { label: '阶段性任务', tagType: 'warning' },
+  resource: { label: '资源贡献', tagType: 'info' },
+  temporary_help: { label: '临时协助', tagType: 'info' },
+  nominal: { label: '挂名贡献', tagType: 'info' },
+  exited_contribution: { label: '已退出成员贡献', tagType: 'info' },
   other: { label: '其他', tagType: 'info' },
 }
 
@@ -372,7 +397,7 @@ export const CONTRIBUTION_STATUS_MAP: Record<string, { label: string; tagType: s
 // 排序状态映射
 export const RANKING_STATUS_MAP: Record<string, { label: string; tagType: string }> = {
   draft: { label: '草稿', tagType: 'info' },
-  generated: { label: '已生成', tagType: '' },
+  generated: { label: '已生成', tagType: 'primary' },
   confirmed: { label: '已确认', tagType: 'success' },
 }
 
@@ -387,7 +412,8 @@ export const OBJECTION_TYPE_MAP: Record<string, string> = {
 // 排序异议状态映射
 export const OBJECTION_STATUS_MAP: Record<string, { label: string; tagType: string }> = {
   pending: { label: '待处理', tagType: 'info' },
-  leader_reviewed: { label: '负责人已初审', tagType: '' },
+  leader_reviewed: { label: '负责人已初审', tagType: 'primary' },
+  approved: { label: '异议成立，已更正', tagType: 'success' },
   teacher_confirmed: { label: '老师已确认', tagType: 'success' },
   resolved: { label: '已解决', tagType: 'success' },
   rejected: { label: '已驳回', tagType: 'danger' },
@@ -399,7 +425,7 @@ export const OBJECTION_STATUS_MAP: Record<string, { label: string; tagType: stri
 
 // 敏感资料类型映射
 export const SENSITIVE_DATA_TYPE_MAP: Record<string, { label: string; tagType: string }> = {
-  phone: { label: '手机号', tagType: '' },
+  phone: { label: '手机号', tagType: 'primary' },
   id_card: { label: '身份证号', tagType: 'danger' },
   bank_card: { label: '银行卡号', tagType: 'warning' },
   address: { label: '家庭住址', tagType: 'info' },

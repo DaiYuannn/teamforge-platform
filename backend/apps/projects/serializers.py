@@ -1,10 +1,16 @@
 """
 项目序列化器
 """
+from decimal import Decimal
+
 from rest_framework import serializers
 
-from .models import Project, ProjectMember, ProjectStageLog
-from apps.users.serializers import UserListSerializer
+from common.project_access import is_external_collaborator
+from .models import Project, ProjectMember, ProjectMembershipEvent, ProjectStageLog
+from apps.users.serializers import (
+    ExternalCollaboratorUserSerializer,
+    UserListSerializer,
+)
 
 
 class ProjectStageLogSerializer(serializers.ModelSerializer):
@@ -25,16 +31,56 @@ class ProjectStageLogSerializer(serializers.ModelSerializer):
 
 class ProjectMemberSerializer(serializers.ModelSerializer):
     """项目成员序列化器"""
-    user_detail = UserListSerializer(source='user', read_only=True)
+    user_detail = serializers.SerializerMethodField()
     role_in_project_display = serializers.CharField(source='get_role_in_project_display', read_only=True)
+    status_display = serializers.CharField(source='get_status_display', read_only=True)
+    handover_to_name = serializers.CharField(source='handover_to.user.name', read_only=True, default='')
 
     class Meta:
         model = ProjectMember
         fields = (
             'id', 'project', 'user', 'user_detail',
             'role_in_project', 'role_in_project_display', 'joined_at',
+            'status', 'status_display', 'exited_at', 'exit_reason',
+            'handover_to', 'handover_to_name', 'handover_notes',
         )
         read_only_fields = ('id', 'project', 'joined_at')
+
+    def get_user_detail(self, obj):
+        request = self.context.get('request')
+        serializer_class = (
+            ExternalCollaboratorUserSerializer
+            if request and is_external_collaborator(request.user)
+            else UserListSerializer
+        )
+        return serializer_class(obj.user, context=self.context).data
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        request = self.context.get('request')
+        if request and is_external_collaborator(request.user):
+            for field in (
+                'exited_at', 'exit_reason', 'handover_to',
+                'handover_to_name', 'handover_notes',
+            ):
+                data.pop(field, None)
+        return data
+
+
+class ProjectMembershipEventSerializer(serializers.ModelSerializer):
+    event_type_display = serializers.CharField(source='get_event_type_display', read_only=True)
+    operator_name = serializers.CharField(source='operator.name', read_only=True, default='')
+    handover_to_name = serializers.CharField(source='handover_to.user.name', read_only=True, default='')
+
+    class Meta:
+        model = ProjectMembershipEvent
+        fields = (
+            'id', 'event_type', 'event_type_display', 'from_role', 'to_role',
+            'from_status', 'to_status', 'reason', 'handover_to',
+            'handover_to_name', 'handover_notes', 'operator', 'operator_name',
+            'created_at',
+        )
+        read_only_fields = fields
 
 
 class ProjectListSerializer(serializers.ModelSerializer):
@@ -43,7 +89,10 @@ class ProjectListSerializer(serializers.ModelSerializer):
     current_stage_display = serializers.CharField(source='get_current_stage_display', read_only=True)
     status_display = serializers.CharField(source='get_status_display', read_only=True)
     priority_display = serializers.CharField(source='get_priority_display', read_only=True)
-    member_count = serializers.IntegerField(source='members.count', read_only=True)
+    member_count = serializers.SerializerMethodField()
+    task_count = serializers.IntegerField(read_only=True)
+    competition_count = serializers.IntegerField(read_only=True)
+    finance_balance = serializers.SerializerMethodField()
 
     class Meta:
         model = Project
@@ -52,10 +101,26 @@ class ProjectListSerializer(serializers.ModelSerializer):
             'current_stage', 'current_stage_display',
             'status', 'status_display', 'priority', 'priority_display',
             'start_date', 'planned_end_date', 'actual_end_date',
+            'intro',
             'last_leader_update', 'archived_at', 'is_archived',
-            'member_count', 'created_at',
+            'member_count', 'task_count', 'competition_count',
+            'finance_balance', 'created_at',
         )
         read_only_fields = fields
+
+    def get_member_count(self, obj):
+        annotated_count = getattr(obj, 'active_member_count', None)
+        if annotated_count is not None:
+            return annotated_count
+        return obj.members.filter(status=ProjectMember.Status.ACTIVE).count()
+
+    def get_finance_balance(self, obj):
+        """返回项目各预算周期的可用余额，列表查询已预取预算避免 N+1。"""
+        request = self.context.get('request')
+        if request and is_external_collaborator(request.user):
+            return None
+        budgets = obj.budgets.all()
+        return sum((budget.remaining_amount for budget in budgets), Decimal('0'))
 
 
 class ProjectSerializer(serializers.ModelSerializer):
@@ -105,9 +170,16 @@ class ProjectCreateSerializer(serializers.ModelSerializer):
             note='项目创建',
         )
         # 自动将项目负责人加入项目成员
-        ProjectMember.objects.create(
+        membership = ProjectMember.objects.create(
             project=project,
             user=project.leader,
             role_in_project=ProjectMember.RoleInProject.LEADER,
+        )
+        ProjectMembershipEvent.objects.create(
+            membership=membership,
+            event_type=ProjectMembershipEvent.EventType.JOINED,
+            to_role=membership.role_in_project,
+            to_status=membership.status,
+            operator=self.context['request'].user if 'request' in self.context else None,
         )
         return project

@@ -144,6 +144,9 @@ class SensitiveDataService:
         except SensitiveAccessRequest.DoesNotExist:
             return False, '访问申请不存在'
 
+        if request_obj.applicant_id == approver.id:
+            return False, '审批人不能审批自己的敏感资料访问申请'
+
         if request_obj.status != SensitiveAccessRequest.Status.PENDING:
             return False, '该申请已处理，不可重复审批'
 
@@ -182,6 +185,9 @@ class SensitiveDataService:
         except SensitiveAccessRequest.DoesNotExist:
             return False, '访问申请不存在'
 
+        if request_obj.applicant_id == approver.id:
+            return False, '审批人不能处理自己的敏感资料访问申请'
+
         if request_obj.status != SensitiveAccessRequest.Status.PENDING:
             return False, '该申请已处理，不可重复审批'
 
@@ -205,7 +211,12 @@ class SensitiveDataService:
 
     @staticmethod
     @transaction.atomic
-    def view_sensitive_data(request_id, viewer, request=None):
+    def view_sensitive_data(
+        request_id,
+        viewer,
+        request=None,
+        expected_sensitive_data_id=None,
+    ):
         """
         查看敏感资料明文（检查权限是否有效，写 OperationLog，限时）
         - 检查 status=approved 且未过期
@@ -224,6 +235,12 @@ class SensitiveDataService:
         except SensitiveAccessRequest.DoesNotExist:
             return False, '访问申请不存在'
 
+        if (
+            expected_sensitive_data_id is not None
+            and request_obj.sensitive_data_id != expected_sensitive_data_id
+        ):
+            return False, '访问申请与敏感资料不匹配'
+
         # 校验查看人必须是申请人本人
         if request_obj.applicant_id != viewer.id:
             return False, '仅申请人本人可查看敏感资料明文'
@@ -233,7 +250,10 @@ class SensitiveDataService:
             return False, '申请未通过审批，无法查看明文'
 
         now = timezone.now()
-        if request_obj.access_expires_at and now > request_obj.access_expires_at:
+        if (
+            not request_obj.access_expires_at
+            or now >= request_obj.access_expires_at
+        ):
             # 已过期，自动关闭
             request_obj.status = SensitiveAccessRequest.Status.EXPIRED
             request_obj.save()

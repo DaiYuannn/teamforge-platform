@@ -43,4 +43,4 @@ if ($LASTEXITCODE -ne 0) { Write-Host "启动失败" -ForegroundColor Red; exit 
 Write-Host "================ 生产环境已启动 ================" -ForegroundColor Green
 Write-Host "应用入口: http://localhost"
 Write-Host "查看日志: docker compose -f docker-compose.prod.yml logs -f"
-Write-Info "提示: 启用 Celery: docker compose -f docker-compose.prod.yml --profile celery up -d"
+Write-Info "Celery Worker/Beat 已随生产服务启动"

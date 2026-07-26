@@ -15,9 +15,9 @@
 import importlib
 
 from rest_framework import status
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
+from common.permissions import IsInternalTeamMember
 from common.response import success_response, error_response
 
 
@@ -73,7 +73,7 @@ def _get_all_objects_manager(model_cls):
 
 class RecycleBinView(APIView):
     """回收站视图"""
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsInternalTeamMember]
 
     # ---- GET：回收站列表 ----
     def get(self, request):

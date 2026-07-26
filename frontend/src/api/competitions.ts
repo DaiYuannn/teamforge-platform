@@ -1,10 +1,25 @@
-import { get, post, patch, del } from './request'
-import type { Competition, CompetitionFormData, PaginatedResponse, PaginationParams } from '@/types'
+import { get, post, patch, del, download } from './request'
+import type {
+  Competition,
+  CompetitionFormData,
+  CompetitionLevel,
+  CompetitionStatus,
+  PaginatedResponse,
+  PaginationParams,
+} from '@/types'
 
 /** 比赛查询参数 */
 export interface CompetitionQueryParams extends PaginationParams {
-  level?: string
-  status?: string
+  level?: CompetitionLevel | ''
+  status?: CompetitionStatus | ''
+  project?: number
+}
+
+/** 导出比赛时沿用列表中的业务筛选，不携带分页参数。 */
+export interface CompetitionExportParams {
+  search?: string
+  level?: CompetitionLevel | ''
+  status?: CompetitionStatus | ''
   project?: number
 }
 
@@ -31,4 +46,18 @@ export function updateCompetition(id: number, data: Partial<CompetitionFormData>
 /** 删除比赛 */
 export function deleteCompetition(id: number): Promise<void> {
   return del<void>(`/competitions/${id}/`)
+}
+
+/** 将当前比赛筛选导出为 Excel。 */
+export function exportCompetitions(params: CompetitionExportParams): Promise<Blob> {
+  return download('/exports/', {
+    params: {
+      type: 'competitions',
+      file_format: 'xlsx',
+      search: params.search || undefined,
+      level: params.level || undefined,
+      status: params.status || undefined,
+      project_id: params.project,
+    },
+  })
 }

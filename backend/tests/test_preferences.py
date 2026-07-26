@@ -167,3 +167,68 @@ class TestUserPreference:
         assert pref.theme_color == 'purple'
         # notification_sound 保持不变
         assert pref.notification_sound is False
+
+    @pytest.mark.parametrize('payload', [
+        {'sidebar_collapsed': 1},
+        {'notification_sound': 'false'},
+        {'theme_color': []},
+        {'primary_color': 176_107_115},
+        {'items_per_page': []},
+        {'items_per_page': True},
+        {'dashboard_layout': []},
+        {'sidebar_order': ['workspace', 'workspace']},
+        {'favorite_routes': ['/tasks', 3]},
+        {'saved_filters': {'tasks': ['todo']}},
+        {'notification_preferences': {'categories': {'task': 1}}},
+        {'notification_preferences': {'channels': {'email': 'yes'}}},
+        {'notification_preferences': {
+            'quiet_hours': {'enabled': True, 'start': '25:00', 'end': '07:30'},
+        }},
+        {'notification_preferences': {'digest': 'hourly'}},
+        {'notification_preferences': {'unknown': True}},
+    ])
+    def test_rejects_invalid_structured_preferences(self, member_client, payload):
+        response = member_client.patch(
+            '/api/v1/users/preference/', payload, format='json'
+        )
+
+        assert response.status_code == 400, response.json()
+        assert not UserPreference.objects.filter(user=member_client.user).exists()
+
+    @pytest.mark.parametrize('payload', [
+        [],
+        {},
+        {'unexpected_field': 'value'},
+    ])
+    def test_rejects_empty_or_unknown_updates(self, member_client, payload):
+        response = member_client.patch(
+            '/api/v1/users/preference/', payload, format='json'
+        )
+
+        assert response.status_code == 400, response.json()
+        assert not UserPreference.objects.filter(user=member_client.user).exists()
+
+    def test_accepts_complete_notification_preference_schema(self, member_client):
+        payload = {
+            'sidebar_order': ['workspace', 'execution'],
+            'favorite_routes': ['/projects', '/tasks'],
+            'saved_filters': {'tasks': {'status': ['todo']}},
+            'notification_preferences': {
+                'categories': {'task': True, 'finance': False},
+                'channels': {'in_app': True, 'email': False},
+                'quiet_hours': {
+                    'enabled': True,
+                    'start': '22:00',
+                    'end': '07:30',
+                },
+                'digest': 'daily',
+            },
+        }
+
+        response = member_client.patch(
+            '/api/v1/users/preference/', payload, format='json'
+        )
+
+        assert response.status_code == 200, response.json()
+        preference = UserPreference.objects.get(user=member_client.user)
+        assert preference.notification_preferences == payload['notification_preferences']

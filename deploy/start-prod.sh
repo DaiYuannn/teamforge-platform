@@ -44,4 +44,4 @@ docker compose -f docker-compose.prod.yml up -d
 echo -e "${GREEN}================ 生产环境已启动 ================${NC}"
 echo -e "应用入口: http://localhost"
 echo -e "查看日志: docker compose -f docker-compose.prod.yml logs -f"
-echo -e "${YELLOW}提示: 启用 Celery: docker compose -f docker-compose.prod.yml --profile celery up -d${NC}"
+echo -e "${GREEN}Celery Worker/Beat 已随生产服务启动${NC}"

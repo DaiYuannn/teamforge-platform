@@ -60,6 +60,7 @@ export interface IPApplication {
   return_count: number
   current_problem: string
   final_certificate_file?: number | null
+  final_certificate_file_name?: string
   intro: string
   created_by?: number | null
   created_by_name?: string
@@ -78,9 +79,14 @@ export interface IPApplicationListItem {
   title: string
   application_code: string
   ip_type: IPType
+  ip_type_display?: string
+  related_project?: number | null
   related_project_name?: string
   status: IPStatus
+  status_display?: string
+  main_writer?: number | null
   main_writer_name?: string
+  applicant_executor?: number | null
   applicant_executor_name?: string
   return_count: number
   created_at: string
@@ -174,4 +180,23 @@ export interface IPTodoItem {
   description: string
   deadline?: string | null
   created_at: string
+}
+
+export interface IPPaginatedResponse<T> {
+  count: number
+  next: string | null
+  previous: string | null
+  results: T[]
+}
+
+export type IPTodoResponse = IPPaginatedResponse<IPApplicationListItem> | IPApplicationListItem[]
+
+export interface IPParticipantOption {
+  id: number
+  name?: string
+  username?: string
+  email?: string
+  global_role?: string
+  membership_status?: 'active' | 'on_leave' | 'exited' | 'external'
+  is_active?: boolean
 }

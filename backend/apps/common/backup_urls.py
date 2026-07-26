@@ -6,10 +6,18 @@
 """
 from django.urls import path
 
-from .backup_views import BackupListView, BackupCreateView, BackupRestoreView
+from .backup_views import (
+    BackupCreateView,
+    BackupDownloadView,
+    BackupImportView,
+    BackupListView,
+    BackupRestoreView,
+)
 
 urlpatterns = [
     path('', BackupListView.as_view(), name='backup-list'),
     path('create/', BackupCreateView.as_view(), name='backup-create'),
+    path('import/', BackupImportView.as_view(), name='backup-import'),
+    path('<str:backup_id>/download/', BackupDownloadView.as_view(), name='backup-download'),
     path('<str:backup_id>/restore/', BackupRestoreView.as_view(), name='backup-restore'),
 ]

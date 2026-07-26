@@ -6,6 +6,7 @@ import type {
   StageLog,
   AdvanceStageParams,
   AddMemberParams,
+  ProjectMembershipEvent,
   PaginatedResponse,
   PaginationParams,
 } from '@/types'
@@ -18,6 +19,7 @@ export interface ProjectQueryParams extends PaginationParams {
   current_stage?: string
   start_date?: string
   end_date?: string
+  scope?: 'mine' | 'team'
 }
 
 /** 获取项目列表 */
@@ -68,6 +70,30 @@ export function addProjectMember(id: number, data: AddMemberParams): Promise<Pro
 /** 移除项目成员 */
 export function removeProjectMember(id: number, userId: number): Promise<void> {
   return del<void>(`/projects/${id}/members/?user_id=${userId}`)
+}
+
+export function updateProjectMember(
+  id: number,
+  data: {
+    member_id: number
+    role_in_project?: string
+    status?: string
+    reason?: string
+    handover_to?: number
+    handover_notes?: string
+  },
+): Promise<ProjectMember> {
+  return patch<ProjectMember>(`/projects/${id}/members/`, data)
+}
+
+export function getProjectMembershipHistory(
+  id: number,
+  userId?: number,
+): Promise<ProjectMembershipEvent[]> {
+  return get<ProjectMembershipEvent[]>(
+    `/projects/${id}/membership-history/`,
+    userId ? { user_id: userId } : undefined,
+  )
 }
 
 /** 获取阶段流转日志 */

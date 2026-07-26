@@ -210,7 +210,7 @@ class TestFileShareLinkAPI:
         resp = api_client.get(f'{SHARE_URL}access/?token={link.token}')
         assert resp.status_code == 200, resp.json()
         data = extract_data(resp)
-        assert data['token'] == link.token
+        assert 'token' not in data
         assert data['file']['name'] == f.name
         link.refresh_from_db()
         assert link.view_count == 1

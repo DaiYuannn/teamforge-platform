@@ -16,6 +16,7 @@ from django.core.management.base import BaseCommand
 from apps.notifications.tasks import (
     check_task_overdue,
     check_leader_update,
+    check_competition_deadlines,
     remind_flexible_schedule,
     check_ip_returns,
     check_ip_objections,
@@ -33,6 +34,7 @@ class Command(BaseCommand):
     TASK_MAP = {
         'task_overdue': ('任务延期提醒', check_task_overdue),
         'leader_update': ('负责人更新提醒', check_leader_update),
+        'competition_deadlines': ('比赛关键节点提醒', check_competition_deadlines),
         'flexible_schedule': ('灵活工作时间填写提醒', remind_flexible_schedule),
         'ip_returns': ('知识产权退回修改提醒', check_ip_returns),
         'ip_objections': ('知识产权异议提醒', check_ip_objections),
@@ -46,7 +48,7 @@ class Command(BaseCommand):
             'task_name',
             type=str,
             help='任务名称: task_overdue/leader_update/flexible_schedule/'
-                 'ip_returns/ip_objections/contributions/sensitive/all',
+                 'competition_deadlines/ip_returns/ip_objections/contributions/sensitive/all',
         )
 
     def handle(self, *args, **options):

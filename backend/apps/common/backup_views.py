@@ -1,57 +1,90 @@
-"""
-备份与恢复视图（桩实现）
-- BackupListView: 列出可用备份（桩，返回空列表）
-- BackupCreateView: 触发备份（桩，返回成功）
-- BackupRestoreView: 从备份恢复（桩，返回成功）
-
-接口：
-- GET  /api/v1/common/backup/
-- POST /api/v1/common/backup/create/
-- POST /api/v1/common/backup/<backup_id>/restore/
-"""
-from rest_framework.permissions import IsAuthenticated
+"""仅系统管理员可用的演示数据备份与恢复 API。"""
+from django.http import FileResponse
+from rest_framework import status
 from rest_framework.views import APIView
 
-from common.response import success_response, error_response
+from common.permissions import IsSysAdmin
+from common.response import error_response, success_response
+from .backup_service import (
+    DemoBackupError,
+    create_demo_backup,
+    get_backup_file,
+    import_demo_backup,
+    list_demo_backups,
+    restore_demo_backup,
+)
 
 
 class BackupListView(APIView):
-    """列出可用备份（桩实现）"""
-
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsSysAdmin]
 
     def get(self, request):
-        # 桩实现：返回空备份列表
+        backups = list_demo_backups()
         return success_response({
-            'backups': [],
-            'total': 0,
-            'message': '当前无可用备份（桩实现，未接入真实备份引擎）',
+            'backups': backups,
+            'total': len(backups),
+            'mode': 'demo',
+            'message': '演示数据包包含业务快照与实际附件；不替代生产数据库备份。',
         })
 
 
 class BackupCreateView(APIView):
-    """触发备份（桩实现）"""
-
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsSysAdmin]
 
     def post(self, request):
-        # 桩实现：仅返回成功，未真正执行备份
-        return success_response({
-            'backup_id': None,
-            'status': 'stub',
-            'message': '备份任务已接收（桩实现，未接入真实备份引擎）',
-        }, message='备份已触发')
+        backup = create_demo_backup(created_by=request.user)
+        return success_response(
+            backup,
+            message='演示数据备份包已生成',
+            http_status=status.HTTP_201_CREATED,
+        )
+
+
+class BackupImportView(APIView):
+    permission_classes = [IsSysAdmin]
+
+    def post(self, request):
+        try:
+            backup = import_demo_backup(request.FILES.get('file'))
+        except DemoBackupError as exc:
+            return error_response(message=str(exc), code=4004)
+        return success_response(
+            backup,
+            message='演示数据备份包已导入',
+            http_status=status.HTTP_201_CREATED,
+        )
 
 
 class BackupRestoreView(APIView):
-    """从备份恢复（桩实现）"""
-
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsSysAdmin]
 
     def post(self, request, backup_id):
-        # 桩实现：仅返回成功，未真正执行恢复
-        return success_response({
-            'backup_id': backup_id,
-            'status': 'stub',
-            'message': '恢复任务已接收（桩实现，未接入真实备份引擎）',
-        }, message='恢复已触发')
+        if request.data.get('confirmation') != 'RESTORE_DEMO':
+            return error_response(
+                message='请输入确认口令 RESTORE_DEMO',
+                code=4001,
+            )
+        try:
+            result = restore_demo_backup(backup_id, requested_by=request.user)
+        except DemoBackupError as exc:
+            return error_response(message=str(exc), code=4004)
+        return success_response(
+            result,
+            message='演示数据已恢复，请重新登录',
+        )
+
+
+class BackupDownloadView(APIView):
+    permission_classes = [IsSysAdmin]
+
+    def get(self, request, backup_id):
+        try:
+            path = get_backup_file(backup_id)
+        except DemoBackupError as exc:
+            return error_response(message=str(exc), code=4004)
+        return FileResponse(
+            path.open('rb'),
+            as_attachment=True,
+            filename=path.name,
+            content_type='application/zip',
+        )

@@ -106,6 +106,15 @@ class TestRiskPrediction:
         categories = [f['category'] for f in data['risk_factors']]
         assert 'stale_update' in categories
 
+    def test_new_project_without_update_is_not_stale(self, member_client, make_project):
+        """新建且尚未打卡的项目仍享有完整 11 天更新周期"""
+        project = make_project(last_leader_update=None)
+        resp = member_client.get(f'{RISK_PREDICTION_URL}?project_id={project.id}')
+        assert resp.status_code == 200
+        data = extract_data(resp)
+        categories = [f['category'] for f in data['risk_factors']]
+        assert 'stale_update' not in categories
+
     def test_open_risks_factor(self, member_client, make_project):
         """未关闭高风险因子"""
         project = make_project()

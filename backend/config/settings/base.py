@@ -122,12 +122,30 @@ STATIC_ROOT = os.environ.get('STATIC_ROOT', str(BASE_DIR / 'staticfiles'))
 
 MEDIA_URL = '/media/'
 MEDIA_ROOT = os.environ.get('MEDIA_ROOT', str(BASE_DIR / 'media'))
+DEMO_BACKUP_ROOT = os.environ.get('DEMO_BACKUP_ROOT', str(BASE_DIR / 'demo_backups'))
+
+# 非 public/ 媒体不再暴露永久可猜测 URL。业务序列化器只向已获授权的
+# 调用方签发限时 URL，下载请求再由后端验签。
+STORAGES = {
+    'default': {
+        'BACKEND': 'common.storage.ProtectedMediaStorage',
+    },
+    'staticfiles': {
+        'BACKEND': 'django.contrib.staticfiles.storage.StaticFilesStorage',
+    },
+}
+PROTECTED_MEDIA_API_URL = '/api/v1/common/media/'
+PROTECTED_MEDIA_URL_TTL = int(os.environ.get('PROTECTED_MEDIA_URL_TTL', '7200'))
+PROTECTED_MEDIA_INTERNAL_PREFIX = '/_protected_media/'
+PROTECTED_MEDIA_USE_X_ACCEL_REDIRECT = (
+    os.environ.get('PROTECTED_MEDIA_USE_X_ACCEL_REDIRECT', 'False').lower() == 'true'
+)
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
-        'rest_framework_simplejwt.authentication.JWTAuthentication',
+        'common.authentication.ScopedJWTAuthentication',
     ),
     'DEFAULT_PERMISSION_CLASSES': (
         'rest_framework.permissions.IsAuthenticated',
@@ -156,6 +174,13 @@ SIMPLE_JWT = {
 
 CELERY_BROKER_URL = os.environ.get('CELERY_BROKER_URL', 'redis://127.0.0.1:6379/0')
 CELERY_RESULT_BACKEND = os.environ.get('CELERY_RESULT_BACKEND', 'redis://127.0.0.1:6379/0')
+NOTIFICATION_STREAM_REDIS_URL = os.environ.get(
+    'NOTIFICATION_STREAM_REDIS_URL',
+    CELERY_BROKER_URL,
+)
+NOTIFICATION_STREAM_ENABLED = (
+    os.environ.get('NOTIFICATION_STREAM_ENABLED', 'true').lower() == 'true'
+)
 CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
@@ -169,6 +194,10 @@ CELERY_BEAT_SCHEDULE = {
     'check-leader-update': {
         'task': 'apps.notifications.tasks.check_leader_update',
         'schedule': crontab(minute=30, hour=9),
+    },
+    'check-competition-deadlines': {
+        'task': 'apps.notifications.tasks.check_competition_deadlines',
+        'schedule': crontab(minute=0, hour=9),
     },
     'remind-flexible-schedule': {
         'task': 'apps.notifications.tasks.remind_flexible_schedule',
@@ -190,6 +219,18 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'apps.notifications.tasks.check_sensitive_requests',
         'schedule': crontab(minute=45, hour='*/6'),
     },
+    'run-due-scheduled-reports': {
+        'task': 'apps.exports.tasks.run_due_scheduled_reports',
+        'schedule': crontab(minute='*'),
+    },
+    'send-daily-notification-digest': {
+        'task': 'apps.notifications.tasks.send_daily_notification_digest',
+        'schedule': crontab(minute=0, hour=8),
+    },
+    'send-weekly-notification-digest': {
+        'task': 'apps.notifications.tasks.send_weekly_notification_digest',
+        'schedule': crontab(minute=15, hour=8, day_of_week='monday'),
+    },
 }
 
 EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
@@ -199,6 +240,9 @@ EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER', '')
 EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD', '')
 EMAIL_USE_TLS = True
 DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
+
+TESSERACT_CMD = os.environ.get('TESSERACT_CMD', '')
+OCR_TESSERACT_LANG = os.environ.get('OCR_TESSERACT_LANG', 'chi_sim+eng')
 
 DATA_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024
 FILE_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024

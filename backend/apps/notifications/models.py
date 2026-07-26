@@ -19,6 +19,11 @@ class Notification(models.Model):
         TASK = 'task', '任务通知'
         FINANCE = 'finance', '经费通知'
         COMPETITION = 'competition', '比赛通知'
+        CONTRIBUTION = 'contribution', '贡献通知'
+        IP = 'ip', '知识产权通知'
+        SENSITIVE = 'sensitive', '敏感资料通知'
+        SCHEDULE = 'schedule', '工时通知'
+        REPORT = 'report', '报表通知'
         ANNOUNCEMENT = 'announcement', '公告'
 
     class Priority(models.TextChoices):
@@ -34,6 +39,13 @@ class Notification(models.Model):
         EMAIL = 'email', '邮件'
         WEBHOOK = 'webhook', 'Webhook'
 
+    class EmailDeliveryStatus(models.TextChoices):
+        NOT_REQUESTED = 'not_requested', '未请求'
+        QUEUED = 'queued', '等待摘要'
+        SENT = 'sent', '已发送'
+        FAILED = 'failed', '发送失败'
+        SUPPRESSED = 'suppressed', '已按偏好关闭'
+
     # 通知类型
     notification_type = models.CharField(
         '通知类型',
@@ -48,6 +60,22 @@ class Notification(models.Model):
         choices=Channel.choices,
         default=Channel.INAPP,
     )
+    email_delivery_status = models.CharField(
+        '邮件投递状态',
+        max_length=20,
+        choices=EmailDeliveryStatus.choices,
+        default=EmailDeliveryStatus.NOT_REQUESTED,
+        db_index=True,
+    )
+    email_digest_frequency = models.CharField(
+        '邮件摘要频率',
+        max_length=10,
+        blank=True,
+        default='',
+    )
+    email_attempted_at = models.DateTimeField('邮件尝试时间', null=True, blank=True)
+    email_sent_at = models.DateTimeField('邮件发送时间', null=True, blank=True)
+    email_delivery_error = models.TextField('邮件投递错误', blank=True, default='')
     # 标题
     title = models.CharField('标题', max_length=200)
     # 内容

@@ -3,12 +3,11 @@
 - MemberGrowthViewSet: 成员成长记录 CRUD
 """
 from rest_framework import status
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
 
 from common.response import success_response
 from common.mixins import MultiSerializerMixin, MultiPermissionMixin
-from common.permissions import IsTeacherOrAdmin
+from common.permissions import IsInternalTeamMember, IsTeacherOrAdmin
 from .growth_models import MemberGrowth
 from .growth_serializers import MemberGrowthSerializer
 
@@ -30,13 +29,14 @@ class MemberGrowthViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewS
     }
 
     permission_classes_by_action = {
-        'list': [IsAuthenticated],
-        'retrieve': [IsAuthenticated],
+        'list': [IsInternalTeamMember],
+        'retrieve': [IsInternalTeamMember],
         'create': [IsTeacherOrAdmin],
         'update': [IsTeacherOrAdmin],
         'partial_update': [IsTeacherOrAdmin],
         'destroy': [IsTeacherOrAdmin],
     }
+    permission_classes = [IsInternalTeamMember]
 
     filterset_fields = ['user', 'period']
     search_fields = ['user__name', 'notes']

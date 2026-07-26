@@ -1,4 +1,4 @@
-# TeamForge Platform
+# TeamForge Platform v2.0
 
 团队项目管理平台，面向竞赛项目、团队协作、任务、经费、文件资料、贡献记录、知识产权流程、敏感资料审批与操作审计的一体化管理场景。
 
@@ -13,6 +13,9 @@
 - 知识产权申请流程
 - 敏感资料脱敏、审批与限时查看
 - 通知中心与操作日志
+- 账户级主题、布局与通知偏好
+- 票据 OCR、定时报表与实时 SSE 通知
+- 带快照、附件和校验清单的演示数据备份恢复
 - Docker 本地/线上部署配置
 
 ## 技术栈
@@ -52,6 +55,13 @@ npm install
 npm run dev
 ```
 
+前端默认运行在 `http://127.0.0.1:3000`，后端默认运行在 `http://127.0.0.1:8000`。完整演示数据使用：
+
+```powershell
+cd backend
+python manage.py seed_demo_data --clean --force
+```
+
 ## Docker 部署
 
 复制并填写环境变量文件：
@@ -82,6 +92,8 @@ docker compose -p team_management_local exec backend python manage.py check
 - `.env.docker`
 - `deploy/env/*.env`
 - `backend/media/`
+- `backend/test_media/`
+- `backend/demo_backups/`
 - `backend/*.dump`
 - `backend/media.before_v2_seed/`
 - `.docker-config/`

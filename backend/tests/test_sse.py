@@ -5,15 +5,22 @@ SSE (Server-Sent Events) 实时通知推送测试
 - 初始连接事件（connected 事件）
 - 广播通知服务（为所有活跃用户创建通知）
 
-注意：SSE 流式推送使用 time.sleep 轮询，测试仅验证响应头和首个数据块，
-不验证长时间流式行为（需要异步测试框架）。
+测试环境关闭 Redis 长连接，只验证游标补发、响应头和首批数据块；
+生产环境由 Redis Pub/Sub 唤醒连接，不做固定间隔数据库轮询。
 """
 import json
+from types import SimpleNamespace
 
 import pytest
 
 from apps.notifications.models import Notification
 from apps.notifications.services import NotificationService
+from apps.notifications.sse_views import (
+    _decode_stream_message,
+    _stream_access_error,
+)
+from apps.notifications import streaming
+from apps.users.models import User
 
 
 # ========== SSE 认证测试 ==========
@@ -42,6 +49,18 @@ class TestSSEAuthentication:
 class TestSSEResponseHeaders:
     """SSE 响应头测试"""
 
+    def test_sse_accept_header_is_supported(self, member_client):
+        """浏览器的 text/event-stream Accept 头不会触发 406。"""
+        resp = member_client.get(
+            '/api/v1/notifications/sse/',
+            HTTP_ACCEPT='text/event-stream',
+        )
+        try:
+            assert resp.status_code == 200
+            assert 'text/event-stream' in resp['Content-Type']
+        finally:
+            resp.close()
+
     def test_sse_content_type(self, member_client):
         """SSE 返回 text/event-stream 内容类型"""
         resp = member_client.get('/api/v1/notifications/sse/')
@@ -56,7 +75,8 @@ class TestSSEResponseHeaders:
         resp = member_client.get('/api/v1/notifications/sse/')
         try:
             assert resp.status_code == 200
-            assert resp['Cache-Control'] == 'no-cache'
+            assert 'no-cache' in resp['Cache-Control']
+            assert 'no-transform' in resp['Cache-Control']
         finally:
             resp.close()
 
@@ -144,6 +164,215 @@ class TestSSEInitialEvent:
             assert data['data']['title'] == '测试推送通知'
         finally:
             resp.close()
+
+    def test_sse_honors_last_event_id_header(self, member_client):
+        """断线重连只补发 Last-Event-ID 之后的站内通知。"""
+        first = Notification.objects.create(
+            recipient=member_client.user,
+            title='已接收通知',
+            content='不应重复补发',
+            notification_type='system',
+        )
+        second = Notification.objects.create(
+            recipient=member_client.user,
+            title='待补发通知',
+            content='应当补发',
+            notification_type='system',
+        )
+
+        resp = member_client.get(
+            '/api/v1/notifications/sse/',
+            HTTP_LAST_EVENT_ID=str(first.id),
+        )
+        try:
+            connected = next(resp.streaming_content).decode('utf-8')
+            pushed = next(resp.streaming_content).decode('utf-8')
+
+            assert f'id: {first.id}' in connected
+            assert f'id: {second.id}' in pushed
+            assert '待补发通知' in pushed
+            assert '已接收通知' not in pushed
+        finally:
+            resp.close()
+
+
+@pytest.mark.django_db
+class TestSSEStreamReliability:
+    def test_stream_access_rechecks_token_and_account_state(self, make_user):
+        user = make_user(email='sse-access@test.com')
+
+        assert _stream_access_error(user.pk, 100, now=100) == 'token_expired'
+        assert _stream_access_error(user.pk, 200, now=100) is None
+
+        user.is_active = False
+        user.save(update_fields=['is_active'])
+        assert _stream_access_error(user.pk, 200, now=100) == 'account_inactive'
+
+        user.is_active = True
+        user.membership_status = User.MembershipStatus.EXITED
+        user.save(update_fields=['is_active', 'membership_status'])
+        assert _stream_access_error(user.pk, 200, now=100) == 'account_inactive'
+
+    def test_live_stream_closes_after_account_is_deactivated(
+        self, member_client
+    ):
+        response = member_client.get('/api/v1/notifications/sse/')
+        try:
+            connected = next(response.streaming_content).decode('utf-8')
+            member_client.user.is_active = False
+            member_client.user.save(update_fields=['is_active'])
+            closed = next(response.streaming_content).decode('utf-8')
+
+            assert 'event: connected' in connected
+            assert 'event: stream_closed' in closed
+            assert 'account_inactive' in closed
+        finally:
+            response.close()
+
+    def test_live_stream_closes_after_token_expires(
+        self, member_client, monkeypatch
+    ):
+        response = member_client.get('/api/v1/notifications/sse/')
+        try:
+            connected = next(response.streaming_content).decode('utf-8')
+            monkeypatch.setattr(
+                'apps.notifications.sse_views.time.time',
+                lambda: 10**12,
+            )
+            closed = next(response.streaming_content).decode('utf-8')
+
+            assert 'event: connected' in connected
+            assert 'event: stream_closed' in closed
+            assert 'token_expired' in closed
+        finally:
+            response.close()
+
+    def test_stream_message_decoder_supports_json_and_legacy_ids(self):
+        state = _decode_stream_message({
+            'data': json.dumps({
+                'type': 'notification_state',
+                'all_read': True,
+                'unread_count': 0,
+            }).encode('utf-8'),
+        })
+        legacy = _decode_stream_message({'data': b'42'})
+
+        assert state['type'] == 'notification_state'
+        assert state['all_read'] is True
+        assert legacy == {'type': 'notification', 'notification_id': 42}
+
+    def test_redis_failure_keeps_stream_and_uses_database_fallback(
+        self, member_client, settings, monkeypatch
+    ):
+        settings.NOTIFICATION_STREAM_ENABLED = True
+        settings.NOTIFICATION_STREAM_FALLBACK_POLL_SECONDS = 1
+        Notification.objects.create(
+            recipient=member_client.user,
+            title='Redis 故障补偿通知',
+            content='仍应从数据库发送',
+        )
+
+        def unavailable(*args, **kwargs):
+            raise ConnectionError('redis unavailable')
+
+        monkeypatch.setattr(
+            'apps.notifications.sse_views.redis.Redis.from_url',
+            unavailable,
+        )
+        response = member_client.get('/api/v1/notifications/sse/')
+        try:
+            connected = next(response.streaming_content).decode('utf-8')
+            notification = next(response.streaming_content).decode('utf-8')
+            fallback = next(response.streaming_content).decode('utf-8')
+
+            assert 'event: connected' in connected
+            assert 'event: notification' in notification
+            assert 'Redis 故障补偿通知' in notification
+            assert 'event: fallback' in fallback
+            assert 'unread_count' in fallback
+        finally:
+            response.close()
+
+    def test_redis_failure_catches_notification_created_during_outage(
+        self, member_client, settings, monkeypatch
+    ):
+        settings.NOTIFICATION_STREAM_ENABLED = True
+        settings.NOTIFICATION_STREAM_FALLBACK_POLL_SECONDS = 1
+
+        def unavailable(*args, **kwargs):
+            raise ConnectionError('redis unavailable')
+
+        created = False
+
+        def create_while_waiting(seconds):
+            nonlocal created
+            assert seconds == 1
+            if created:
+                return
+            created = True
+            Notification.objects.create(
+                recipient=member_client.user,
+                title='故障期间到达的通知',
+                content='下一轮数据库补偿应发送',
+            )
+
+        monkeypatch.setattr(
+            'apps.notifications.sse_views.redis.Redis.from_url',
+            unavailable,
+        )
+        monkeypatch.setattr(
+            'apps.notifications.sse_views.time.sleep',
+            create_while_waiting,
+        )
+        response = member_client.get('/api/v1/notifications/sse/')
+        try:
+            connected = next(response.streaming_content).decode('utf-8')
+            fallback = next(response.streaming_content).decode('utf-8')
+            notification = next(response.streaming_content).decode('utf-8')
+
+            assert 'event: connected' in connected
+            assert 'event: fallback' in fallback
+            assert 'event: notification' in notification
+            assert '故障期间到达的通知' in notification
+        finally:
+            response.close()
+
+    def test_batch_publish_reuses_one_pipeline(self, settings, monkeypatch):
+        settings.NOTIFICATION_STREAM_ENABLED = True
+
+        class FakePipeline:
+            def __init__(self):
+                self.published = []
+                self.execute_count = 0
+
+            def publish(self, channel, payload):
+                self.published.append((channel, json.loads(payload)))
+                return self
+
+            def execute(self):
+                self.execute_count += 1
+
+        class FakeClient:
+            def __init__(self):
+                self.pipeline_count = 0
+                self.pipeline_instance = FakePipeline()
+
+            def pipeline(self, transaction=False):
+                assert transaction is False
+                self.pipeline_count += 1
+                return self.pipeline_instance
+
+        client = FakeClient()
+        monkeypatch.setattr(streaming, '_redis_client', lambda url: client)
+        notifications = [
+            SimpleNamespace(id=1, recipient_id=10, channel='inapp'),
+            SimpleNamespace(id=2, recipient_id=11, channel='inapp'),
+        ]
+
+        assert streaming.publish_notifications(notifications) is True
+        assert client.pipeline_count == 1
+        assert client.pipeline_instance.execute_count == 1
+        assert len(client.pipeline_instance.published) == 2
 
 
 # ========== 广播通知服务测试 ==========

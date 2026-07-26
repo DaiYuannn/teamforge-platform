@@ -2,19 +2,19 @@
   <div class="mobile-layout">
     <!-- 顶部栏 -->
     <div class="mobile-header">
-      <div class="header-title">{{ currentTitle }}</div>
+      <div class="header-title">{{ currentSectionTitle }}</div>
       <div class="header-right">
         <!-- 通知铃铛组件 -->
         <NotificationBell />
-        <el-icon
+        <el-button
+          text
+          circle
           class="menu-btn"
-          size="22"
-          role="button"
-          tabindex="0"
           aria-label="打开菜单"
           @click="showMenu = true"
-          @keydown.enter="showMenu = true"
-        ><Menu /></el-icon>
+        >
+          <el-icon size="21"><Menu /></el-icon>
+        </el-button>
       </div>
     </div>
 
@@ -28,9 +28,9 @@
     </div>
 
     <!-- 底部 Tab 导航 -->
-    <div class="mobile-tabbar">
+    <div class="mobile-tabbar" role="tablist" aria-label="主导航">
       <div
-        v-for="tab in tabList"
+        v-for="tab in mobilePrimaryNavigation"
         :key="tab.path"
         class="tab-item"
         role="tab"
@@ -40,16 +40,13 @@
         @click="switchTab(tab.path)"
         @keydown.enter="switchTab(tab.path)"
       >
-        <el-badge v-if="tab.badge" :value="tab.badge" :max="99">
-          <el-icon :size="22"><component :is="tab.icon" /></el-icon>
-        </el-badge>
-        <el-icon v-else :size="22"><component :is="tab.icon" /></el-icon>
+        <el-icon :size="21"><component :is="tab.icon" /></el-icon>
         <span class="tab-label">{{ tab.label }}</span>
       </div>
     </div>
 
     <!-- 侧滑菜单（更多功能） -->
-    <el-drawer v-model="showMenu" direction="rtl" size="70%" :show-close="false" class="mobile-drawer">
+    <el-drawer v-model="showMenu" direction="rtl" size="82%" :show-close="false" class="mobile-drawer">
       <template #header>
         <div class="drawer-header" role="button" tabindex="0" @click="goProfile" @keydown.enter="goProfile">
           <AvatarWithName
@@ -65,24 +62,34 @@
           <el-icon class="drawer-arrow"><ArrowRight /></el-icon>
         </div>
       </template>
-      <el-menu :default-active="activeMenu" @select="handleMenuSelect">
-        <el-menu-item index="/user/profile">
-          <el-icon><UserFilled /></el-icon>
-          <span>个人中心</span>
-        </el-menu-item>
-        <el-menu-item v-for="item in allMenuList" :key="item.path" :index="item.path">
-          <el-icon><component :is="item.icon" /></el-icon>
-          <span>{{ item.title }}</span>
-        </el-menu-item>
-        <el-menu-item index="logout">
+      <el-menu
+        :default-active="activeMenu"
+        :default-openeds="drawerDefaultOpeneds"
+        :unique-opened="true"
+        class="drawer-menu"
+        @select="handleMenuSelect"
+      >
+        <el-sub-menu
+          v-for="group in navigationGroups"
+          :key="group.key"
+          :index="`group:${group.key}`"
+        >
+          <template #title>
+            <el-icon><component :is="group.icon" /></el-icon>
+            <span>{{ group.title }}</span>
+          </template>
+          <el-menu-item v-for="item in group.items" :key="item.path" :index="item.path">
+            <el-icon><component :is="item.icon" /></el-icon>
+            <span>{{ item.title }}</span>
+          </el-menu-item>
+        </el-sub-menu>
+        <el-menu-item index="logout" class="logout-menu-item">
           <el-icon><SwitchButton /></el-icon>
           <span>退出登录</span>
         </el-menu-item>
       </el-menu>
     </el-drawer>
 
-    <!-- 移动端快捷操作 FAB 按钮 -->
-    <MobileFab />
   </div>
 </template>
 
@@ -90,12 +97,17 @@
 import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessageBox } from 'element-plus'
-import { ArrowRight, UserFilled } from '@element-plus/icons-vue'
+import { ArrowRight } from '@element-plus/icons-vue'
 import { useUserStore } from '@/stores/user'
 import { getRoleLabel } from '@/utils/format'
 import NotificationBell from '@/components/NotificationBell.vue'
 import AvatarWithName from '@/components/AvatarWithName.vue'
-import MobileFab from '@/components/MobileFab.vue'
+import {
+  findNavigationGroup,
+  findNavigationItem,
+  getMobilePrimaryNavigation,
+  getVisibleNavigationGroups,
+} from '@/config/navigation'
 
 const route = useRoute()
 const router = useRouter()
@@ -104,45 +116,31 @@ const showMenu = ref(false)
 
 const userInfo = computed(() => userStore.userInfo)
 const roleLabel = computed(() => getRoleLabel(userStore.role))
-const activeMenu = computed(() => route.path)
-const currentTitle = computed(() => (route.meta.title as string) || '团队管理')
-
-// 底部 Tab 列表
-const tabList = computed(() => [
-  { path: '/dashboard', label: '首页', icon: 'Odometer', badge: 0 },
-  { path: '/projects', label: '项目', icon: 'Folder', badge: 0 },
-  { path: '/notifications', label: '通知', icon: 'Bell', badge: 0 },
-  { path: '/members', label: '我的', icon: 'User', badge: 0 },
-])
-
-// 全部菜单列表（侧滑菜单中使用）
-const allMenuList = computed(() => {
-  const list = [
-    { path: '/dashboard', title: '首页驾驶舱', icon: 'Odometer', roles: [] as string[] },
-    { path: '/projects', title: '项目管理', icon: 'Folder', roles: [] as string[] },
-    { path: '/competitions', title: '比赛管理', icon: 'Trophy', roles: [] as string[] },
-    { path: '/tasks', title: '任务管理', icon: 'List', roles: [] as string[] },
-    { path: '/members', title: '人员管理', icon: 'User', roles: [] as string[] },
-    { path: '/finance', title: '经费管理', icon: 'Money', roles: [] as string[] },
-    { path: '/files', title: '文件管理', icon: 'Document', roles: [] as string[] },
-    { path: '/imports', title: '导入中心', icon: 'Upload', roles: [] as string[] },
-    { path: '/intellectual-property', title: '成果与知识产权', icon: 'Medal', roles: [] as string[] },
-    { path: '/intellectual-property/todo', title: '待我处理', icon: 'Bell', roles: [] as string[] },
-    { path: '/audit/logs', title: '操作日志', icon: 'Document', roles: ['sys_admin', 'teacher'] as string[] },
-    { path: '/contributions', title: '我的贡献', icon: 'Trophy', roles: [] as string[] },
-    { path: '/sensitive', title: '敏感资料', icon: 'Lock', roles: [] as string[] },
-    { path: '/members/schedule', title: '我的灵活工时', icon: 'Clock', roles: [] as string[] },
-    { path: '/members/team-schedule', title: '团队灵活工时', icon: 'DataAnalysis', roles: [] as string[] },
-    { path: '/members/skills', title: '技能标签', icon: 'Collection', roles: [] as string[] },
-    { path: '/admin/integrations', title: '第三方集成', icon: 'Connection', roles: ['sys_admin'] as string[] },
-    { path: '/admin/users', title: '用户管理', icon: 'Setting', roles: ['sys_admin'] as string[] },
-  ]
-  return list.filter((item) => item.roles.length === 0 || item.roles.includes(userStore.role))
+const navigationGroups = computed(() =>
+  getVisibleNavigationGroups(userStore.role, userStore.userInfo?.membership_status),
+)
+const activeNavigationItem = computed(() => findNavigationItem(route.path, navigationGroups.value))
+const activeNavigationGroup = computed(() => findNavigationGroup(route.path, navigationGroups.value))
+const activeMenu = computed(() => {
+  if (route.path.startsWith('/user/')) return '/user/profile'
+  return activeNavigationItem.value?.path || route.path
 })
+const currentSectionTitle = computed(() => {
+  if (route.path.startsWith('/user/')) return '个人工作区'
+  return activeNavigationGroup.value?.title || '团队工作区'
+})
+const drawerDefaultOpeneds = computed(() => [
+  `group:${activeNavigationGroup.value?.key || 'workspace'}`,
+])
+const mobilePrimaryNavigation = computed(() =>
+  getMobilePrimaryNavigation(userStore.userInfo?.membership_status),
+)
 
 // 判断 Tab 是否激活
 function isActive(path: string): boolean {
-  if (path === '/members' && route.path.startsWith('/members')) return true
+  if (path === '/dashboard') return route.path.startsWith('/dashboard')
+  if (path === '/projects') return route.path.startsWith('/projects')
+  if (path === '/user/profile') return route.path.startsWith('/user/')
   return route.path === path
 }
 
@@ -186,24 +184,25 @@ async function handleMenuSelect(index: string): Promise<void> {
   max-width: 100vw;
   height: 100vh;
   overflow: hidden;
-  background: #f5f7fa;
+  background: var(--bg-color, #f4f6f5);
 }
 
 .mobile-header {
-  height: 50px;
+  height: calc(52px + env(safe-area-inset-top));
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 16px;
-  background: #fff;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+  padding: env(safe-area-inset-top) 12px 0 16px;
+  background: var(--bg-card, #fff);
+  border-bottom: 1px solid var(--border-color, #dce3e0);
   position: relative;
   z-index: 10;
 
   .header-title {
-    font-size: 17px;
+    font-size: 15px;
     font-weight: 600;
-    color: #303133;
+    color: var(--text-primary, #18221f);
     max-width: calc(100vw - 120px);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -213,11 +212,19 @@ async function handleMenuSelect(index: string): Promise<void> {
   .header-right {
     display: flex;
     align-items: center;
-    gap: 16px;
+    gap: 8px;
   }
 
   .menu-btn {
-    color: #606266;
+    width: 38px;
+    height: 38px;
+    color: var(--text-regular, #52605b);
+    border-radius: 6px;
+
+    &:active {
+      color: var(--primary-color, #176b73);
+      background: var(--primary-lighter, #edf7f6);
+    }
   }
 }
 
@@ -229,33 +236,53 @@ async function handleMenuSelect(index: string): Promise<void> {
   overflow-x: hidden;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
-  // 为固定定位的 FAB 按钮预留底部空间，避免遮挡末尾内容
-  padding-bottom: 80px;
+  scroll-padding-bottom: 16px;
 }
 
 .mobile-tabbar {
-  height: 56px;
+  height: calc(58px + env(safe-area-inset-bottom));
   flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: space-around;
-  background: #fff;
-  box-shadow: 0 -1px 4px rgba(0, 0, 0, 0.06);
+  padding-bottom: env(safe-area-inset-bottom);
+  background: var(--bg-card, #fff);
+  border-top: 1px solid var(--border-color, #dce3e0);
 
   .tab-item {
     flex: 1;
     min-width: 0;
+    min-height: 52px;
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
     gap: 2px;
-    color: #909399;
+    color: var(--text-secondary, #7b8782);
     cursor: pointer;
     padding: 4px 6px;
+    position: relative;
+    outline: none;
 
     &.active {
-      color: #409eff;
+      color: var(--primary-color, #176b73);
+      font-weight: 600;
+
+      &::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 50%;
+        width: 24px;
+        height: 2px;
+        border-radius: 0 0 2px 2px;
+        background: var(--primary-color, #176b73);
+        transform: translateX(-50%);
+      }
+    }
+
+    &:focus-visible {
+      box-shadow: inset 0 0 0 2px var(--primary-color, #176b73);
     }
 
     .tab-label {
@@ -272,6 +299,7 @@ async function handleMenuSelect(index: string): Promise<void> {
   display: flex;
   align-items: center;
   gap: 12px;
+  width: 100%;
   cursor: pointer;
   transition: opacity 0.2s ease;
 
@@ -286,18 +314,45 @@ async function handleMenuSelect(index: string): Promise<void> {
     .drawer-user-name {
       font-size: 16px;
       font-weight: 600;
-      color: #303133;
+      color: var(--text-primary, #18221f);
     }
     .drawer-user-role {
       font-size: 12px;
-      color: #909399;
+      color: var(--text-secondary, #7b8782);
       margin-top: 2px;
     }
   }
 
   .drawer-arrow {
-    color: #c0c4cc;
+    color: var(--text-secondary, #7b8782);
     flex-shrink: 0;
+  }
+}
+
+:deep(.drawer-menu) {
+  border-right: 0;
+  background: transparent;
+
+  .el-sub-menu__title,
+  .el-menu-item {
+    min-height: 44px;
+    color: var(--text-regular, #52605b);
+  }
+
+  .el-sub-menu__title {
+    font-weight: 600;
+  }
+
+  .el-menu-item.is-active {
+    color: var(--primary-color, #176b73);
+    background: var(--primary-lighter, #edf7f6);
+    box-shadow: inset 3px 0 0 var(--primary-color, #176b73);
+  }
+
+  .logout-menu-item {
+    margin-top: 8px;
+    border-top: 1px solid var(--border-color-light, #e7ecea);
+    color: var(--text-secondary, #7b8782);
   }
 }
 
@@ -322,11 +377,29 @@ async function handleMenuSelect(index: string): Promise<void> {
     transition: none;
   }
 }
+
+@supports (height: 100dvh) {
+  .mobile-layout {
+    height: 100dvh;
+  }
+}
 </style>
 
 <style lang="scss">
-// 侧滑菜单滚动隔离（el-drawer 传送至 body，需非 scoped 样式）
+// el-drawer 传送至 body，安全区和尺寸需使用非 scoped 样式
+.mobile-drawer.el-drawer {
+  max-width: 360px;
+}
+
+.mobile-drawer .el-drawer__header {
+  margin-bottom: 0;
+  padding: calc(16px + env(safe-area-inset-top)) 16px 14px;
+  border-bottom: 1px solid var(--border-color, #dce3e0);
+}
+
 .mobile-drawer .el-drawer__body {
+  padding: 8px 0 calc(12px + env(safe-area-inset-bottom));
   overscroll-behavior: contain;
 }
+
 </style>

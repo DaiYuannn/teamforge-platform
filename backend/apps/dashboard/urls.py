@@ -24,6 +24,11 @@ from .timeline_views import (
 from .search_views import GlobalSearchView
 from .custom_dashboard_views import CustomDashboardViewSet
 from .weekly_report_views import WeeklyReportView
+from .portal_views import (
+    PortalManagementView,
+    PortalMemberConsentView,
+    PortalPublicationView,
+)
 
 # N48: 自定义看板路由
 custom_dashboard_router = DefaultRouter()
@@ -48,6 +53,17 @@ urlpatterns = [
     path('gantt/', ProjectGanttView.as_view(), name='project-gantt'),
     # P2: 公共展示主页(无需认证)
     path('public-portal/', PublicPortalView.as_view(), name='public-portal'),
+    path('public-portal/manage/', PortalManagementView.as_view(), name='public-portal-manage'),
+    path(
+        'public-portal/publications/<str:content_type>/<int:object_id>/',
+        PortalPublicationView.as_view(),
+        name='public-portal-publication',
+    ),
+    path(
+        'public-portal/member-consent/',
+        PortalMemberConsentView.as_view(),
+        name='public-portal-member-consent',
+    ),
     # M07: 全局搜索
     path('search/', GlobalSearchView.as_view(), name='global-search'),
     # N48: 自定义看板 CRUD + set_default

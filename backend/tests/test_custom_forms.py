@@ -20,15 +20,15 @@ def extract_data(response):
 class TestCustomForm:
     """自定义表单测试"""
 
-    def test_create_form(self, member_client):
-        """创建表单"""
-        resp = member_client.post('/api/v1/common/forms/', {
+    def test_create_form(self, teacher_client):
+        """老师创建表单"""
+        resp = teacher_client.post('/api/v1/common/forms/', {
             'name': '报名表', 'description': '活动报名',
             'fields': [{'name': 'phone', 'type': 'text'}],
         }, format='json')
         assert resp.status_code in (200, 201), resp.json()
         form = CustomForm.objects.get(name='报名表')
-        assert form.created_by == member_client.user
+        assert form.created_by == teacher_client.user
         assert len(form.fields) == 1
 
     def test_list_forms(self, member_client):
@@ -47,22 +47,36 @@ class TestCustomForm:
         assert resp.status_code == 200
         assert extract_data(resp)['name'] == '详情表'
 
-    def test_update_form(self, member_client):
-        """更新表单"""
+    def test_update_form(self, teacher_client):
+        """老师更新表单"""
         form = CustomForm.objects.create(name='待更新', fields=[])
-        resp = member_client.patch(f'/api/v1/common/forms/{form.id}/', {
+        resp = teacher_client.patch(f'/api/v1/common/forms/{form.id}/', {
             'is_active': False,
         }, format='json')
         assert resp.status_code == 200, resp.json()
         form.refresh_from_db()
         assert form.is_active is False
 
-    def test_delete_form(self, member_client):
-        """删除表单"""
+    def test_delete_form(self, teacher_client):
+        """老师删除表单"""
         form = CustomForm.objects.create(name='待删除', fields=[])
-        resp = member_client.delete(f'/api/v1/common/forms/{form.id}/')
+        resp = teacher_client.delete(f'/api/v1/common/forms/{form.id}/')
         assert resp.status_code in (200, 204)
         assert not CustomForm.objects.filter(id=form.id).exists()
+
+    def test_member_cannot_maintain_forms(self, member_client):
+        """普通成员只能读取已启用表单，不能维护定义。"""
+        form = CustomForm.objects.create(name='受保护表单', fields=[])
+        assert member_client.post(
+            '/api/v1/common/forms/',
+            {'name': '越权表单', 'fields': []},
+            format='json',
+        ).status_code == 403
+        assert member_client.patch(
+            f'/api/v1/common/forms/{form.id}/',
+            {'name': '越权修改'},
+            format='json',
+        ).status_code == 403
 
 
 @pytest.mark.api

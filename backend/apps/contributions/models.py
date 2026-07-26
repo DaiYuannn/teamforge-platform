@@ -182,6 +182,20 @@ class MemberRanking(models.Model):
     is_published = models.BooleanField('已公示', default=False)
     # 是否公开（新增：老师确认后置为 True，公开可见）
     is_public = models.BooleanField('是否公开', default=False)
+    # 生成排名时固化规则和证据，避免规则变化后无法解释历史排名。
+    rule_version = models.CharField('排名规则版本', max_length=30, default='2026.2')
+    rule_snapshot = models.JSONField('排名规则快照', default=dict, blank=True)
+    score_snapshot = models.JSONField('计分证据快照', default=dict, blank=True)
+    generated_at = models.DateTimeField('排名生成时间', null=True, blank=True)
+    confirmed_at = models.DateTimeField('排名确认时间', null=True, blank=True)
+    confirmed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        related_name='confirmed_rankings',
+        verbose_name='排名确认人',
+        null=True,
+        blank=True,
+    )
     # 创建时间
     created_at = models.DateTimeField('创建时间', auto_now_add=True)
     # 更新时间
@@ -264,6 +278,33 @@ class RankingObjection(models.Model):
     teacher_confirmed_at = models.DateTimeField('老师确认时间', null=True, blank=True)
     # 最终结果（新增）
     final_result = models.TextField('最终结果', blank=True, default='')
+    # 异议成立后的实际更正及审计快照
+    original_rank = models.PositiveIntegerField('更正前排名', null=True, blank=True)
+    corrected_rank = models.PositiveIntegerField('更正后排名', null=True, blank=True)
+    original_total_score = models.DecimalField(
+        '更正前总分',
+        max_digits=12,
+        decimal_places=2,
+        null=True,
+        blank=True,
+    )
+    corrected_total_score = models.DecimalField(
+        '更正后总分',
+        max_digits=12,
+        decimal_places=2,
+        null=True,
+        blank=True,
+    )
+    adjustment_snapshot = models.JSONField('排名更正快照', default=dict, blank=True)
+    adjustment_applied_at = models.DateTimeField('排名更正时间', null=True, blank=True)
+    adjustment_applied_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        related_name='applied_ranking_objection_adjustments',
+        verbose_name='排名更正执行人',
+        null=True,
+        blank=True,
+    )
     # 处理人（原有字段，保留）
     handler = models.ForeignKey(
         settings.AUTH_USER_MODEL,

@@ -2,6 +2,7 @@
 项目权限
 """
 from rest_framework.permissions import BasePermission, SAFE_METHODS
+from common.project_access import user_can_access_project
 
 
 class IsProjectLeaderOrTeacherOrAdmin(BasePermission):
@@ -24,9 +25,10 @@ class IsProjectLeaderOrTeacherOrAdmin(BasePermission):
     def has_object_permission(self, request, view, obj):
         if not request.user or not request.user.is_authenticated:
             return False
-        # 读取对所有认证用户开放
+        # 内部成员保持透明读取；外部协作者只能读取获授权项目。
         if request.method in SAFE_METHODS:
-            return True
+            project = obj if hasattr(obj, 'members') else getattr(obj, 'project', None)
+            return user_can_access_project(request.user, project)
         # 系统管理员
         if request.user.global_role == 'sys_admin':
             return True

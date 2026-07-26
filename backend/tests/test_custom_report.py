@@ -3,6 +3,7 @@ N49 自定义报表测试
 - CRUD、generate（根据 config 生成数据）、报表类型
 """
 import pytest
+from rest_framework.test import APIClient
 
 from apps.exports.custom_report_models import CustomReport
 from apps.tasks.models import Task
@@ -58,6 +59,44 @@ class TestCustomReport:
         data = extract_data(resp)
         results = data.get('results', data) if isinstance(data, dict) else data
         assert len(results) >= 1
+
+    def test_member_cannot_read_or_generate_another_members_report(
+        self, member_client, make_user
+    ):
+        owner = make_user(email='report-owner@test.com')
+        report = CustomReport.objects.create(
+            name='他人私有报表',
+            report_type='summary',
+            config={'data_source': 'project'},
+            created_by=owner,
+        )
+
+        listed = member_client.get(CUSTOM_REPORT_URL)
+        detail = member_client.get(f'{CUSTOM_REPORT_URL}{report.id}/')
+        generated = member_client.post(
+            f'{CUSTOM_REPORT_URL}{report.id}/generate/'
+        )
+
+        results = extract_data(listed)
+        if isinstance(results, dict):
+            results = results.get('results', [])
+        assert report.id not in {item['id'] for item in results}
+        assert detail.status_code == 404
+        assert generated.status_code == 404
+
+    def test_external_member_cannot_access_custom_reports(
+        self, make_user
+    ):
+        from apps.users.models import User
+
+        external = make_user(
+            email='external-report@test.com',
+            membership_status=User.MembershipStatus.EXTERNAL,
+        )
+        client = APIClient()
+        client.force_authenticate(user=external)
+
+        assert client.get(CUSTOM_REPORT_URL).status_code == 403
 
     def test_retrieve_report(self, member_client):
         """详情"""

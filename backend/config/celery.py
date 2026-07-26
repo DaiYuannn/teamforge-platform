@@ -1,7 +1,4 @@
-"""
-Celery 实例配置
-架构预留，暂不接入 Beat 定时任务
-"""
+"""Celery 实例配置，包含通知检查与定时报表 Beat 任务。"""
 import os
 
 from celery import Celery

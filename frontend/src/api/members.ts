@@ -6,6 +6,8 @@ export interface MemberQueryParams extends PaginationParams {
   grade?: string
   major?: string
   project?: number
+  membership_status?: string
+  is_active?: boolean
 }
 
 /** 获取成员列表 */

@@ -32,6 +32,29 @@ export interface PaginationParams {
 // 用户角色
 export type UserRole = 'sys_admin' | 'teacher' | 'member' | 'sens_approver'
 
+export interface UserPreferences {
+  primary_color: string
+  theme_color?: string
+  default_landing: 'dashboard' | 'projects' | 'tasks' | 'notifications'
+  sidebar_collapsed: boolean
+  notification_sound: boolean
+  items_per_page: 10 | 20 | 50
+  default_scope?: 'mine' | 'team'
+  sidebar_order?: string[]
+  favorite_routes?: string[]
+  saved_filters?: Record<string, Record<string, unknown>>
+  notification_preferences?: {
+    categories?: Record<string, boolean>
+    channels?: Record<string, boolean>
+    quiet_hours?: { enabled?: boolean; start?: string; end?: string }
+    digest?: 'instant' | 'daily' | 'weekly'
+  }
+  dashboard_layout: {
+    cards?: string[]
+    [key: string]: unknown
+  }
+}
+
 // 用户
 export interface User {
   id: number
@@ -40,11 +63,18 @@ export interface User {
   name: string
   global_role: UserRole
   global_role_display?: string
+  membership_status?: 'active' | 'on_leave' | 'exited' | 'external'
+  team_joined_at?: string | null
+  team_left_at?: string | null
+  exit_reason?: string
+  handover_to?: number | null
+  handover_notes?: string
   avatar?: string
   phone?: string
   is_active: boolean
   date_joined: string
   last_login?: string
+  preferences?: UserPreferences
 }
 
 // 登录请求参数
@@ -85,6 +115,11 @@ export interface UserFormData {
   password?: string
   password_confirm?: string
   is_active?: boolean
+  membership_status?: 'active' | 'on_leave' | 'exited' | 'external'
+  team_joined_at?: string | null
+  handover_to?: number | null
+  exit_reason?: string
+  handover_notes?: string
 }
 
 // ============================================
@@ -100,7 +135,7 @@ export type ProjectStage =
   | number
 
 // 项目状态
-export type ProjectStatus = string
+export type ProjectStatus = 'active' | 'paused' | 'closed'
 
 // 项目
 export interface Project {
@@ -108,37 +143,34 @@ export interface Project {
   name: string
   code: string
   intro: string
-  description?: string
-  competition?: number | null
-  competition_name?: string
   leader: number
   leader_name?: string
   current_stage?: number
   current_stage_display?: string
-  status: string
+  status: ProjectStatus
   status_display?: string
   priority?: string
   priority_display?: string
   start_date: string
   planned_end_date: string
-  expected_end_date?: string
   actual_end_date?: string | null
   last_leader_update?: string | null
   created_at: string
   updated_at: string
   member_count?: number
   task_count?: number
+  competition_count?: number
+  finance_balance?: number | string
 }
 
 // 项目创建/更新参数
 export interface ProjectFormData {
   name: string
   code: string
-  description?: string
-  competition?: number | null
+  intro?: string
   leader: number
   start_date: string
-  expected_end_date: string
+  planned_end_date: string
   status?: ProjectStatus
 }
 
@@ -157,6 +189,14 @@ export interface ProjectMember {
   user_avatar?: string
   user_detail?: any
   role_in_project: string
+  role_in_project_display?: string
+  status?: 'active' | 'on_leave' | 'exited'
+  status_display?: string
+  exited_at?: string | null
+  exit_reason?: string
+  handover_to?: number | null
+  handover_to_name?: string
+  handover_notes?: string
   joined_at: string
 }
 
@@ -166,15 +206,32 @@ export interface AddMemberParams {
   role_in_project: string
 }
 
+export interface ProjectMembershipEvent {
+  id: number
+  event_type: string
+  event_type_display: string
+  from_role: string
+  to_role: string
+  from_status: string
+  to_status: string
+  reason: string
+  handover_to?: number | null
+  handover_to_name?: string
+  operator_name?: string
+  created_at: string
+}
+
 // 阶段流转日志
 export interface StageLog {
   id: number
   project: number
   from_stage: ProjectStage | null
   to_stage: ProjectStage
-  operator: number
+  operator: number | null
   operator_name: string
-  remark: string
+  note?: string
+  /** 兼容早期前端模拟数据字段，真实接口使用 note。 */
+  remark?: string
   created_at: string
 }
 
@@ -183,14 +240,16 @@ export interface StageLog {
 // ============================================
 
 // 比赛级别
-export type CompetitionLevel = 'national' | 'provincial' | 'municipal' | 'school' | 'enterprise'
+export type CompetitionLevel = 'school' | 'city' | 'province' | 'national'
 
 // 比赛状态
-export type CompetitionStatus = 'upcoming' | 'registering' | 'ongoing' | 'judging' | 'completed'
+export type CompetitionStatus = 'preparing' | 'ongoing' | 'completed'
 
 // 比赛
 export interface Competition {
   id: number
+  project: number
+  project_name?: string
   name: string
   level: CompetitionLevel
   level_display?: string
@@ -199,29 +258,50 @@ export interface Competition {
   description?: string
   comp_type?: string
   organizer: string
-  start_date?: string
-  end_date?: string
-  register_date?: string
-  material_deadline?: string
-  review_date?: string
-  defense_date?: string
-  registration_deadline?: string
-  website?: string
+  register_date?: string | null
+  material_deadline?: string | null
+  review_date?: string | null
+  defense_date?: string | null
+  school_date?: string | null
+  city_date?: string | null
+  province_date?: string | null
+  national_date?: string | null
+  result_date?: string | null
+  is_promoted: boolean
+  is_awarded: boolean
+  award_level: string
+  not_promoted_reason: string
+  improvement_suggestion: string
+  review_summary: string
+  current_stage: string
   created_at: string
-  updated_at: string
+  updated_at?: string
 }
 
 // 比赛创建/更新参数
 export interface CompetitionFormData {
+  project: number
   name: string
+  comp_type: string
   level: CompetitionLevel
   status: CompetitionStatus
-  description?: string
   organizer: string
-  start_date?: string
-  end_date?: string
-  registration_deadline?: string
-  website?: string
+  register_date: string | null
+  material_deadline: string | null
+  review_date: string | null
+  defense_date: string | null
+  school_date: string | null
+  city_date: string | null
+  province_date: string | null
+  national_date: string | null
+  result_date: string | null
+  is_promoted: boolean
+  is_awarded: boolean
+  award_level: string
+  not_promoted_reason: string
+  improvement_suggestion: string
+  review_summary: string
+  current_stage: string
 }
 
 // ============================================
@@ -229,7 +309,7 @@ export interface CompetitionFormData {
 // ============================================
 
 // 任务状态
-export type TaskStatus = string
+export type TaskStatus = 'todo' | 'doing' | 'pending_review' | 'done' | 'overdue' | 'paused' | 'cancelled' | 'need_help'
 
 // 任务优先级
 export type TaskPriority = 'low' | 'medium' | 'high' | 'urgent'
@@ -244,14 +324,24 @@ export interface Task {
   assignee: number
   assignee_name: string
   assignee_avatar?: string
-  status: string
+  creator?: number
+  creator_name?: string
+  reviewer?: number | null
+  reviewer_name?: string
+  collaborator_ids?: number[]
+  collaborators_detail?: User[]
+  status: TaskStatus
   priority?: TaskPriority
+  priority_display?: string
   start_date?: string
   deadline: string
   delay_reason?: string
+  completion_note?: string
   completed_at?: string | null
   created_at: string
   updated_at: string
+  attachment_count?: number
+  attachment_files?: FileAsset[]
 }
 
 // 任务创建/更新参数
@@ -260,10 +350,15 @@ export interface TaskFormData {
   description?: string
   project: number
   assignee: number
-  status?: string
+  collaborator_ids?: number[]
+  reviewer?: number | null
+  status?: TaskStatus
   priority?: TaskPriority
   start_date?: string
   deadline: string
+  delay_reason?: string
+  completion_note?: string
+  attachment_ids?: number[]
 }
 
 // 任务查询参数
@@ -272,6 +367,7 @@ export interface TaskQueryParams extends PaginationParams {
   status?: TaskStatus
   priority?: TaskPriority
   assignee?: number
+  scope?: 'mine' | 'team'
 }
 
 // ============================================
@@ -279,7 +375,9 @@ export interface TaskQueryParams extends PaginationParams {
 // ============================================
 
 // 经费类别
-export type FinanceCategory = 'registration' | 'material' | 'travel' | 'equipment' | 'labor' | 'other'
+export type FinanceCategory = 'material' | 'equipment' | 'printing' | 'travel' | 'software' | 'competition_fee' | 'promotion' | 'labor' | 'other'
+export type ReimbursementStatus = 'draft' | 'pending' | 'approved' | 'rejected' | 'paid' | 'not_required'
+export type FinanceIncomeType = 'bonus' | 'grant' | 'sponsorship' | 'refund' | 'other'
 
 // 经费预算
 export interface FinanceBudget {
@@ -291,6 +389,9 @@ export interface FinanceBudget {
   bonus_amount: number
   other_income: number
   used_amount?: number
+  pending_reimbursement?: number
+  remaining_amount?: number
+  total_income?: number
   period?: string
   status?: string
   description?: string
@@ -303,19 +404,28 @@ export interface FinanceExpense {
   id: number
   project: number
   project_name?: string
-  category?: string
+  category: FinanceCategory
   amount: number
   title: string
-  description?: string
   spender?: number
   spender_name?: string
+  reviewer?: number | null
   reviewer_name?: string
-  expense_date?: string
+  expense_date: string
   purpose?: string
-  remark?: string
-  status: 'pending' | 'approved' | 'rejected' | 'reimbursed'
-  approver?: number | null
-  approved_at?: string | null
+  receipts?: FinanceReceipt[]
+  reimbursement_status?: ReimbursementStatus
+  reimbursement_status_display?: string
+  applied_by?: number | null
+  applied_by_name?: string
+  applied_at?: string | null
+  reviewed_at?: string | null
+  review_opinion?: string
+  paid_by?: number | null
+  paid_by_name?: string
+  paid_at?: string | null
+  payment_method?: string
+  payment_reference?: string
   created_at: string
   updated_at: string
 }
@@ -325,22 +435,50 @@ export interface FinanceExpenseFormData {
   project: number
   category: FinanceCategory
   amount: number
-  description: string
+  title: string
   expense_date: string
-  remark?: string
+  purpose?: string
+  spender?: number | null
+  reviewer?: number | null
 }
 
 // 经费票据
 export interface FinanceReceipt {
   id: number
   expense: number
-  file?: string
-  file_name?: string
-  file_size?: number
-  uploaded_at?: string
+  file: string
   uploaded_by?: number
   uploaded_by_name?: string
   created_at?: string
+}
+
+export interface FinanceIncome {
+  id: number
+  project: number
+  project_name?: string
+  title: string
+  amount: number | string
+  income_type: FinanceIncomeType
+  income_type_display?: string
+  income_date: string
+  source?: string
+  reference_number?: string
+  note?: string
+  recorded_by?: number | null
+  recorded_by_name?: string
+  created_at: string
+  updated_at: string
+}
+
+export interface FinanceIncomeFormData {
+  project: number
+  title: string
+  amount: number
+  income_type: FinanceIncomeType
+  income_date: string
+  source?: string
+  reference_number?: string
+  note?: string
 }
 
 // ============================================
@@ -356,18 +494,28 @@ export interface FileAsset {
   project: number
   project_name?: string
   name: string
-  file: string
+  file?: string
   file_url?: string
   content_type?: string
   size?: number
   level: FileLevel
   level_display?: string
-  uploader: number
+  uploader?: number
   uploader_name: string
   version?: number
   description?: string
   created_at: string
   updated_at?: string
+}
+
+export interface FileVersion {
+  id: number
+  file_asset: number
+  file?: string
+  version: number
+  uploader?: number
+  uploader_name?: string
+  created_at: string
 }
 
 // 文件上传参数
@@ -388,10 +536,24 @@ export interface FileQueryParams extends PaginationParams {
 // ============================================
 
 // 导入模块
-export type ImportModule = 'users' | 'projects' | 'members' | 'tasks' | 'competitions'
+export type ImportModule =
+  | 'projects'
+  | 'history_projects'
+  | 'members'
+  | 'tasks'
+  | 'competitions'
+  | 'finance'
+  | 'ip_applications'
 
 // 导入任务状态
-export type ImportTaskStatus = 'pending' | 'previewing' | 'confirming' | 'completed' | 'failed' | 'rolled_back'
+export type ImportTaskStatus =
+  | 'pending'
+  | 'previewing'
+  | 'previewed'
+  | 'confirming'
+  | 'confirmed'
+  | 'failed'
+  | 'rolled_back'
 
 // 导入任务
 export interface ImportTask {
@@ -400,14 +562,13 @@ export interface ImportTask {
   file_name: string
   status: ImportTaskStatus
   total_rows: number
-  success_rows: number
-  failed_rows: number
-  error_messages?: string[]
+  valid_rows: number
+  error_rows: number
+  error_details?: Record<string, string[] | string>
   field_mapping?: Record<string, string>
-  operator: number
-  operator_name: string
+  created_by_name: string
   created_at: string
-  completed_at?: string | null
+  updated_at?: string
   can_rollback: boolean
 }
 
@@ -426,7 +587,7 @@ export interface PreviewRow {
 
 // 导入预览结果
 export interface ImportPreviewResult {
-  task_id: string
+  task_id: number
   headers: string[]
   field_mapping: FieldMapping
   preview_rows: Record<string, any>[]
@@ -434,7 +595,7 @@ export interface ImportPreviewResult {
   valid_rows: number
   error_rows: number
   error_details: Record<string, any>
-  available_fields?: string[]
+  field_options: Array<{ value: string; label: string; required: boolean }>
 }
 
 // ============================================
@@ -453,6 +614,13 @@ export interface Member {
   avatar?: string
   global_role?: string
   global_role_display?: string
+  membership_status?: 'active' | 'on_leave' | 'exited' | 'external'
+  team_joined_at?: string | null
+  team_left_at?: string | null
+  exit_reason?: string
+  handover_to?: number | null
+  handover_notes?: string
+  is_active?: boolean
   is_student?: boolean
   grade?: string
   major?: string
@@ -461,7 +629,7 @@ export interface Member {
   position?: string
   project_count?: number
   task_count?: number
-  projects?: { project_id: number; project_name: string; project_code: string; role_in_project: string; role_in_project_display: string; project_status: string }[]
+  projects?: { project_id: number; project_name: string; project_code: string; role_in_project: string; role_in_project_display: string; membership_status?: string; membership_status_display?: string; exited_at?: string | null; exit_reason?: string; project_status: string }[]
   tasks?: any[]
   skills?: any[]
   latest_work_schedule?: any
@@ -605,6 +773,27 @@ export interface FlexibleWorkSchedule {
 // 贡献记录
 // ============================================
 
+export type ContributionType =
+  | 'task_complete'
+  | 'project_lead'
+  | 'competition'
+  | 'finance_manage'
+  | 'file_upload'
+  | 'ip_writing'
+  | 'ip_execution'
+  | 'ip_return_fix'
+  | 'ip_archive'
+  | 'ip_material'
+  | 'project_leader'
+  | 'core'
+  | 'long_term'
+  | 'stage_task'
+  | 'resource'
+  | 'temporary_help'
+  | 'nominal'
+  | 'exited_contribution'
+  | 'other'
+
 /** 贡献记录 */
 export interface Contribution {
   id: number
@@ -612,10 +801,12 @@ export interface Contribution {
   project_name?: string
   user: number
   user_name?: string
-  contribution_type: string
+  contribution_type: ContributionType
   content: string
+  period?: string
   evidence_file?: string
-  proof_file?: string
+  proof_file?: number | null
+  proof_file_name?: string
   status: string
   weight?: number
   reviewer?: number
@@ -640,10 +831,26 @@ export interface MemberRanking {
   rank: number
   score?: number
   total_score?: number
+  period: string
   contribution_count?: number
   task_completed_count: number
   ip_contribution_count: number
   status: string
+  is_public?: boolean
+  rule_version?: string
+  rule_snapshot?: Record<string, any>
+  score_snapshot?: {
+    period?: string
+    total_score?: string
+    evidence_count?: number
+    breakdown?: Record<string, string>
+    evidence?: Array<Record<string, any>>
+    manual_overrides?: Array<Record<string, any>>
+    objection_adjustments?: Array<Record<string, any>>
+  }
+  generated_at?: string | null
+  confirmed_at?: string | null
+  confirmed_by?: number | null
   user_detail?: any
   created_at?: string
   updated_at?: string
@@ -655,7 +862,6 @@ export interface RankingObjection {
   project: number
   objector: number
   objector_name?: string
-  objection_type?: string
   ranking?: number
   ranking_user_name?: string
   content: string
@@ -671,6 +877,13 @@ export interface RankingObjection {
   teacher_confirmer_name?: string
   teacher_confirmed_at?: string
   final_result?: string
+  original_rank?: number | null
+  corrected_rank?: number | null
+  original_total_score?: number | string | null
+  corrected_total_score?: number | string | null
+  adjustment_snapshot?: Record<string, any>
+  adjustment_applied_at?: string | null
+  adjustment_applied_by?: number | null
   created_at: string
   updated_at?: string
 }
@@ -682,16 +895,23 @@ export interface RankingObjection {
 /** 敏感资料 */
 export interface SensitiveData {
   id: number
-  user: number
+  user?: number
   user_name?: string
   data_type: string
-  label: string
+  data_type_display?: string
+  label?: string
   title?: string
   display_name?: string
   masked_value?: string
   owner_name?: string
+  project?: number | null
+  project_name?: string
+  has_file?: boolean
+  file_attachment_name?: string
+  key_version?: number
   is_encrypted?: boolean
   created_at?: string
+  updated_at?: string
 }
 
 /** 敏感资料访问申请 */
@@ -704,7 +924,7 @@ export interface SensitiveAccessRequest {
   target_user?: number
   sensitive_data?: number
   target_user_name?: string
-  data_type: string
+  data_type?: string
   sensitive_data_type?: string
   sensitive_data_type_display?: string
   sensitive_data_title?: string
@@ -715,8 +935,13 @@ export interface SensitiveAccessRequest {
   project_name?: string
   expected_use_time?: string
   need_download?: boolean
-  is_download?: boolean
-  status?: string
+  is_download: boolean
+  status: 'pending' | 'approved' | 'rejected' | 'expired'
+  status_display?: string
+  is_accessible?: boolean
+  has_attachment?: boolean
+  attachment_name?: string
+  can_download_attachment?: boolean
   valid_duration?: number
   approver?: number
   approver_name?: string
@@ -726,7 +951,29 @@ export interface SensitiveAccessRequest {
   approved_at?: string
   expires_at?: string
   access_expires_at?: string
+  viewed_at?: string
   created_at: string
+}
+
+export interface SensitiveDataQueryParams extends PaginationParams {
+  project?: number
+  data_type?: string
+}
+
+export interface SensitiveAccessRequestCreateParams {
+  sensitive_data: number
+  reason?: string
+  usage_scenario: string
+  project?: number
+  expected_use_time?: string
+  is_download: boolean
+  request_note?: string
+}
+
+export interface SensitiveAccessRequestReviewParams {
+  action: 'approve' | 'reject'
+  approval_opinion?: string
+  expire_hours?: number
 }
 
 // ============================================

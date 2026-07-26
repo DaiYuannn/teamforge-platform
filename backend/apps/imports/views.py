@@ -6,7 +6,9 @@
 - rollback: POST 回滚导入
 """
 import os
+import uuid
 from django.conf import settings
+from django.utils.text import get_valid_filename
 from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.viewsets import ModelViewSet
@@ -71,7 +73,14 @@ class ImportTaskViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet
         # 保存文件到临时目录
         upload_dir = os.path.join(settings.MEDIA_ROOT, 'imports')
         os.makedirs(upload_dir, exist_ok=True)
-        file_path = os.path.join(upload_dir, file.name)
+        suffix = os.path.splitext(file.name)[1].lower()
+        if suffix not in {'.xlsx', '.xlsm', '.csv'}:
+            return error_response(
+                message='仅支持 .xlsx、.xlsm 或 .csv 文件',
+                http_status=status.HTTP_400_BAD_REQUEST,
+            )
+        safe_name = get_valid_filename(os.path.basename(file.name))
+        file_path = os.path.join(upload_dir, f'{uuid.uuid4().hex}_{safe_name}')
         with open(file_path, 'wb') as f:
             for chunk in file.chunks():
                 f.write(chunk)
@@ -119,6 +128,7 @@ class ImportTaskViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet
             'valid_rows': len(valid_rows),
             'error_rows': len(error_details),
             'error_details': error_details,
+            'field_options': import_service.get_field_options(module),
         }, message='文件解析成功，请确认字段映射后导入')
 
     @action(detail=True, methods=['post'])
@@ -133,7 +143,9 @@ class ImportTaskViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet
         if import_task.status != ImportTask.Status.PREVIEWED:
             return error_response(message='只能确认已预览的导入任务')
 
-        field_mapping = request.data.get('field_mapping')
+        serializer = ImportConfirmSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        field_mapping = serializer.validated_data.get('field_mapping')
 
         # 更新状态为确认中
         import_task.status = ImportTask.Status.CONFIRMING

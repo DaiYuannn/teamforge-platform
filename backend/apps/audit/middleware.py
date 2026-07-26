@@ -4,17 +4,117 @@
 """
 import json
 import logging
+import re
 
 from .models import OperationLog
 
 logger = logging.getLogger('apps.audit')
 
-# 敏感字段不记录到请求摘要中
+# 敏感字段不记录到请求摘要中。这里既包含认证密钥，也包含敏感资料、
+# 身份信息和财务账户字段。字段名会先做标准化，因此 camelCase、
+# kebab-case 和 snake_case 都能匹配。
 SENSITIVE_FIELDS = {
     'password', 'password_confirm', 'old_password', 'new_password',
     'token', 'access_token', 'refresh_token', 'secret', 'api_key',
     'encryption_key', 'private_key', 'credit_card', 'id_card',
+    'plaintext', 'plain_text', 'ciphertext', 'cipher_text',
+    'encrypted_content', 'identity_number', 'identity_card',
+    'id_number', 'passport_number', 'social_security_number',
+    'bank_card', 'bank_account', 'account_number', 'debit_card',
+    'payment_account', 'phone', 'mobile', 'mobile_phone',
+    'address', 'home_address', 'residential_address',
+    'signature', 'electronic_signature', 'seal',
 }
+
+# 对动态字段名（例如 applicant_bank_account、oauth_access_token）使用后缀
+# 匹配，避免只维护一份永远不完整的精确名称清单。
+SENSITIVE_FIELD_SUFFIXES = (
+    '_password', '_password_confirm',
+    '_token', '_secret', '_api_key', '_private_key', '_encryption_key',
+    '_plaintext', '_plain_text', '_ciphertext', '_cipher_text',
+    '_encrypted_content',
+    '_identity_number', '_identity_card', '_id_card', '_id_number',
+    '_passport_number', '_social_security_number',
+    '_credit_card', '_debit_card', '_bank_card', '_bank_account',
+    '_account_number', '_payment_account',
+    '_phone', '_mobile', '_mobile_phone',
+    '_address', '_home_address', '_residential_address',
+    '_signature', '_electronic_signature', '_seal',
+)
+SENSITIVE_FIELD_FRAGMENTS = (
+    'password', 'access_token', 'refresh_token', 'api_key',
+    'private_key', 'encryption_key',
+    'plaintext', 'plain_text', 'ciphertext', 'cipher_text',
+    'encrypted_content',
+    'identity_number', 'identity_card', 'id_card', 'id_number',
+    'passport_number', 'social_security_number',
+    'credit_card', 'debit_card', 'bank_card', 'bank_account',
+    'account_number', 'payment_account',
+    'phone', 'home_address', 'residential_address', 'address',
+    'electronic_signature', 'signature',
+)
+
+REDACTED_VALUE = '[REDACTED]'
+SENSITIVE_FIELD_TERMS = (
+    '密码', '口令', '令牌', '密钥', '密文', '明文',
+    '身份证', '护照号', '社保号',
+    '银行卡', '银行账户', '支付账户', '信用卡',
+    '手机号', '电话号码', '住址', '地址', '签名', '印章',
+)
+
+
+def _normalize_field_name(key):
+    """把字段名规范成 snake_case，供敏感字段匹配使用。"""
+    value = str(key).strip()
+    value = re.sub(r'([a-z0-9])([A-Z])', r'\1_\2', value)
+    value = re.sub(r'[^a-zA-Z0-9]+', '_', value)
+    return value.strip('_').lower()
+
+
+def is_sensitive_field(key):
+    """判断任意命名风格的字段是否包含不可写入审计日志的值。"""
+    raw_value = str(key).strip().lower()
+    normalized = _normalize_field_name(key)
+    return (
+        any(term in raw_value for term in SENSITIVE_FIELD_TERMS)
+        or
+        normalized in SENSITIVE_FIELDS
+        or any(fragment in normalized for fragment in SENSITIVE_FIELD_FRAGMENTS)
+        or any(normalized.endswith(suffix) for suffix in SENSITIVE_FIELD_SUFFIXES)
+    )
+
+
+def redact_sensitive_data(value):
+    """
+    递归脱敏 JSON 兼容数据。
+
+    保留字段结构并用固定占位符替代敏感值，既方便排障，也保证嵌套对象、
+    数组中的明文不会落入 OperationLog。
+    """
+    if isinstance(value, dict):
+        return {
+            key: REDACTED_VALUE if is_sensitive_field(key) else redact_sensitive_data(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [redact_sensitive_data(item) for item in value]
+    if isinstance(value, tuple):
+        return [redact_sensitive_data(item) for item in value]
+    return value
+
+
+def redact_parameter_value(value):
+    """对查询参数/表单中以字符串承载的嵌套 JSON 同样递归脱敏。"""
+    if not isinstance(value, str):
+        return redact_sensitive_data(value)
+    stripped = value.strip()
+    if not stripped or stripped[0] not in '[{':
+        return value
+    try:
+        return redact_sensitive_data(json.loads(stripped))
+    except (json.JSONDecodeError, ValueError, TypeError):
+        return value
+
 
 # 请求方法到操作类型的映射
 METHOD_TO_OPERATION = {
@@ -40,11 +140,20 @@ class OperationLogMiddleware:
         self.skip_paths = ['/admin/', '/api/v1/auth/', '/api/v1/audit/']
 
     def __call__(self, request):
+        # DRF 解析请求体后再次读取 request.body 可能触发
+        # RawPostDataException，因此必须在进入视图前先保存脱敏摘要。
+        request_summary = None
+        if (
+            request.method in ('POST', 'PUT', 'PATCH', 'DELETE')
+            and not self._should_skip(request.path)
+        ):
+            request_summary = self._get_request_summary(request)
+
         response = self.get_response(request)
         # 只记录写操作
         if request.method in ('POST', 'PUT', 'PATCH', 'DELETE'):
             try:
-                self._log_operation(request, response)
+                self._log_operation(request, response, request_summary=request_summary)
             except Exception as e:
                 # 日志记录失败不影响正常响应
                 logger.exception('记录操作日志失败: %s', e)
@@ -108,46 +217,60 @@ class OperationLogMiddleware:
         try:
             query_dict = dict(request.GET)
             for key, value in query_dict.items():
-                if key.lower() not in SENSITIVE_FIELDS:
-                    summary[key] = value[0] if len(value) == 1 else value
+                summary[key] = (
+                    REDACTED_VALUE
+                    if is_sensitive_field(key)
+                    else (
+                        redact_parameter_value(value[0])
+                        if len(value) == 1
+                        else [redact_parameter_value(item) for item in value]
+                    )
+                )
         except Exception:
             pass
 
         # 请求体数据
         try:
-            if request.body:
-                content_type = request.content_type or ''
-                if 'application/json' in content_type:
+            content_type = request.content_type or ''
+            media_type = content_type.split(';', 1)[0].strip().lower()
+            if media_type == 'application/json' or media_type.endswith('+json'):
+                if request.body:
                     try:
                         body_data = json.loads(request.body)
                         if isinstance(body_data, dict):
-                            for key, value in body_data.items():
-                                if key.lower() not in SENSITIVE_FIELDS:
-                                    summary[key] = value
+                            summary.update(redact_sensitive_data(body_data))
                         else:
-                            summary['_body'] = body_data
+                            summary['_body'] = redact_sensitive_data(body_data)
                     except (json.JSONDecodeError, ValueError):
                         pass
-                elif 'multipart' in content_type or 'form' in content_type:
-                    # 表单数据
-                    try:
-                        for key in request.POST:
-                            if key.lower() not in SENSITIVE_FIELDS:
-                                summary[key] = request.POST.get(key)
-                    except Exception:
-                        pass
+            elif 'multipart' in media_type or 'form' in media_type:
+                # 直接访问 request.POST/FILES 让 Django 的上传处理器流式解析，
+                # 不读取 request.body，避免大文件被整体载入内存。
+                try:
+                    for key in request.POST:
+                        summary[key] = (
+                            REDACTED_VALUE
+                            if is_sensitive_field(key)
+                            else redact_parameter_value(request.POST.get(key))
+                        )
+                except Exception:
+                    pass
         except Exception:
             pass
 
-        # 文件上传信息（只记录文件名和大小，不记录内容）
+        # 文件上传信息。文件名本身可能包含姓名、证件号或银行账号，因此只
+        # 记录排障所需的大小和 MIME 类型，不记录文件名或内容。
         try:
             files_info = {}
             for key in request.FILES:
                 file_obj = request.FILES[key]
-                files_info[key] = {
-                    'name': file_obj.name,
-                    'size': file_obj.size,
-                }
+                if is_sensitive_field(key):
+                    files_info[key] = REDACTED_VALUE
+                else:
+                    files_info[key] = {
+                        'size': file_obj.size,
+                        'content_type': getattr(file_obj, 'content_type', '') or '',
+                    }
             if files_info:
                 summary['_files'] = files_info
         except Exception:
@@ -155,7 +278,7 @@ class OperationLogMiddleware:
 
         return summary
 
-    def _log_operation(self, request, response):
+    def _log_operation(self, request, response, request_summary=None):
         """记录操作日志"""
         path = request.path
 
@@ -205,8 +328,10 @@ class OperationLogMiddleware:
         # 获取 User-Agent
         user_agent = request.META.get('HTTP_USER_AGENT', '')[:500]
 
-        # 获取请求摘要
-        request_summary = self._get_request_summary(request)
+        # 获取请求摘要。正常由 __call__ 在视图消费请求流前传入；保留回退逻辑
+        # 便于单元测试或其他代码直接调用此方法。
+        if request_summary is None:
+            request_summary = self._get_request_summary(request)
 
         # 响应状态码
         response_status = getattr(response, 'status_code', None)

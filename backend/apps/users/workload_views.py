@@ -5,9 +5,9 @@
   - 预估工时
   - 项目数
 """
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
+from common.permissions import IsInternalTeamMember
 from common.response import success_response
 from .models import User
 
@@ -20,7 +20,7 @@ class MemberWorkloadView(APIView):
     预估工时根据任务优先级估算：urgent=16h, high=8h, medium=4h, low=2h
     支持按 user 筛选单个成员
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsInternalTeamMember]
 
     # 优先级对应的预估工时
     PRIORITY_HOURS = {

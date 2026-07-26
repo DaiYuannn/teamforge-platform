@@ -18,7 +18,9 @@ def _is_project_member(user, project):
         return True
     # 项目成员
     from apps.projects.models import ProjectMember
-    return ProjectMember.objects.filter(project=project, user=user).exists()
+    return ProjectMember.objects.filter(
+        project=project, user=user, status=ProjectMember.Status.ACTIVE
+    ).exists()
 
 
 def _is_project_leader_or_admin(user, project):

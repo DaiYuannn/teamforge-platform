@@ -113,7 +113,7 @@ function pickColor(name: string): string {
   }
 
   .awn-name {
-    color: #303133;
+    color: var(--color-text);
     font-weight: 500;
     overflow: hidden;
     text-overflow: ellipsis;

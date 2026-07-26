@@ -1,4 +1,4 @@
-import request from './request'
+import request, { download } from './request'
 
 // 操作日志模块基础路径
 const BASE = '/audit'
@@ -18,3 +18,7 @@ export const getModuleStats = () => request.get(`${BASE}/operation-logs/module_s
 
 /** 获取最近操作日志 */
 export const getRecentLogs = (params?: any) => request.get(`${BASE}/operation-logs/recent/`, { params })
+
+/** 按当前筛选条件导出操作日志 */
+export const exportOperationLogs = (params?: Record<string, unknown>): Promise<Blob> =>
+  download(`${BASE}/operation-logs/export/`, { params })

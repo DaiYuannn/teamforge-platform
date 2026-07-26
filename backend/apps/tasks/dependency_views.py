@@ -10,6 +10,7 @@ from rest_framework.viewsets import ModelViewSet
 from common.response import success_response, error_response
 from common.mixins import MultiSerializerMixin, MultiPermissionMixin
 from common.permissions import IsProjectLeaderOrTeacherOrAdmin
+from common.project_access import scope_project_queryset, user_can_access_project
 from .dependency_models import TaskDependency
 from .dependency_serializers import TaskDependencySerializer
 
@@ -39,6 +40,32 @@ class TaskDependencyViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelVie
     filterset_fields = ['task', 'depends_on']
     search_fields = ['task__title', 'depends_on__title']
     ordering_fields = ['created_at']
+
+    def get_queryset(self):
+        queryset = scope_project_queryset(
+            super().get_queryset(),
+            self.request.user,
+            project_lookup='task__project',
+        )
+        return scope_project_queryset(
+            queryset,
+            self.request.user,
+            project_lookup='depends_on__project',
+        )
+
+    def check_object_permissions(self, request, obj):
+        super().check_object_permissions(request, obj)
+        write = request.method not in ('GET', 'HEAD', 'OPTIONS')
+        allowed = (
+            user_can_access_project(request.user, obj.task.project, write=write)
+            and user_can_access_project(
+                request.user,
+                obj.depends_on.project,
+                write=write,
+            )
+        )
+        if not allowed:
+            self.permission_denied(request, message='无权访问该任务依赖')
 
     def create(self, request, *args, **kwargs):
         """创建依赖关系（含循环依赖检测）"""

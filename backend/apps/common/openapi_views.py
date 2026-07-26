@@ -7,9 +7,9 @@ OpenAPI Schema 视图（N60）
 扫描 config.urls 中注册的全部路由，聚合端点与方法。
 """
 from django.urls import URLPattern, URLResolver, get_resolver
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
+from common.permissions import IsTeacherOrAdmin
 from common.response import success_response
 
 
@@ -100,7 +100,7 @@ class OpenAPISchemaView(APIView):
     返回基于已注册路由生成的简易 OpenAPI 3.0 JSON Schema
     """
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsTeacherOrAdmin]
 
     def get(self, request):
         endpoints = _get_all_endpoints()
@@ -116,7 +116,7 @@ class APIEndpointListView(APIView):
     返回所有 API 端点（路径 + 方法 + 视图名）
     """
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsTeacherOrAdmin]
 
     def get(self, request):
         endpoints = _get_all_endpoints()

@@ -6,6 +6,7 @@
 from decimal import Decimal
 from django.db import models
 from django.conf import settings
+from django.utils import timezone
 
 from apps.projects.models import Project
 from apps.common.soft_delete import SoftDeleteMixin, SoftDeleteManager
@@ -94,6 +95,16 @@ class FinanceExpense(SoftDeleteMixin, models.Model):
         LABOR = 'labor', '劳务费'
         OTHER = 'other', '其他'
 
+    class ReimbursementStatus(models.TextChoices):
+        """逐笔报销状态。"""
+
+        DRAFT = 'draft', '草稿'
+        PENDING = 'pending', '待审核'
+        APPROVED = 'approved', '已审核'
+        REJECTED = 'rejected', '已驳回'
+        PAID = 'paid', '已付款'
+        NOT_REQUIRED = 'not_required', '无需报销'
+
     # 所属项目
     project = models.ForeignKey(
         Project,
@@ -132,6 +143,36 @@ class FinanceExpense(SoftDeleteMixin, models.Model):
         verbose_name='审核人',
         null=True, blank=True,
     )
+    # 报销流程
+    reimbursement_status = models.CharField(
+        '报销状态',
+        max_length=20,
+        choices=ReimbursementStatus.choices,
+        default=ReimbursementStatus.DRAFT,
+        db_index=True,
+    )
+    applied_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        related_name='submitted_reimbursements',
+        verbose_name='报销申请人',
+        null=True,
+        blank=True,
+    )
+    applied_at = models.DateTimeField('报销申请时间', null=True, blank=True)
+    reviewed_at = models.DateTimeField('报销审核时间', null=True, blank=True)
+    review_opinion = models.TextField('报销审核意见', blank=True, default='')
+    paid_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        related_name='paid_reimbursements',
+        verbose_name='付款登记人',
+        null=True,
+        blank=True,
+    )
+    paid_at = models.DateTimeField('付款时间', null=True, blank=True)
+    payment_method = models.CharField('付款方式', max_length=50, blank=True, default='')
+    payment_reference = models.CharField('付款流水号', max_length=100, blank=True, default='')
     # 创建时间
     created_at = models.DateTimeField('创建时间', auto_now_add=True)
     # 更新时间
@@ -142,6 +183,99 @@ class FinanceExpense(SoftDeleteMixin, models.Model):
         verbose_name = '经费明细'
         verbose_name_plural = verbose_name
         ordering = ['-expense_date', '-created_at']
+
+    def __str__(self):
+        return f'{self.project.name} - {self.title}({self.amount})'
+
+    def submit_reimbursement(self, applicant):
+        """提交或重新提交报销申请。"""
+        if self.reimbursement_status not in {
+            self.ReimbursementStatus.DRAFT,
+            self.ReimbursementStatus.REJECTED,
+        }:
+            raise ValueError('仅草稿或已驳回的支出可以提交报销')
+        self.reimbursement_status = self.ReimbursementStatus.PENDING
+        self.applied_by = applicant
+        self.applied_at = timezone.now()
+        self.reviewer = None
+        self.reviewed_at = None
+        self.review_opinion = ''
+        self.paid_by = None
+        self.paid_at = None
+        self.payment_method = ''
+        self.payment_reference = ''
+        self.save()
+
+    def review_reimbursement(self, reviewer, approved, opinion=''):
+        """审核一笔待审核报销。"""
+        if self.reimbursement_status != self.ReimbursementStatus.PENDING:
+            raise ValueError('仅待审核的报销可以审核')
+        self.reimbursement_status = (
+            self.ReimbursementStatus.APPROVED
+            if approved
+            else self.ReimbursementStatus.REJECTED
+        )
+        self.reviewer = reviewer
+        self.reviewed_at = timezone.now()
+        self.review_opinion = opinion
+        self.save()
+
+    def mark_paid(self, operator, payment_method='', payment_reference=''):
+        """登记付款完成。"""
+        if self.reimbursement_status != self.ReimbursementStatus.APPROVED:
+            raise ValueError('仅已审核的报销可以登记付款')
+        self.reimbursement_status = self.ReimbursementStatus.PAID
+        self.paid_by = operator
+        self.paid_at = timezone.now()
+        self.payment_method = payment_method
+        self.payment_reference = payment_reference
+        self.save()
+
+
+class FinanceIncome(models.Model):
+    """项目收入流水，是预算收入汇总的可追溯数据源。"""
+
+    class IncomeType(models.TextChoices):
+        BONUS = 'bonus', '比赛奖金'
+        GRANT = 'grant', '项目拨款'
+        SPONSORSHIP = 'sponsorship', '赞助收入'
+        REFUND = 'refund', '退款入账'
+        OTHER = 'other', '其他收入'
+
+    project = models.ForeignKey(
+        Project,
+        on_delete=models.CASCADE,
+        related_name='finance_incomes',
+        verbose_name='所属项目',
+    )
+    title = models.CharField('收入标题', max_length=200)
+    amount = models.DecimalField('收入金额', max_digits=12, decimal_places=2)
+    income_type = models.CharField(
+        '收入类型',
+        max_length=20,
+        choices=IncomeType.choices,
+        default=IncomeType.OTHER,
+    )
+    income_date = models.DateField('收入日期')
+    source = models.CharField('收入来源', max_length=200, blank=True, default='')
+    reference_number = models.CharField('入账凭证号', max_length=100, blank=True, default='')
+    note = models.TextField('备注', blank=True, default='')
+    recorded_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        related_name='recorded_finance_incomes',
+        verbose_name='登记人',
+        null=True,
+        blank=True,
+    )
+    created_at = models.DateTimeField('创建时间', auto_now_add=True)
+    updated_at = models.DateTimeField('更新时间', auto_now=True)
+
+    class Meta:
+        db_table = 'finance_incomes'
+        verbose_name = '收入流水'
+        verbose_name_plural = verbose_name
+        ordering = ['-income_date', '-created_at']
 
     def __str__(self):
         return f'{self.project.name} - {self.title}({self.amount})'

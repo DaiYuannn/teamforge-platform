@@ -62,8 +62,8 @@
             placeholder="请输入最终处理结果"
           />
         </el-form-item>
-        <el-form-item label="处理决定" prop="action">
-          <el-radio-group v-model="form.action">
+        <el-form-item label="处理决定" prop="final_status">
+          <el-radio-group v-model="form.final_status">
             <el-radio value="resolved">通过并解决</el-radio>
             <el-radio value="rejected">驳回异议</el-radio>
           </el-radio-group>
@@ -119,7 +119,7 @@ const form = reactive({
   leader_opinion: '',
   teacher_opinion: '',
   final_result: '',
-  action: 'resolved' as 'resolved' | 'rejected',
+  final_status: 'resolved' as 'resolved' | 'rejected',
 })
 
 // 异议状态颜色
@@ -138,7 +138,7 @@ const rules = computed<FormRules>(() => {
   return {
     teacher_opinion: [{ required: true, message: '请输入老师确认意见', trigger: 'blur' }],
     final_result: [{ required: true, message: '请输入最终处理结果', trigger: 'blur' }],
-    action: [{ required: true, message: '请选择处理决定', trigger: 'change' }],
+    final_status: [{ required: true, message: '请选择处理决定', trigger: 'change' }],
   }
 })
 
@@ -149,16 +149,19 @@ async function handleSubmit(): Promise<void> {
     if (!valid) return
     submitting.value = true
     try {
-      // 根据审核模式构建提交数据
-      const data: Record<string, any> = { review_mode: props.reviewMode }
       if (props.reviewMode === 'leader') {
-        data.leader_opinion = form.leader_opinion
+        await reviewIPObjection(props.objection.id, {
+          action: 'leader_review',
+          leader_opinion: form.leader_opinion,
+        })
       } else {
-        data.teacher_opinion = form.teacher_opinion
-        data.final_result = form.final_result
-        data.action = form.action
+        await reviewIPObjection(props.objection.id, {
+          action: 'teacher_confirm',
+          teacher_opinion: form.teacher_opinion,
+          final_result: form.final_result,
+          final_status: form.final_status,
+        })
       }
-      await reviewIPObjection(props.objection.id, data)
       ElMessage.success('异议处理成功')
       emit('success')
       dialogVisible.value = false
@@ -177,7 +180,7 @@ function handleClose(): void {
     leader_opinion: '',
     teacher_opinion: '',
     final_result: '',
-    action: 'resolved',
+    final_status: 'resolved',
   })
 }
 
@@ -199,7 +202,7 @@ watch(
 }
 
 .reviewed-text {
-  color: #606266;
+  color: var(--color-text-regular);
   font-size: 13px;
 }
 </style>

@@ -1,6 +1,32 @@
 # CHANGELOG
 
-## v2.0.0-full-implementation - 2026-07-08
+## v2.0.0 - 2026-07-26
+
+### 团队工作台发布
+
+- 时间线精确事件类型、中文标签、业务分类和多选过滤统一。
+- 账户主色、默认页、分页、数据范围、布局、收藏和通知偏好按登录账号持久化并隔离。
+- 票据 OCR 使用真实 Tesseract 识别并要求人工复核，限制异常图片和执行时间。
+- 演示备份包含业务快照、附件和 SHA-256 清单，恢复前自动创建回滚包。
+- 定时报表支持 XLSX、DOCX、PDF、执行记录、下载、通知和 Celery 调度。
+- 实时通知使用 SSE、Redis 唤醒和数据库游标补发，账户切换清除旧连接与状态。
+- 完整演示入口生成 60 个账号、24 个项目、120 个任务及可打开的文档和票据。
+- 按产品范围撤下 2FA 运行入口；OAuth 仅保留未配置的集成预留。
+- 新增 Playwright 桌面端与移动端核心工作流验收。
+
+本版本的通过状态以 2026-07-26 实际执行的测试、迁移检查、依赖审计和浏览器验收为准。
+
+### 发布验收结果
+
+- 后端：`1258` 项 pytest 全部通过；Django 系统检查通过，迁移无漂移。
+- 前端：`28` 个测试文件、`149` 项 Vitest 全部通过；ESLint、类型检查和生产构建通过。
+- 端到端：Playwright 桌面端与移动端共 `8/8` 通过，两端均实际下载并校验了非空 ZIP 备份包。
+- 依赖安全：最终依赖树 `npm audit` 为 `0 vulnerabilities`，生产依赖审计同样为零。
+- 下载校验：外部浏览器下载包为 `4,627,958` 字节，SHA-256 与服务端原包完全一致，ZIP 完整性检查通过。
+
+## 2026-07-08 实现记录（历史快照）
+
+> 以下测试数量和 Stub 状态只记录当时情况，不是当前发布证明。
 
 ### 全量实现：P05-P20 + M03-M10 + N01-N62
 
@@ -19,7 +45,7 @@
 | P05 | 经费导出 CSV 支持新增 | - |
 | P06 | 导入模块新增 ip_applications 类型 | - |
 | P07 | 导出中心新增 CSV 格式 + members/competitions 类型 | - |
-| P08 | PDF 报告 weasyprint 不可用时优雅降级为 HTML | - |
+| P08 | PDF 报告（当时使用 WeasyPrint 降级，v2.0 已改为 ReportLab） | - |
 | P09 | WebhookConfig 模型 + CRUD API | 14 |
 | P10 | 7 个 Celery 定时任务验证 | 17 |
 | P11 | 个人中心 MyProfileView 全面测试 | 11 |
@@ -69,7 +95,7 @@
 | N20 | 获奖记录追踪 CompetitionAward | 8 |
 | N21 | 经费预警 (>80%/100%) | 9 |
 | N22 | 经费趋势分析 | 7 |
-| N23 | OCR 票据识别 (Stub) | 10 |
+| N23 | OCR 票据识别（当时为 Stub，v2.0 已替换为真实 OCR） | 10 |
 | N24 | 贡献度统计 | 8 |
 | N25 | 贡献度排行榜 | 8 |
 
@@ -89,11 +115,11 @@
 
 | ID | 描述 | 测试数 |
 |----|------|--------|
-| N34 | 双因素认证 TwoFactorSecret + TOTP | 13 |
+| N34 | 双因素认证（历史实现，v2.0 按产品范围撤下） | 13 |
 | N35 | 登录安全 LoginAttempt + IPBlocklist (5次封禁) | 11 |
 | N36 | 自定义角色 CustomRole + UserRoleAssignment | 13 |
 | N37 | 敏感操作确认 SensitiveConfirmation + token | 9 |
-| N38 | 备份恢复 (API stub) | 6 |
+| N38 | 备份恢复（当时为 Stub，v2.0 已替换） | 6 |
 | N39 | 安全扫描 SecurityScanView (8项检查) | 9 |
 
 #### N40-N47 平台化
@@ -171,7 +197,7 @@ ProjectReview, Announcement, SoftDeleteMixin(Project/Task/FinanceExpense), SubTa
 - OCR 识别 /api/v1/finance/ocr/recognize/
 - 贡献度统计 /api/v1/contributions/statistics/
 - 贡献度排行 /api/v1/contributions/leaderboard/
-- 双因素认证 /api/v1/users/2fa/
+- 双因素认证 `/api/v1/users/2fa/`（历史端点，v2.0 已撤下）
 - 登录安全 /api/v1/users/login-security/
 - 自定义角色 /api/v1/users/roles/
 - 敏感确认 /api/v1/common/confirmations/

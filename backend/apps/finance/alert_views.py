@@ -6,9 +6,9 @@
 """
 from decimal import Decimal
 
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
+from common.permissions import IsInternalTeamMember
 from common.response import success_response
 from .models import FinanceBudget
 
@@ -20,7 +20,7 @@ class FinanceAlertView(APIView):
     检查所有经费预算的使用情况
     支持按 project 筛选
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsInternalTeamMember]
 
     # 预警阈值
     WARNING_THRESHOLD = Decimal('0.8')   # 80%

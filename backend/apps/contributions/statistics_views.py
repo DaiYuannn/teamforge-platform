@@ -9,6 +9,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
 from common.response import success_response
+from common.project_access import scope_project_queryset
 from .models import Contribution
 
 
@@ -28,7 +29,11 @@ class ContributionStatisticsView(APIView):
         project_id = params.get('project')
         period = params.get('period')
 
-        queryset = Contribution.objects.all()
+        queryset = scope_project_queryset(
+            Contribution.objects.all(),
+            request.user,
+            project_lookup='project',
+        )
         if project_id:
             queryset = queryset.filter(project_id=project_id)
         if period:

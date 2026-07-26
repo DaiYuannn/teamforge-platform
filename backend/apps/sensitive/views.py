@@ -4,13 +4,16 @@
 - SensitiveAccessRequestViewSet: 访问申请 CRUD + 审批/驳回 + 我的申请 + 待审批 + 限时查看明文
 关键：敏感资料明文绝不裸露，必须审批后限时查看，每次查看必须写 OperationLog
 """
+from django.http import Http404
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.decorators import action
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
 
 from common.response import success_response, error_response
 from common.mixins import MultiSerializerMixin, MultiPermissionMixin
+from common.storage import protected_media_response
+from apps.files.audit import record_download_audit
 from .models import SensitiveData, SensitiveAccessRequest
 from .serializers import (
     SensitiveDataSerializer,
@@ -24,6 +27,7 @@ from .permissions import (
     IsSensitiveApproverOrAdmin,
     IsSensitiveDataCreator,
     HasValidAccessApproval,
+    IsInternalSensitiveMember,
 )
 from .services import SensitiveDataService
 
@@ -52,24 +56,25 @@ class SensitiveDataViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelView
     }
 
     permission_classes_by_action = {
-        'list': [IsAuthenticated],
+        'list': [IsInternalSensitiveMember],
         'retrieve': [IsSensitiveDataOwner],
         'create': [IsSensitiveDataCreator],
         'update': [IsSensitiveDataCreator],
         'partial_update': [IsSensitiveDataCreator],
         'destroy': [IsSensitiveDataCreator],
-        'my_data': [IsAuthenticated],
+        'my_data': [IsInternalSensitiveMember],
         'view': [HasValidAccessApproval],
     }
 
     def get_queryset(self):
         """管理员/敏感审批人可查看所有，普通成员仅查看自己上传的"""
-        queryset = super().get_queryset().select_related('uploader', 'project')
+        queryset = super().get_queryset().select_related(
+            'uploader', 'project', 'file_attachment',
+        )
         user = self.request.user
-        if user.global_role in ['sys_admin', 'sens_approver', 'teacher']:
+        if self.action in ['list', 'retrieve', 'view']:
             return queryset
-        # view 动作需要访问所有敏感资料（通过 request_id 校验权限）
-        if self.action == 'view':
+        if user.global_role in ['sys_admin', 'sens_approver', 'teacher']:
             return queryset
         # 普通成员仅查看自己上传的
         return queryset.filter(uploader=user)
@@ -103,7 +108,9 @@ class SensitiveDataViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelView
         我的敏感资料（脱敏）
         GET /api/v1/sensitive/data/my_data/
         """
-        queryset = SensitiveData.objects.filter(uploader=request.user).order_by('-created_at')
+        queryset = SensitiveData.objects.filter(
+            uploader=request.user
+        ).select_related('uploader', 'project', 'file_attachment').order_by('-created_at')
         page = self.paginate_queryset(queryset)
         if page is not None:
             serializer = SensitiveDataSerializer(page, many=True)
@@ -124,23 +131,18 @@ class SensitiveDataViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelView
             return error_response(message='请提供 request_id（访问申请ID）')
 
         success, result = SensitiveDataService.view_sensitive_data(
-            request_id=request_id, viewer=request.user, request=request,
+            request_id=request_id,
+            viewer=request.user,
+            request=request,
+            expected_sensitive_data_id=sensitive.id,
         )
         if not success:
             return error_response(message=result, code=1003, http_status=status.HTTP_403_FORBIDDEN)
-
-        # 校验申请对应的敏感资料与当前资源一致
-        if result['sensitive_data'].id != sensitive.id:
-            return error_response(
-                message='访问申请与敏感资料不匹配', code=1003,
-                http_status=status.HTTP_403_FORBIDDEN,
-            )
 
         return success_response(
             {'plaintext': result['plaintext']},
             message='查看成功，请注意明文保密',
         )
-
 
 # ============ 访问申请 ============
 
@@ -171,20 +173,24 @@ class SensitiveAccessRequestViewSet(MultiSerializerMixin, MultiPermissionMixin, 
     }
 
     permission_classes_by_action = {
-        'list': [IsAuthenticated],
-        'retrieve': [IsAuthenticated],
-        'create': [IsAuthenticated],
+        'list': [IsInternalSensitiveMember],
+        'retrieve': [IsInternalSensitiveMember],
+        'create': [IsInternalSensitiveMember],
         'approve': [IsSensitiveApproverOrAdmin],
         'reject': [IsSensitiveApproverOrAdmin],
-        'my_requests': [IsAuthenticated],
+        'my_requests': [IsInternalSensitiveMember],
         'pending_approve': [IsSensitiveApproverOrAdmin],
         'view_data': [HasValidAccessApproval],
+        'download_attachment': [IsInternalSensitiveMember],
     }
+    # 申请内容提交后不可通过通用 CRUD 改写，审批只能走 approve/reject。
+    http_method_names = ['get', 'post', 'head', 'options']
 
     def get_queryset(self):
         """申请人查看自己的申请，审批人查看待审批的"""
         queryset = super().get_queryset().select_related(
-            'sensitive_data', 'applicant', 'approver', 'project',
+            'sensitive_data', 'sensitive_data__file_attachment',
+            'applicant', 'approver', 'project',
         )
         user = self.request.user
         params = self.request.query_params
@@ -317,3 +323,75 @@ class SensitiveAccessRequestViewSet(MultiSerializerMixin, MultiPermissionMixin, 
             },
             message='查看成功，请在有效期内使用并注意明文保密',
         )
+
+    @action(
+        detail=True,
+        methods=['get'],
+        url_path='download-attachment',
+    )
+    def download_attachment(self, request, pk=None):
+        """
+        仅允许申请人本人依据“已批准、允许下载、未过期”的申请下载附件。
+        审批角色下载自己的资料时同样必须提交申请并获得他人审批。
+        """
+        access_request = self.get_object()
+        sensitive = access_request.sensitive_data
+
+        def denied(message, http_status=status.HTTP_403_FORBIDDEN):
+            record_download_audit(
+                request,
+                module='sensitive',
+                object_type='SensitiveAccessRequest',
+                object_id=access_request.id,
+                channel='sensitive_request',
+                is_success=False,
+                response_status=http_status,
+            )
+            return error_response(
+                message=message,
+                code=1003,
+                http_status=http_status,
+            )
+
+        if access_request.applicant_id != request.user.id:
+            return denied('仅申请人本人可下载敏感资料附件')
+        if access_request.status != SensitiveAccessRequest.Status.APPROVED:
+            return denied('申请未通过审批，无法下载附件')
+        if not access_request.is_download:
+            return denied('该申请未获下载权限')
+        if (
+            not access_request.access_expires_at
+            or timezone.now() >= access_request.access_expires_at
+        ):
+            if access_request.status == SensitiveAccessRequest.Status.APPROVED:
+                access_request.status = SensitiveAccessRequest.Status.EXPIRED
+                access_request.save(update_fields=['status'])
+            return denied('下载权限已过期，请重新申请')
+
+        attachment = sensitive.file_attachment
+        if not attachment or not attachment.file:
+            return denied(
+                '敏感资料附件不存在',
+                http_status=status.HTTP_404_NOT_FOUND,
+            )
+
+        try:
+            response = protected_media_response(
+                attachment.file.name,
+                as_attachment=True,
+                download_name=attachment.name,
+            )
+        except Http404:
+            return denied(
+                '敏感资料附件不存在',
+                http_status=status.HTTP_404_NOT_FOUND,
+            )
+
+        record_download_audit(
+            request,
+            module='sensitive',
+            object_type='SensitiveAccessRequest',
+            object_id=access_request.id,
+            channel='sensitive_request',
+        )
+        return response

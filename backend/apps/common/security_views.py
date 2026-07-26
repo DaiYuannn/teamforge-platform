@@ -8,9 +8,9 @@
 import os
 
 from django.conf import settings
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
+from common.permissions import IsTeacherOrAdmin
 from common.response import success_response
 
 
@@ -21,7 +21,7 @@ class SecurityScanView(APIView):
     返回安全检查清单及各项通过状态
     """
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsTeacherOrAdmin]
 
     def get(self, request):
         checks = []

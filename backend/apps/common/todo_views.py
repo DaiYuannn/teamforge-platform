@@ -8,6 +8,7 @@
 
 返回统一结构：type / title / url / priority / due_date / id
 """
+from django.db.models import Q
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
@@ -45,13 +46,17 @@ class UnifiedTodoView(APIView):
 
         # 3. 待审批敏感资料申请（审批人角色）
         if not filter_type or filter_type == 'approval':
-            if user.global_role in ('sens_approver', 'sys_admin'):
+            if user.global_role in ('sens_approver', 'teacher', 'sys_admin'):
                 todos.extend(self._collect_sensitive_approvals(user))
 
-        # 4. 待审核贡献记录（老师/管理员）
+        # 4. 待审核贡献：老师/管理员看全部，负责人看自己负责项目。
         if not filter_type or filter_type == 'contribution_review':
-            if user.global_role in ('teacher', 'sys_admin'):
+            if user.global_role in ('teacher', 'sys_admin') or user.led_projects.exists():
                 todos.extend(self._collect_contribution_reviews(user))
+
+        # 5. 知识产权流程待办
+        if not filter_type or filter_type == 'ip_todo':
+            todos.extend(self._collect_ip_todos(user))
 
         # 按优先级降序、截止时间升序排序
         todos.sort(
@@ -75,9 +80,16 @@ class UnifiedTodoView(APIView):
         from apps.tasks.models import Task
 
         todos = []
-        qs = Task.objects.filter(
-            assignee=user,
-        ).exclude(status__in=_TASK_DONE_STATUSES).select_related('project')
+        qs = (
+            Task.objects.filter(
+                Q(assignee=user)
+                | Q(collaborators=user)
+                | Q(reviewer=user, status=Task.Status.PENDING_REVIEW)
+            )
+            .exclude(status__in=_TASK_DONE_STATUSES)
+            .select_related('project')
+            .distinct()
+        )
 
         for task in qs:
             is_overdue = task.is_overdue
@@ -89,11 +101,28 @@ class UnifiedTodoView(APIView):
                 'id': task.id,
                 'type': item_type,
                 'title': task.title,
-                'url': f'/api/v1/tasks/{task.id}/',
+                'url': (
+                    f'/tasks?project_id={task.project_id}'
+                    f'&task_id={task.id}'
+                ),
+                'route_name': 'TaskList',
+                'route_params': {},
+                'route_query': {
+                    'project_id': task.project_id,
+                    'task_id': task.id,
+                },
                 'priority': task.priority,
                 'due_date': task.deadline.isoformat() if task.deadline else None,
                 'project_id': task.project_id,
                 'project_name': task.project.name,
+                'task_role': (
+                    'reviewer'
+                    if task.reviewer_id == user.id
+                    and task.status == Task.Status.PENDING_REVIEW
+                    else 'assignee'
+                    if task.assignee_id == user.id
+                    else 'collaborator'
+                ),
             })
         return todos
 
@@ -111,7 +140,10 @@ class UnifiedTodoView(APIView):
                 'id': req.id,
                 'type': 'approval',
                 'title': f'待审批：{req.applicant.name} 申请访问 {req.sensitive_data.title}',
-                'url': f'/api/v1/sensitive/requests/{req.id}/',
+                'url': f'/sensitive/pending?request_id={req.id}',
+                'route_name': 'SensitivePending',
+                'route_params': {},
+                'route_query': {'request_id': req.id},
                 'priority': 'high',
                 'due_date': req.created_at.isoformat() if req.created_at else None,
                 'applicant_id': req.applicant_id,
@@ -126,15 +158,73 @@ class UnifiedTodoView(APIView):
         qs = Contribution.objects.filter(
             status=Contribution.Status.PENDING,
         ).select_related('user', 'project')
+        if user.global_role not in ('teacher', 'sys_admin'):
+            qs = qs.filter(project__leader=user)
 
         for contrib in qs:
             todos.append({
                 'id': contrib.id,
                 'type': 'contribution_review',
                 'title': f'待审核贡献：{contrib.user.name} - {contrib.get_contribution_type_display()}',
-                'url': f'/api/v1/contributions/contributions/{contrib.id}/',
+                'url': (
+                    f'/contributions/pending?project_id={contrib.project_id}'
+                    f'&contribution_id={contrib.id}'
+                ),
+                'route_name': 'PendingContributions',
+                'route_params': {},
+                'route_query': {
+                    'project_id': contrib.project_id,
+                    'contribution_id': contrib.id,
+                },
                 'priority': 'medium',
                 'due_date': contrib.created_at.isoformat() if contrib.created_at else None,
                 'project_id': contrib.project_id,
+            })
+        return todos
+
+    def _collect_ip_todos(self, user):
+        """采集当前用户真正需要处理的知识产权流程事项。"""
+        from apps.intellectual_property.permissions import accessible_ip_applications
+
+        queryset = accessible_ip_applications(user)
+        conditions = (
+            Q(main_writer=user, status='writing')
+            | Q(project_reviewer=user, status='leader_review')
+            | Q(related_project__leader=user, status='leader_review')
+            | Q(teacher_confirmer=user, status='teacher_confirm')
+            | Q(applicant_executor=user, status__in=['returned', 'modifying'])
+            | Q(main_writer=user, status__in=['returned', 'modifying'])
+        )
+        if user.global_role in ('teacher', 'sys_admin'):
+            conditions |= Q(
+                status__in=['teacher_confirm', 'research_office_review'],
+            )
+
+        todos = []
+        for application in (
+            queryset.filter(conditions)
+            .select_related('related_project')
+            .distinct()
+        ):
+            high_priority = application.status in {
+                'leader_review', 'teacher_confirm', 'returned',
+            }
+            todos.append({
+                'id': application.id,
+                'type': 'ip_todo',
+                'title': f'知识产权待办：{application.title}',
+                'url': f'/intellectual-property/{application.id}',
+                'route_name': 'IPApplicationDetail',
+                'route_params': {'id': application.id},
+                'route_query': {},
+                'priority': 'high' if high_priority else 'medium',
+                'due_date': None,
+                'project_id': application.related_project_id,
+                'project_name': (
+                    application.related_project.name
+                    if application.related_project_id else ''
+                ),
+                'status': application.status,
+                'status_display': application.get_status_display(),
             })
         return todos

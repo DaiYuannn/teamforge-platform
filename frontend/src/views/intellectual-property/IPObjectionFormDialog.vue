@@ -31,7 +31,7 @@
         />
       </el-form-item>
 
-      <el-form-item label="证明材料" prop="proof_file">
+      <el-form-item label="证明材料">
         <el-upload
           :auto-upload="false"
           :limit="1"
@@ -54,7 +54,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, watch } from 'vue'
+import { ref, reactive, computed } from 'vue'
 import { ElMessage, type FormInstance, type FormRules, type UploadFile } from 'element-plus'
 import { createIPObjection } from '@/api/intellectualProperty'
 import { IP_OBJECTION_TYPE_MAP } from '@/utils/constants'
@@ -120,8 +120,8 @@ async function handleSubmit(): Promise<void> {
         const formData = new FormData()
         formData.append('objection_type', form.objection_type)
         formData.append('content', form.content)
-        formData.append('proof_file', proofFile.value)
-        await createIPObjection(props.applicationId, formData as any)
+        formData.append('proof_upload', proofFile.value)
+        await createIPObjection(props.applicationId, formData)
       } else {
         await createIPObjection(props.applicationId, { ...form })
       }

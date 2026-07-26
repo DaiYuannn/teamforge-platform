@@ -1,42 +1,64 @@
 <template>
   <el-dialog
     v-model="dialogVisible"
-    title="敏感资料查看"
-    width="500px"
+    title="安全查看敏感资料"
+    width="560px"
     :close-on-click-modal="false"
     @open="handleOpen"
     @close="handleClose"
   >
     <div v-loading="loading" class="view-content">
-      <!-- 倒计时提醒 -->
-      <el-alert v-if="remainingSeconds > 0" type="warning" :closable="false" show-icon class="countdown-alert">
-        剩余查看时间：{{ formatCountdown }}
-      </el-alert>
-      <el-alert v-if="remainingSeconds <= 0 && viewData" type="error" :closable="false" show-icon class="countdown-alert">
-        查看时间已到，明文已自动隐藏
-      </el-alert>
-      <el-descriptions v-if="viewData" :column="1" border>
-        <el-descriptions-item label="资料名称">{{ viewData.sensitive_data_title || viewData.title || viewData.label || '暂无名称' }}</el-descriptions-item>
-        <el-descriptions-item label="资料类型">
-          <el-tag :type="SENSITIVE_DATA_TYPE_MAP[viewData.data_type]?.tagType as any" size="small">
-            {{ viewData.data_type_display || SENSITIVE_DATA_TYPE_MAP[viewData.data_type]?.label || viewData.data_type || '未知' }}
-          </el-tag>
-        </el-descriptions-item>
-        <el-descriptions-item label="有效期">
-          {{ viewData.access_expires_at ? formatDate(viewData.access_expires_at) : '以审批有效期为准' }}
-        </el-descriptions-item>
-        <el-descriptions-item label="明文内容">
-          <!-- 明文显示区域：带遮罩效果 -->
-          <div class="plain-value-wrapper">
-            <div v-if="!revealed" class="plain-value-mask" @click="revealed = true">
-              <el-icon size="20"><View /></el-icon>
-              <span>点击查看明文</span>
-            </div>
-            <span v-if="revealed && canViewPlaintext" class="plain-value">{{ viewData.plaintext || viewData.plain_value || viewData.value }}</span>
-            <span v-if="revealed && !canViewPlaintext" class="plain-value-expired">查看时间已到</span>
+      <div v-if="viewData" class="security-status" :class="{ 'is-expired': !canViewPlaintext }">
+        <el-icon><Timer /></el-icon>
+        <div>
+          <span>{{ canViewPlaintext ? '授权剩余时间' : '授权已失效' }}</span>
+          <strong>{{ canViewPlaintext ? formatCountdown : '00:00' }}</strong>
+        </div>
+      </div>
+
+      <div v-if="viewData" class="view-record">
+        <dl class="record-meta">
+          <div>
+            <dt>资料名称</dt>
+            <dd>{{ viewData.sensitive_data_title || viewData.title || viewData.label || '暂无名称' }}</dd>
           </div>
-        </el-descriptions-item>
-      </el-descriptions>
+          <div>
+            <dt>资料类型</dt>
+            <dd>
+              <el-tag :type="SENSITIVE_DATA_TYPE_MAP[viewData.data_type]?.tagType as any" size="small" effect="plain">
+                {{ viewData.data_type_display || SENSITIVE_DATA_TYPE_MAP[viewData.data_type]?.label || viewData.data_type || '未知' }}
+              </el-tag>
+            </dd>
+          </div>
+          <div class="meta-wide">
+            <dt>授权截止</dt>
+            <dd>{{ viewExpiresAt ? formatDateTime(viewExpiresAt) : '以审批有效期为准' }}</dd>
+          </div>
+        </dl>
+
+        <section class="plaintext-panel" :class="{ 'is-revealed': revealed && canViewPlaintext }">
+          <div class="plaintext-heading">
+            <div>
+              <span>明文内容</span>
+              <small>关闭窗口后将重新验证授权</small>
+            </div>
+            <el-tag v-if="revealed && canViewPlaintext" type="danger" size="small" effect="plain">明文已显示</el-tag>
+          </div>
+
+          <button
+            v-if="!revealed"
+            class="reveal-button"
+            type="button"
+            :disabled="!canViewPlaintext"
+            @click="revealed = true"
+          >
+            <el-icon><View /></el-icon>
+            <span>{{ canViewPlaintext ? '显示明文' : '授权已过期' }}</span>
+          </button>
+          <code v-else-if="canViewPlaintext" class="plain-value">{{ plaintextValue }}</code>
+          <span v-else class="plain-value-expired">查看时间已到，明文已隐藏</span>
+        </section>
+      </div>
     </div>
     <template #footer>
       <el-button @click="dialogVisible = false">关闭</el-button>
@@ -47,9 +69,10 @@
 <script setup lang="ts">
 import { ref, computed, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
+import { Timer, View } from '@element-plus/icons-vue'
 import { viewSensitiveData, viewAccessRequestData } from '@/api/sensitive'
 import { SENSITIVE_DATA_TYPE_MAP } from '@/utils/constants'
-import { formatDate } from '@/utils/format'
+import { formatDateTime } from '@/utils/format'
 import type { SensitiveAccessRequest } from '@/types'
 
 /**
@@ -87,11 +110,19 @@ const canViewPlaintext = computed(() => {
   return false
 })
 
+const plaintextValue = computed(() => {
+  return viewData.value?.plaintext || viewData.value?.plain_value || viewData.value?.value || '-'
+})
+
+const viewExpiresAt = computed<string | undefined>(() => {
+  return viewData.value?.access_expires_at || viewData.value?.expires_at
+})
+
 // 格式化倒计时
 const formatCountdown = computed(() => {
   const m = Math.floor(remainingSeconds.value / 60)
   const s = remainingSeconds.value % 60
-  return `${m}分${s}秒`
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
 })
 
 // 打开弹窗
@@ -112,10 +143,16 @@ async function loadViewData(): Promise<void> {
       // 直接查看自己的资料
       res = await viewSensitiveData(viewData.value.id)
     }
+    if (!res) {
+      ElMessage.error('缺少有效的访问授权')
+      dialogVisible.value = false
+      return
+    }
     viewData.value = res
     // 根据后端返回的 access_expires_at 计算剩余秒数
-    if (res?.access_expires_at) {
-      const expires = new Date(res.access_expires_at).getTime()
+    const expiresAt = res?.access_expires_at || res?.expires_at
+    if (expiresAt) {
+      const expires = new Date(expiresAt).getTime()
       const now = Date.now()
       const diff = Math.floor((expires - now) / 1000)
       remainingSeconds.value = diff > 0 ? diff : 0
@@ -160,57 +197,193 @@ onUnmounted(() => {
 
 <style lang="scss" scoped>
 .view-content {
-  min-height: 100px;
+  min-height: 160px;
 }
 
-.countdown-alert {
-  margin-bottom: 16px;
-}
-
-/* 明文显示区域：遮罩效果 */
-.plain-value-wrapper {
-  position: relative;
-  min-height: 40px;
+.security-status {
   display: flex;
+  margin-bottom: 16px;
+  padding: 12px 14px;
   align-items: center;
+  gap: 12px;
+  background: var(--warning-light);
+  border: 1px solid rgba(166, 97, 22, 0.28);
+  border-radius: var(--radius-sm);
+}
 
-  .plain-value {
-    font-size: 16px;
-    font-weight: 600;
-    color: #f56c6c;
-    letter-spacing: 1px;
-    word-break: break-all;
+.security-status.is-expired {
+  background: var(--danger-light);
+  border-color: rgba(182, 66, 66, 0.28);
+}
+
+.security-status > .el-icon {
+  flex: 0 0 auto;
+  color: var(--color-warning);
+  font-size: 21px;
+}
+
+.security-status.is-expired > .el-icon {
+  color: var(--color-danger);
+}
+
+.security-status > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.security-status span {
+  color: var(--color-text-muted);
+  font-size: 11px;
+}
+
+.security-status strong {
+  color: var(--color-warning);
+  font-family: 'Cascadia Code', Consolas, monospace;
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+}
+
+.security-status.is-expired strong {
+  color: var(--color-danger);
+}
+
+.view-record {
+  min-width: 0;
+}
+
+.record-meta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 18px;
+  padding: 14px;
+  background: var(--color-surface-subtle);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-sm);
+}
+
+.record-meta .meta-wide {
+  grid-column: 1 / -1;
+}
+
+.record-meta dt {
+  margin-bottom: 4px;
+  color: var(--color-text-muted);
+  font-size: 11px;
+}
+
+.record-meta dd {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--color-text);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.plaintext-panel {
+  margin-top: 14px;
+  padding: 14px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+.plaintext-panel.is-revealed {
+  background: var(--danger-light);
+  border-color: rgba(182, 66, 66, 0.34);
+}
+
+.plaintext-heading {
+  display: flex;
+  margin-bottom: 12px;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.plaintext-heading > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.plaintext-heading span {
+  color: var(--color-text);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.plaintext-heading small {
+  color: var(--color-text-muted);
+  font-size: 11px;
+}
+
+.reveal-button {
+  display: flex;
+  width: 100%;
+  min-height: 64px;
+  padding: 12px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--color-primary);
+  font: inherit;
+  font-weight: 600;
+  background: var(--color-primary-soft);
+  border: 1px dashed rgba(23, 107, 115, 0.42);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.reveal-button:hover:not(:disabled) {
+  background: #dcecea;
+  border-color: var(--color-primary);
+}
+
+.reveal-button:disabled {
+  color: var(--color-text-muted);
+  background: var(--color-surface-subtle);
+  border-color: var(--color-border);
+  cursor: not-allowed;
+}
+
+.plain-value {
+  display: block;
+  min-height: 64px;
+  padding: 18px 14px;
+  overflow-wrap: anywhere;
+  color: var(--color-danger);
+  font-family: 'Cascadia Code', Consolas, monospace;
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1.55;
+  background: var(--color-surface);
+  border: 1px solid rgba(182, 66, 66, 0.22);
+  border-radius: var(--radius-sm);
+}
+
+.plain-value-expired {
+  display: block;
+  padding: 18px 14px;
+  color: var(--color-text-muted);
+  font-size: 13px;
+  text-align: center;
+  background: var(--color-surface-subtle);
+  border-radius: var(--radius-sm);
+}
+
+@media screen and (max-width: 520px) {
+  .record-meta {
+    grid-template-columns: 1fr;
   }
 
-  .plain-value-expired {
-    font-size: 14px;
-    color: #c0c4cc;
-  }
-
-  /* 遮罩层：点击后揭示明文 */
-  .plain-value-mask {
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: linear-gradient(135deg, #f5f7fa, #e4e7ed);
-    border-radius: 4px;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 4px;
-    cursor: pointer;
-    color: #909399;
-    font-size: 13px;
-    transition: all 0.2s;
-    backdrop-filter: blur(4px);
-
-    &:hover {
-      background: linear-gradient(135deg, #ecf5ff, #d9ecff);
-      color: #409eff;
-    }
+  .record-meta .meta-wide {
+    grid-column: 1;
   }
 }
 </style>

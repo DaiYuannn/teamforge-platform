@@ -32,6 +32,34 @@ class TestMyProfile:
         assert 'is_student' in data
         assert 'grade' in data
         assert 'major' in data
+        assert data['membership_status'] == member_client.user.membership_status
+        assert 'team_joined_at' in data
+        assert 'team_left_at' in data
+        assert 'is_active' in data
+        assert 'date_joined' in data
+        assert 'last_login' in data
+
+    def test_external_membership_status_survives_profile_refresh(self, member_client):
+        member_client.user.membership_status = 'external'
+        member_client.user.save(update_fields=['membership_status'])
+
+        resp = member_client.get('/api/v1/users/me/')
+
+        assert resp.status_code == 200
+        assert extract_data(resp)['membership_status'] == 'external'
+
+    def test_membership_status_is_read_only(self, member_client):
+        original_status = member_client.user.membership_status
+
+        resp = member_client.patch(
+            '/api/v1/users/me/',
+            {'membership_status': 'external'},
+            format='json',
+        )
+
+        assert resp.status_code == 200
+        member_client.user.refresh_from_db()
+        assert member_client.user.membership_status == original_status
 
     def test_update_name(self, member_client):
         """修改姓名"""

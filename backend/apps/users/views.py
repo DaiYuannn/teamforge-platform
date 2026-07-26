@@ -10,15 +10,19 @@ from rest_framework.response import Response
 from rest_framework.generics import RetrieveUpdateAPIView
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.decorators import action
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import authenticate
+from django.db import transaction
+from django.utils import timezone
 
 from common.response import success_response, error_response
 from common.mixins import MultiSerializerMixin, MultiPermissionMixin
-from .models import User
+from .models import User, UserLifecycleEvent
 from .serializers import (
     UserSerializer, UserListSerializer, UserCreateSerializer,
     UserUpdateSerializer, MyProfileSerializer, LoginSerializer,
+    UserLifecycleEventSerializer,
 )
 from .permissions import IsUserManager, IsSelfOrAdmin
 from .login_security_services import (
@@ -33,6 +37,7 @@ class UserViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet):
     - create/update/destroy: 仅管理员
     """
     queryset = User.objects.all().order_by('-date_joined')
+    permission_classes = [IsUserManager]
 
     serializer_classes_by_action = {
         'list': UserListSerializer,
@@ -51,7 +56,9 @@ class UserViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet):
         'destroy': [IsUserManager],
     }
 
-    filterset_fields = ['global_role', 'is_student', 'is_active', 'grade', 'major']
+    filterset_fields = [
+        'global_role', 'membership_status', 'is_student', 'is_active', 'grade', 'major'
+    ]
     search_fields = ['username', 'email', 'name', 'phone']
     ordering_fields = ['date_joined', 'name', 'email']
 
@@ -60,6 +67,13 @@ class UserViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         user = serializer.save()
+        UserLifecycleEvent.objects.create(
+            user=user,
+            event_type=UserLifecycleEvent.EventType.CREATED,
+            to_status=user.membership_status,
+            to_role=user.global_role,
+            operator=request.user,
+        )
         return success_response(
             UserSerializer(user).data,
             message='用户创建成功',
@@ -70,19 +84,185 @@ class UserViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet):
         """更新用户"""
         partial = kwargs.pop('partial', False)
         instance = self.get_object()
+        old_role = instance.global_role
+        old_status = instance.membership_status
         serializer = self.get_serializer(instance, data=request.data, partial=partial)
         serializer.is_valid(raise_exception=True)
         user = serializer.save()
+        if old_role != user.global_role or old_status != user.membership_status:
+            UserLifecycleEvent.objects.create(
+                user=user,
+                event_type=(
+                    UserLifecycleEvent.EventType.ROLE_CHANGED
+                    if old_role != user.global_role and old_status == user.membership_status
+                    else UserLifecycleEvent.EventType.STATUS_CHANGED
+                ),
+                from_status=old_status,
+                to_status=user.membership_status,
+                from_role=old_role,
+                to_role=user.global_role,
+                operator=request.user,
+            )
         return success_response(UserSerializer(user).data, message='用户更新成功')
 
+    @transaction.atomic
     def destroy(self, request, *args, **kwargs):
-        """删除用户"""
+        """成员退出团队：停用账号但保留全部历史数据。"""
         instance = self.get_object()
-        # 不允许删除自己
         if instance.id == request.user.id:
             return error_response(message='不能删除当前登录用户', code=1007)
-        instance.delete()
-        return success_response(message='用户删除成功')
+        self._transition_membership(
+            instance,
+            status_value=User.MembershipStatus.EXITED,
+            reason=request.data.get('reason', '管理员执行离队'),
+            handover_to_id=request.data.get('handover_to'),
+            handover_notes=request.data.get('handover_notes', ''),
+            operator=request.user,
+        )
+        return success_response(message='成员已离队，账号及历史记录已保留')
+
+    @action(detail=True, methods=['post'])
+    @transaction.atomic
+    def transition(self, request, pk=None):
+        """变更成员生命周期状态，并同步团队/项目中的活动关系。"""
+        user = self.get_object()
+        if user.id == request.user.id and request.data.get('status') == User.MembershipStatus.EXITED:
+            return error_response(message='不能将当前登录用户设为离队', code=1007)
+        status_value = request.data.get('status')
+        if status_value not in User.MembershipStatus.values:
+            return error_response(
+                message=f'成员状态不合法，可选值：{list(User.MembershipStatus.values)}',
+                code=1001,
+            )
+        self._transition_membership(
+            user,
+            status_value=status_value,
+            reason=request.data.get('reason', ''),
+            handover_to_id=request.data.get('handover_to'),
+            handover_notes=request.data.get('handover_notes', ''),
+            operator=request.user,
+        )
+        return success_response(UserSerializer(user).data, message='成员状态已更新')
+
+    @action(detail=True, methods=['get'])
+    def lifecycle(self, request, pk=None):
+        user = self.get_object()
+        records = user.lifecycle_events.select_related('operator', 'handover_to').all()
+        return success_response(UserLifecycleEventSerializer(records, many=True).data)
+
+    @staticmethod
+    def _transition_membership(user, status_value, reason, handover_to_id, handover_notes, operator):
+        handover_to = None
+        if handover_to_id:
+            handover_to = User.objects.exclude(pk=user.pk).filter(pk=handover_to_id).first()
+            if handover_to is None:
+                from rest_framework.exceptions import ValidationError
+                raise ValidationError({'handover_to': '交接人不存在或不能是本人'})
+
+        old_status = user.membership_status
+        user.membership_status = status_value
+        user.exit_reason = reason if status_value == User.MembershipStatus.EXITED else ''
+        user.handover_to = handover_to
+        user.handover_notes = handover_notes
+        if status_value == User.MembershipStatus.EXITED:
+            user.team_left_at = timezone.now()
+            user.is_active = False
+        elif status_value == User.MembershipStatus.ACTIVE:
+            user.team_left_at = None
+            user.is_active = True
+        user.save()
+
+        event_type = (
+            UserLifecycleEvent.EventType.REACTIVATED
+            if old_status == User.MembershipStatus.EXITED and status_value == User.MembershipStatus.ACTIVE
+            else UserLifecycleEvent.EventType.STATUS_CHANGED
+        )
+        UserLifecycleEvent.objects.create(
+            user=user,
+            event_type=event_type,
+            from_status=old_status,
+            to_status=status_value,
+            from_role=user.global_role,
+            to_role=user.global_role,
+            reason=reason,
+            handover_to=handover_to,
+            handover_notes=handover_notes,
+            operator=operator,
+        )
+
+        # 退出时保留关系行，只把当前活动关系标为退出并写入各自历史。
+        if status_value == User.MembershipStatus.EXITED:
+            from apps.common.team_models import TeamMember, TeamMembershipEvent
+            from apps.projects.models import ProjectMember, ProjectMembershipEvent
+
+            for membership in TeamMember.objects.filter(user=user, status=TeamMember.Status.ACTIVE):
+                target = (
+                    TeamMember.objects.filter(
+                        team=membership.team,
+                        user=handover_to,
+                        status=TeamMember.Status.ACTIVE,
+                    ).first()
+                    if handover_to else None
+                )
+                membership.status = TeamMember.Status.EXITED
+                membership.left_at = timezone.now()
+                membership.exit_reason = reason
+                membership.handover_to = target
+                membership.handover_notes = handover_notes
+                membership.save()
+                TeamMembershipEvent.objects.create(
+                    membership=membership,
+                    event_type='exited',
+                    from_role=membership.role,
+                    to_role=membership.role,
+                    from_status=TeamMember.Status.ACTIVE,
+                    to_status=TeamMember.Status.EXITED,
+                    reason=reason,
+                    handover_to=target,
+                    handover_notes=handover_notes,
+                    operator=operator,
+                )
+
+            for membership in ProjectMember.objects.filter(
+                user=user, status=ProjectMember.Status.ACTIVE
+            ):
+                target = (
+                    ProjectMember.objects.filter(
+                        project=membership.project,
+                        user=handover_to,
+                        status=ProjectMember.Status.ACTIVE,
+                    ).first()
+                    if handover_to else None
+                )
+                # 项目负责人不能悄悄离队：必须先把项目负责人转给交接人。
+                if membership.project.leader_id == user.id:
+                    if target is None:
+                        from rest_framework.exceptions import ValidationError
+                        raise ValidationError({
+                            'handover_to': f'成员负责项目“{membership.project.name}”，需指定该项目中的活动成员进行交接'
+                        })
+                    membership.project.leader = handover_to
+                    membership.project.save(update_fields=['leader', 'updated_at'])
+                    target.role_in_project = ProjectMember.RoleInProject.LEADER
+                    target.save(update_fields=['role_in_project'])
+                membership.status = ProjectMember.Status.EXITED
+                membership.exited_at = timezone.now()
+                membership.exit_reason = reason
+                membership.handover_to = target
+                membership.handover_notes = handover_notes
+                membership.save()
+                ProjectMembershipEvent.objects.create(
+                    membership=membership,
+                    event_type=ProjectMembershipEvent.EventType.EXITED,
+                    from_role=membership.role_in_project,
+                    to_role=membership.role_in_project,
+                    from_status=ProjectMember.Status.ACTIVE,
+                    to_status=ProjectMember.Status.EXITED,
+                    reason=reason,
+                    handover_to=target,
+                    handover_notes=handover_notes,
+                    operator=operator,
+                )
 
 
 class MyProfileView(RetrieveUpdateAPIView):
@@ -157,12 +337,15 @@ class LoginView(APIView):
             return error_response(message='邮箱或密码错误', code=1001,
                                   http_status=status.HTTP_401_UNAUTHORIZED)
 
-        if not user.is_active:
+        if (
+            not user.is_active
+            or user.membership_status == User.MembershipStatus.EXITED
+        ):
             record_login_attempt(
                 email=email, ip_address=ip_address, user_agent=user_agent,
-                is_success=False, failure_reason='账号已禁用',
+                is_success=False, failure_reason='账号已禁用或已退出团队',
             )
-            return error_response(message='账号已被禁用，请联系管理员', code=1002,
+            return error_response(message='账号已退出团队或已被禁用，请联系管理员', code=1002,
                                   http_status=status.HTTP_403_FORBIDDEN)
 
         # 登录成功，记录成功尝试

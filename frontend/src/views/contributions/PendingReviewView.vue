@@ -1,64 +1,112 @@
 <template>
-  <div class="page-container">
-    <PageHeader title="待我审核" subtitle="审核项目成员提交的贡献记录" />
+  <div class="page-container pending-review-page">
+    <PageHeader title="待我审核" subtitle="处理负责项目中的成员贡献记录" />
 
-    <!-- PC端表格 -->
-    <div v-if="!isMobile" class="card mt-16">
-      <el-table v-loading="loading" :data="pendingList" border stripe>
+    <el-alert
+      v-if="projectFilter"
+      :title="`当前仅显示项目 #${projectFilter} 的待审核贡献`"
+      type="info"
+      :closable="true"
+      show-icon
+      @close="clearProjectFilter"
+    />
+
+    <section class="review-summary" aria-label="待审核贡献摘要">
+      <div>
+        <span>待处理</span>
+        <strong :class="{ 'is-warning': pendingList.length > 0 }">{{ pendingList.length }}</strong>
+      </div>
+      <dl>
+        <div>
+          <dt>涉及项目</dt>
+          <dd>{{ projectCount }}</dd>
+        </div>
+        <div>
+          <dt>提交成员</dt>
+          <dd>{{ memberCount }}</dd>
+        </div>
+      </dl>
+    </section>
+
+    <el-alert
+      v-if="loadFailed"
+      class="load-alert"
+      title="待审核贡献暂时无法加载"
+      type="error"
+      :closable="false"
+      show-icon
+    >
+      <template #default>
+        <el-button link type="primary" @click="loadData">重新加载</el-button>
+      </template>
+    </el-alert>
+
+    <section v-loading="loading" class="review-surface" aria-label="待审核贡献列表">
+      <el-table v-if="!isMobile" :data="pendingList" table-layout="fixed">
         <template #empty>
-          <EmptyState text="暂无待审核贡献" description="所有贡献记录均已审核完毕" accent="#36CFC9" />
+          <EmptyState
+            v-if="!loading"
+            text="暂无待审核贡献"
+            description="当前负责项目的贡献均已处理"
+          />
         </template>
-        <el-table-column prop="project_name" label="项目" min-width="150" show-overflow-tooltip>
-          <template #default="{ row }">
-            <span class="contribution-summary">{{ row.project_name }}</span>
+        <el-table-column label="状态" width="86">
+          <template #default>
+            <span class="pending-status"><i />待审核</span>
           </template>
         </el-table-column>
-        <el-table-column prop="user_name" label="成员" width="100" />
-        <el-table-column prop="contribution_type" label="贡献类型" width="120">
+        <el-table-column label="项目 / 成员" min-width="190">
           <template #default="{ row }">
-            <el-tag :type="CONTRIBUTION_TYPE_MAP[row.contribution_type]?.tagType as any" size="small">
-              {{ CONTRIBUTION_TYPE_MAP[row.contribution_type]?.label || row.contribution_type }}
+            <div class="submitter-cell">
+              <strong>{{ row.project_name || '-' }}</strong>
+              <span>{{ row.user_name || '-' }}</span>
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column label="贡献类型" width="116">
+          <template #default="{ row }">
+            <el-tag :type="typeTagType(row.contribution_type) as any" size="small" effect="plain">
+              {{ typeLabel(row.contribution_type) }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="content" label="贡献内容" min-width="200" show-overflow-tooltip>
-          <template #default="{ row }">
-            <span class="contribution-detail">{{ row.content }}</span>
-          </template>
+        <el-table-column prop="content" label="贡献内容" min-width="260" show-overflow-tooltip />
+        <el-table-column label="提交时间" width="118">
+          <template #default="{ row }">{{ displayDate(row.created_at) }}</template>
         </el-table-column>
-        <el-table-column prop="created_at" label="填写时间" width="120">
-          <template #default="{ row }">{{ formatDate(row.created_at) }}</template>
-        </el-table-column>
-        <el-table-column label="操作" width="90" fixed="right">
+        <el-table-column label="操作" width="92" fixed="right" align="right">
           <template #default="{ row }">
-            <el-button type="primary" link @click="handleReview(row as any)">审核</el-button>
+            <el-button type="primary" link :icon="EditPen" @click="handleReview(row as Contribution)">
+              审核
+            </el-button>
           </template>
         </el-table-column>
       </el-table>
-    </div>
 
-    <!-- 移动端卡片列表 -->
-    <div v-else v-loading="loading" class="mobile-list">
-      <EmptyState v-if="pendingList.length === 0" text="暂无待审核贡献" description="所有贡献记录均已审核完毕" accent="#36CFC9" :compact="true" />
-      <el-card v-for="item in pendingList" :key="item.id" class="mobile-card" shadow="hover">
-        <div class="mobile-card-header">
-          <span class="mobile-card-title contribution-summary">{{ item.project_name }}</span>
-          <el-tag :type="CONTRIBUTION_TYPE_MAP[item.contribution_type]?.tagType as any" size="small">
-            {{ CONTRIBUTION_TYPE_MAP[item.contribution_type]?.label || item.contribution_type }}
-          </el-tag>
-        </div>
-        <div class="mobile-card-body">
-          <div class="mobile-card-row"><span class="label">成员：</span><span>{{ item.user_name }}</span></div>
-          <div class="mobile-card-row"><span class="contribution-detail">{{ item.content }}</span></div>
-          <div class="mobile-card-row"><span class="label">填写时间：</span><span>{{ formatDate(item.created_at) }}</span></div>
-        </div>
-        <div class="mobile-card-actions">
-          <el-button type="primary" link size="small" @click="handleReview(item as any)">审核</el-button>
-        </div>
-      </el-card>
-    </div>
+      <div v-else class="mobile-review-list">
+        <EmptyState
+          v-if="!loading && pendingList.length === 0"
+          text="暂无待审核贡献"
+          description="当前负责项目的贡献均已处理"
+          compact
+        />
+        <article v-for="item in pendingList" :key="item.id" class="review-card">
+          <header>
+            <div>
+              <strong>{{ item.project_name || '-' }}</strong>
+              <span>{{ item.user_name || '-' }} · {{ typeLabel(item.contribution_type) }}</span>
+            </div>
+            <span class="pending-status"><i />待审核</span>
+          </header>
+          <p>{{ item.content }}</p>
+          <footer>
+            <span>{{ displayDate(item.created_at) }}</span>
+            <el-button type="primary" :icon="EditPen" @click="handleReview(item)">审核</el-button>
+          </footer>
+        </article>
+      </div>
+    </section>
 
-    <!-- 审核弹窗 -->
     <ContributionReviewDialog
       v-model:visible="reviewDialogVisible"
       :contribution="reviewingContribution"
@@ -68,95 +116,299 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { computed, onMounted, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { EditPen } from '@element-plus/icons-vue'
 import { getPendingReview } from '@/api/contributions'
 import { formatDate } from '@/utils/format'
 import { CONTRIBUTION_TYPE_MAP } from '@/utils/constants'
 import { useDevice } from '@/composables/useDevice'
-import PageHeader from '@/components/PageHeader.vue'
-import EmptyState from '@/components/EmptyState.vue'
-import ContributionReviewDialog from './ContributionReviewDialog.vue'
 import type { Contribution } from '@/types'
+import EmptyState from '@/components/EmptyState.vue'
+import PageHeader from '@/components/PageHeader.vue'
+import ContributionReviewDialog from './ContributionReviewDialog.vue'
 
 const { isMobile } = useDevice()
-
+const route = useRoute()
+const router = useRouter()
+const projectFilter = computed(() => {
+  const value = Number(route.query.project_id)
+  return Number.isInteger(value) && value > 0 ? value : undefined
+})
+const requestedContributionId = computed(() => {
+  const value = Number(route.query.contribution_id)
+  return Number.isInteger(value) && value > 0 ? value : undefined
+})
 const loading = ref(false)
+const loadFailed = ref(false)
 const pendingList = ref<Contribution[]>([])
 const reviewDialogVisible = ref(false)
 const reviewingContribution = ref<Contribution | null>(null)
+const projectCount = computed(
+  () => new Set(pendingList.value.map((item) => item.project)).size,
+)
+const memberCount = computed(
+  () => new Set(pendingList.value.map((item) => item.user)).size,
+)
 
-// 加载数据
+function typeLabel(type: string): string {
+  return CONTRIBUTION_TYPE_MAP[type]?.label || type
+}
+
+function typeTagType(type: string): string {
+  return CONTRIBUTION_TYPE_MAP[type]?.tagType || 'info'
+}
+
+function displayDate(value?: string | null): string {
+  return value ? formatDate(value) : '-'
+}
+
 async function loadData(): Promise<void> {
   loading.value = true
+  loadFailed.value = false
   try {
-    const res: any = await getPendingReview()
-    pendingList.value = Array.isArray(res) ? res : (res.results || [])
+    pendingList.value = await getPendingReview(
+      projectFilter.value ? { project: projectFilter.value } : {},
+    )
+    if (requestedContributionId.value) {
+      const contribution = pendingList.value.find(
+        (item) => item.id === requestedContributionId.value,
+      )
+      if (contribution) handleReview(contribution)
+      await router.replace({
+        path: '/contributions/pending',
+        query: projectFilter.value
+          ? { project_id: String(projectFilter.value) }
+          : {},
+      })
+    }
   } catch {
-    // 错误已由拦截器处理
+    loadFailed.value = true
   } finally {
     loading.value = false
   }
 }
 
-// 审核
-function handleReview(row: any): void {
-  reviewingContribution.value = row as Contribution
+function handleReview(contribution: Contribution): void {
+  reviewingContribution.value = contribution
   reviewDialogVisible.value = true
 }
 
-onMounted(() => {
-  loadData()
-})
+async function clearProjectFilter(): Promise<void> {
+  await router.replace({ path: '/contributions/pending' })
+  await loadData()
+}
+
+onMounted(loadData)
 </script>
 
 <style lang="scss" scoped>
-.mt-16 {
-  margin-top: 16px;
+.pending-review-page {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+
+  :deep(.page-header) {
+    margin-bottom: 6px;
+  }
 }
 
-/* 需求F：贡献记录 - 概括蓝色、详细绿色 */
-.contribution-summary {
-  color: #409eff;
-  font-weight: 600;
-}
+.review-summary {
+  display: flex;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 14px 18px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-md);
 
-.contribution-detail {
-  color: #67c23a;
-}
+  > div {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
 
-/* 移动端样式 */
-.mobile-list {
-  .mobile-card {
-    margin-bottom: 12px;
-
-    .mobile-card-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      margin-bottom: 8px;
-
-      .mobile-card-title {
-        font-size: 15px;
-        font-weight: 600;
-        color: #303133;
-      }
+    span {
+      color: var(--color-text-muted);
+      font-size: 12px;
     }
 
-    .mobile-card-body {
-      .mobile-card-row {
-        font-size: 13px;
-        color: #606266;
-        margin-bottom: 4px;
+    strong {
+      color: var(--color-text);
+      font-size: 24px;
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
 
-        .label {
-          color: #909399;
-        }
+      &.is-warning {
+        color: var(--color-warning);
       }
     }
+  }
 
-    .mobile-card-actions {
-      margin-top: 8px;
+  dl {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(90px, 1fr));
+
+    > div {
+      padding: 1px 18px;
       text-align: right;
+      border-left: 1px solid var(--color-border-light);
+    }
+
+    dt {
+      color: var(--color-text-muted);
+      font-size: 11px;
+    }
+
+    dd {
+      margin-top: 2px;
+      color: var(--color-text);
+      font-size: 18px;
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+    }
+  }
+}
+
+.load-alert {
+  margin-bottom: 0;
+}
+
+.review-surface {
+  min-height: 220px;
+  overflow: hidden;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-md);
+
+  :deep(.el-table::before) {
+    display: none;
+  }
+}
+
+.pending-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-warning);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+
+  i {
+    width: 6px;
+    height: 6px;
+    background: var(--color-warning);
+    border-radius: 50%;
+  }
+}
+
+.submitter-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+
+  strong {
+    overflow: hidden;
+    color: var(--color-text);
+    font-weight: 600;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  span {
+    color: var(--color-text-muted);
+    font-size: 11px;
+  }
+}
+
+.mobile-review-list {
+  display: grid;
+  gap: 10px;
+}
+
+.review-card {
+  padding: 14px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-md);
+
+  > header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+
+    > div {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+    }
+
+    strong {
+      overflow-wrap: anywhere;
+      color: var(--color-text);
+      font-size: 14px;
+      font-weight: 600;
+    }
+
+    span:not(.pending-status) {
+      margin-top: 2px;
+      color: var(--color-text-muted);
+      font-size: 11px;
+    }
+  }
+
+  > p {
+    margin-top: 14px;
+    overflow-wrap: anywhere;
+    color: var(--color-text-regular);
+    font-size: 13px;
+    line-height: 1.55;
+  }
+
+  > footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding-top: 12px;
+    margin-top: 14px;
+    color: var(--color-text-muted);
+    font-size: 11px;
+    border-top: 1px solid var(--color-border-light);
+  }
+}
+
+@media screen and (max-width: 768px) {
+  .review-summary {
+    padding: 14px;
+  }
+
+  .review-summary dl > div {
+    padding: 1px 12px;
+  }
+
+  .review-surface {
+    overflow: visible;
+    background: transparent;
+    border: 0;
+  }
+}
+
+@media screen and (max-width: 420px) {
+  .review-summary {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 12px;
+
+    dl {
+      width: 100%;
+
+      > div:first-child {
+        padding-left: 0;
+        border-left: 0;
+      }
     }
   }
 }

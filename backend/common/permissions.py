@@ -60,6 +60,39 @@ class IsTeacherOrAdmin(RolePermission):
     required_roles = ['teacher', 'sys_admin']
 
 
+class IsTeacherOrAdminOrReadOnly(BasePermission):
+    """老师/管理员可维护，其他已认证内部用户只读。"""
+
+    def has_permission(self, request, view):
+        if not request.user or not request.user.is_authenticated:
+            return False
+        if request.method in SAFE_METHODS:
+            return True
+        return request.user.global_role in ['teacher', 'sys_admin']
+
+    def has_object_permission(self, request, view, obj):
+        return self.has_permission(request, view)
+
+
+class IsInternalTeamMember(BasePermission):
+    """当前在队/暂离的内部成员；明确排除外部协作者与已离队账号。"""
+
+    allowed_membership_statuses = {'active', 'on_leave'}
+
+    def has_permission(self, request, view):
+        user = getattr(request, 'user', None)
+        return bool(
+            user
+            and user.is_authenticated
+            and getattr(user, 'is_active', False)
+            and getattr(user, 'membership_status', 'active')
+            in self.allowed_membership_statuses
+        )
+
+    def has_object_permission(self, request, view, obj):
+        return self.has_permission(request, view)
+
+
 class IsSensitiveApprover(RolePermission):
     """敏感资料审批人权限"""
     required_roles = ['sens_approver', 'sys_admin']
@@ -77,8 +110,17 @@ class IsProjectLeaderOrTeacherOrAdmin(BasePermission):
         # list / retrieve 等安全方法对所有认证用户开放
         if request.method in SAFE_METHODS:
             return True
-        # 写操作需老师或管理员
-        return request.user.global_role in ['teacher', 'sys_admin']
+        if request.user.global_role in ['teacher', 'sys_admin']:
+            return True
+        # 创建时尚无对象可供 DRF 校验，直接核对请求中的所属项目。
+        if getattr(view, 'action', None) == 'create':
+            project_id = request.data.get('project')
+            if not project_id:
+                return False
+            from apps.projects.models import Project
+            return Project.objects.filter(pk=project_id, leader=request.user).exists()
+        # 更新、删除和自定义详情动作继续交由对象级权限判断。
+        return True
 
     def has_object_permission(self, request, view, obj):
         if not request.user or not request.user.is_authenticated:
@@ -92,6 +134,12 @@ class IsProjectLeaderOrTeacherOrAdmin(BasePermission):
         # 老师可以操作任何项目
         if request.user.global_role == 'teacher':
             return True
+        # 项目负责人不能借更新操作把对象转移到自己不负责的项目。
+        requested_project_id = request.data.get('project') if hasattr(request.data, 'get') else None
+        if requested_project_id:
+            from apps.projects.models import Project
+            if not Project.objects.filter(pk=requested_project_id, leader=request.user).exists():
+                return False
         # 项目负责人可以操作自己的项目
         if hasattr(obj, 'leader'):
             return obj.leader_id == request.user.id
@@ -152,5 +200,5 @@ class IsProjectMember(BasePermission):
         # 项目成员
         from apps.projects.models import ProjectMember
         return ProjectMember.objects.filter(
-            project=project, user=request.user
+            project=project, user=request.user, status=ProjectMember.Status.ACTIVE
         ).exists()

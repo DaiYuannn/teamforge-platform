@@ -14,7 +14,8 @@ from rest_framework.viewsets import ModelViewSet
 from common.response import success_response, error_response
 from common.mixins import MultiSerializerMixin, MultiPermissionMixin
 from common.permissions import IsTeacherOrAdmin
-from apps.projects.models import Project
+from apps.projects.models import Project, ProjectMember
+from apps.users.models import User
 
 from .models import Contribution, MemberRanking, RankingObjection
 from .serializers import (
@@ -35,6 +36,55 @@ from .permissions import (
     _is_project_leader_or_admin,
 )
 from .services import RankingService
+
+
+def _notify_ranking_objection(objection, stage, sender):
+    """发送排名异议提交、初审和终审通知。"""
+    from apps.notifications.models import Notification
+    from apps.notifications.services import NotificationService
+    from apps.users.models import User
+
+    project = objection.ranking.project
+    recipients = []
+    if stage == 'created':
+        if project and project.leader:
+            recipients.append(project.leader)
+        recipients.extend(User.objects.filter(global_role='teacher', is_active=True))
+        title = f'排名异议待初审：{project.name if project else "团队排名"}'
+        content = (
+            f'{objection.objector.name} 对 {objection.ranking.period} '
+            f'第 {objection.ranking.rank} 名提出异议：{objection.content}'
+        )
+    elif stage == 'leader_reviewed':
+        recipients.append(objection.objector)
+        recipients.extend(User.objects.filter(global_role='teacher', is_active=True))
+        title = f'排名异议已初审：{project.name if project else "团队排名"}'
+        content = f'负责人初审意见：{objection.leader_opinion}，请老师进行最终确认。'
+    else:
+        recipients.append(objection.objector)
+        if project and project.leader:
+            recipients.append(project.leader)
+        title = f'排名异议已终审：{project.name if project else "团队排名"}'
+        content = (
+            f'最终结果：{objection.get_status_display()}。'
+            f'{objection.final_result or objection.teacher_opinion}'
+        )
+
+    unique_recipients = {
+        user.id: user
+        for user in recipients
+        if user and user.is_active and user.id != getattr(sender, 'id', None)
+    }
+    NotificationService.bulk_create_and_send_email(
+        recipients=list(unique_recipients.values()),
+        title=title,
+        content=content,
+        category=Notification.NotificationType.CONTRIBUTION,
+        ref_type='ranking_objection',
+        ref_id=objection.id,
+        sender=sender,
+        priority=Notification.Priority.HIGH,
+    )
 
 
 # ============ 贡献记录 ============
@@ -98,6 +148,12 @@ class ContributionViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewS
         period = params.get('period')
         if period:
             queryset = queryset.filter(period=period)
+        if getattr(self.request.user, 'membership_status', '') == User.MembershipStatus.EXTERNAL:
+            project_ids = ProjectMember.objects.filter(
+                user=self.request.user,
+                status=ProjectMember.Status.ACTIVE,
+            ).values_list('project_id', flat=True)
+            queryset = queryset.filter(project_id__in=project_ids)
         return queryset
 
     def create(self, request, *args, **kwargs):
@@ -278,6 +334,12 @@ class MemberRankingViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelView
             queryset = queryset.filter(period=period)
 
         user = self.request.user
+        if getattr(user, 'membership_status', '') == User.MembershipStatus.EXTERNAL:
+            project_ids = ProjectMember.objects.filter(
+                user=user,
+                status=ProjectMember.Status.ACTIVE,
+            ).values_list('project_id', flat=True)
+            queryset = queryset.filter(project_id__in=project_ids)
         # 普通成员仅可见已公开（已确认）的排名
         if user.global_role not in ['sys_admin', 'teacher']:
             # 项目负责人可见自己项目的草案，其他成员仅可见 is_public=True
@@ -458,9 +520,10 @@ class RankingObjectionViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelV
             my_project_ids = list(
                 Project.objects.filter(leader=user).values_list('id', flat=True)
             )
-            from apps.projects.models import ProjectMember
             my_project_ids += list(
-                ProjectMember.objects.filter(user=user).values_list('project_id', flat=True)
+                ProjectMember.objects.filter(
+                    user=user, status=ProjectMember.Status.ACTIVE
+                ).values_list('project_id', flat=True)
             )
             queryset = queryset.filter(ranking__project_id__in=my_project_ids)
         return queryset
@@ -483,6 +546,7 @@ class RankingObjectionViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelV
             return error_response(message='该排名尚未公开确认，无法提出异议')
 
         objection = serializer.save()
+        _notify_ranking_objection(objection, 'created', request.user)
         return success_response(
             RankingObjectionSerializer(objection).data,
             message='异议提交成功',
@@ -522,6 +586,7 @@ class RankingObjectionViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelV
         objection.status = RankingObjection.Status.LEADER_REVIEWED
         objection.handler = request.user
         objection.save()
+        _notify_ranking_objection(objection, 'leader_reviewed', request.user)
 
         return success_response(
             RankingObjectionSerializer(objection).data,
@@ -553,17 +618,19 @@ class RankingObjectionViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelV
             return error_response(message='该异议需先经负责人初审')
 
         final_status = validated_data.get('final_status')
-        objection.teacher_opinion = validated_data.get('teacher_opinion', '')
-        objection.teacher_confirmer = request.user
-        objection.teacher_confirmed_at = timezone.now()
-        objection.final_result = validated_data.get('final_result', '')
-        # 根据最终状态设置异议状态
-        if final_status == 'approved':
-            objection.status = RankingObjection.Status.APPROVED
-        else:
-            objection.status = RankingObjection.Status.REJECTED
-        objection.handler = request.user
-        objection.save()
+        success, result = RankingService.resolve_objection(
+            objection=objection,
+            teacher=request.user,
+            final_status=final_status,
+            teacher_opinion=validated_data.get('teacher_opinion', ''),
+            final_result=validated_data.get('final_result', ''),
+            corrected_rank=validated_data.get('corrected_rank'),
+            corrected_total_score=validated_data.get('corrected_total_score'),
+        )
+        if not success:
+            return error_response(message=result)
+        objection = result
+        _notify_ranking_objection(objection, 'teacher_confirmed', request.user)
 
         return success_response(
             RankingObjectionSerializer(objection).data,

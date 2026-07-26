@@ -7,6 +7,8 @@ from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
+from django.db import transaction
+from django.db.models import Q
 
 from common.response import success_response, error_response
 from common.mixins import MultiSerializerMixin, MultiPermissionMixin
@@ -14,6 +16,8 @@ from common.permissions import IsProjectLeaderOrTeacherOrAdmin
 from .models import Task
 from .serializers import TaskSerializer, TaskListSerializer, TaskCreateSerializer
 from .services import task_service
+from apps.projects.models import ProjectMember
+from apps.users.models import User
 
 
 class TaskViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet):
@@ -50,26 +54,95 @@ class TaskViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet):
         'deadline', 'start_date',
     ]
 
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        user = self.request.user
+        if getattr(user, 'membership_status', '') == User.MembershipStatus.EXTERNAL:
+            project_ids = ProjectMember.objects.filter(
+                user=user,
+                status=ProjectMember.Status.ACTIVE,
+            ).values_list('project_id', flat=True)
+            queryset = queryset.filter(project_id__in=project_ids)
+        if self.request.query_params.get('scope') == 'mine':
+            queryset = queryset.filter(
+                Q(assignee=user)
+                | Q(creator=user)
+                | Q(reviewer=user)
+                | Q(collaborators=user)
+            )
+        return queryset.distinct()
+
     def create(self, request, *args, **kwargs):
         """创建任务"""
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         task = serializer.save()
         return success_response(
-            TaskSerializer(task).data,
+            TaskSerializer(task, context={'request': request}).data,
             message='任务创建成功',
             http_status=status.HTTP_201_CREATED,
         )
 
     def update(self, request, *args, **kwargs):
-        """更新任务"""
+        """更新任务；若包含状态变更，必须经过与 change_status 相同的状态机。"""
         partial = kwargs.pop('partial', False)
         instance = self.get_object()
         self.check_object_permissions(request, instance)
-        serializer = self.get_serializer(instance, data=request.data, partial=partial)
-        serializer.is_valid(raise_exception=True)
-        task = serializer.save()
-        return success_response(TaskSerializer(task).data, message='任务更新成功')
+
+        with transaction.atomic():
+            instance = (
+                Task.objects.select_for_update()
+                .select_related('project')
+                .get(pk=instance.pk)
+            )
+            serializer = self.get_serializer(
+                instance,
+                data=request.data,
+                partial=partial,
+            )
+            serializer.is_valid(raise_exception=True)
+
+            requested_status = serializer.validated_data.pop(
+                'status',
+                instance.status,
+            )
+            delay_reason = serializer.validated_data.get(
+                'delay_reason',
+                instance.delay_reason,
+            )
+            completion_note_supplied = 'completion_note' in serializer.validated_data
+            completion_note = serializer.validated_data.get('completion_note')
+
+            if requested_status != instance.status:
+                is_valid, message = task_service.validate_transition(
+                    task=instance,
+                    to_status=requested_status,
+                    operator=request.user,
+                    delay_reason=delay_reason,
+                )
+                if not is_valid:
+                    return error_response(message=message)
+
+            task = serializer.save()
+            if requested_status != instance.status:
+                success, result = task_service.change_status(
+                    task=task,
+                    to_status=requested_status,
+                    operator=request.user,
+                    delay_reason=delay_reason,
+                    completion_note=(
+                        completion_note if completion_note_supplied else None
+                    ),
+                )
+                if not success:
+                    transaction.set_rollback(True)
+                    return error_response(message=result)
+                task = result
+
+        return success_response(
+            TaskSerializer(task, context={'request': request}).data,
+            message='任务更新成功',
+        )
 
     def destroy(self, request, *args, **kwargs):
         """删除任务（软删除，移入回收站）"""
@@ -91,21 +164,14 @@ class TaskViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet):
         """
         task = self.get_object()
 
-        # 权限校验：只有任务指派人、协作者、创建者、审核人或管理员/老师可以修改状态
         user = request.user
-        can_change = (
-            task.assignee_id == user.id or
-            task.creator_id == user.id or
-            task.reviewer_id == user.id or
-            task.collaborators.filter(id=user.id).exists() or
-            user.global_role in ['sys_admin', 'teacher']
-        )
-        if not can_change:
+        if not task_service.can_access_status_action(task, user):
             return error_response(message='无权修改此任务状态', code=1003,
                                   http_status=status.HTTP_403_FORBIDDEN)
 
         to_status = request.data.get('to_status')
         delay_reason = request.data.get('delay_reason', '')
+        completion_note = request.data.get('completion_note')
 
         if not to_status:
             return error_response(message='请提供 to_status 参数')
@@ -120,12 +186,13 @@ class TaskViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet):
             to_status=to_status,
             operator=user,
             delay_reason=delay_reason,
+            completion_note=completion_note,
         )
 
         if not success:
             return error_response(message=result)
 
         return success_response(
-            TaskSerializer(result).data,
+            TaskSerializer(result, context={'request': request}).data,
             message='任务状态更新成功',
         )

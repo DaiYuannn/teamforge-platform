@@ -14,6 +14,8 @@ from .models import Competition
 from .serializers import CompetitionSerializer, CompetitionListSerializer
 from .award_models import CompetitionAward
 from .award_serializers import CompetitionAwardSerializer, CompetitionAwardCreateSerializer
+from apps.projects.models import ProjectMember
+from apps.users.models import User
 
 
 class CompetitionViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet):
@@ -45,6 +47,17 @@ class CompetitionViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSe
     filterset_fields = ['project', 'level', 'status', 'is_promoted', 'is_awarded']
     search_fields = ['name', 'organizer', 'project__name']
     ordering_fields = ['created_at', 'register_date', 'defense_date', 'result_date']
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        user = self.request.user
+        if getattr(user, 'membership_status', '') == User.MembershipStatus.EXTERNAL:
+            project_ids = ProjectMember.objects.filter(
+                user=user,
+                status=ProjectMember.Status.ACTIVE,
+            ).values_list('project_id', flat=True)
+            return queryset.filter(project_id__in=project_ids)
+        return queryset
 
     def create(self, request, *args, **kwargs):
         """创建比赛"""

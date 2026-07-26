@@ -31,6 +31,8 @@ class NotificationListSerializer(serializers.ModelSerializer):
             'id', 'recipient', 'recipient_name', 'sender', 'sender_name',
             'title', 'content', 'notification_type', 'notification_type_display',
             'priority', 'priority_display', 'channel', 'channel_display',
+            'email_delivery_status', 'email_digest_frequency',
+            'email_attempted_at', 'email_sent_at', 'email_delivery_error',
             'is_read', 'read_at', 'related_object_type', 'related_object_id',
             'created_at',
         )
@@ -86,6 +88,8 @@ class NotificationSerializer(serializers.ModelSerializer):
             'id', 'recipient', 'recipient_name', 'sender', 'sender_name',
             'title', 'content', 'notification_type', 'notification_type_display',
             'priority', 'priority_display', 'channel', 'channel_display',
+            'email_delivery_status', 'email_digest_frequency',
+            'email_attempted_at', 'email_sent_at', 'email_delivery_error',
             'is_read', 'read_at', 'related_object_type', 'related_object_id',
             'created_at',
         )

@@ -7,9 +7,9 @@ from decimal import Decimal
 
 from django.db.models import Count, Q, Sum
 from django.utils import timezone
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
+from common.permissions import IsInternalTeamMember
 from common.response import success_response
 from apps.projects.models import Project, ProjectStageLog
 from apps.tasks.models import Task
@@ -28,7 +28,7 @@ class WeeklyReportView(APIView):
     自动生成周报：完成任务、新增任务、待办事项、项目进度、即将到期、团队动态
     """
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsInternalTeamMember]
 
     def get(self, request):
         project_id = request.query_params.get('project_id')

@@ -1,220 +1,214 @@
 <template>
   <div class="matrix-view">
-    <!-- 顶部统计卡片 -->
-    <el-row :gutter="16" class="stat-cards">
-      <el-col :xs="24" :sm="8">
-        <div class="stat-card stat-blue">
-          <div class="stat-icon">
-            <el-icon size="30"><TrendCharts /></el-icon>
-          </div>
-          <div class="stat-info">
-            <div class="stat-value">{{ grandTotal.total }}</div>
-            <div class="stat-label">总参赛数</div>
-          </div>
+    <section class="summary-band" aria-label="参赛矩阵汇总">
+      <div class="summary-band__intro">
+        <span>矩阵概览</span>
+        <strong>按项目与赛事级别交叉比较</strong>
+      </div>
+      <dl class="summary-band__metrics">
+        <div>
+          <dt>参赛</dt>
+          <dd>{{ grandTotal.total }}</dd>
         </div>
-      </el-col>
-      <el-col :xs="24" :sm="8">
-        <div class="stat-card stat-orange">
-          <div class="stat-icon">
-            <el-icon size="30"><Trophy /></el-icon>
-          </div>
-          <div class="stat-info">
-            <div class="stat-value">{{ grandTotal.awarded }}</div>
-            <div class="stat-label">总获奖数</div>
-          </div>
+        <div>
+          <dt>晋级</dt>
+          <dd>{{ grandTotal.promoted }}</dd>
         </div>
-      </el-col>
-      <el-col :xs="24" :sm="8">
-        <div class="stat-card stat-green">
-          <div class="stat-icon">
-            <el-icon size="30"><Promotion /></el-icon>
-          </div>
-          <div class="stat-info">
-            <div class="stat-value">{{ grandTotal.promoted }}</div>
-            <div class="stat-label">总晋级数</div>
-          </div>
+        <div>
+          <dt>获奖</dt>
+          <dd>{{ grandTotal.awarded }}</dd>
         </div>
-      </el-col>
-    </el-row>
+      </dl>
+    </section>
 
-    <!-- 矩阵表格 -->
-    <div class="card mt-16">
-      <h3 class="card-title">项目 × 比赛级别 参赛矩阵</h3>
+    <el-alert
+      v-if="loadFailed"
+      class="load-alert"
+      title="参赛矩阵暂时无法加载"
+      type="error"
+      :closable="false"
+      show-icon
+    >
+      <template #default>
+        <el-button link type="primary" @click="loadData">重新加载</el-button>
+      </template>
+    </el-alert>
+
+    <section class="matrix-surface" aria-labelledby="matrix-title">
+      <header class="section-heading">
+        <div>
+          <h2 id="matrix-title">项目参赛矩阵</h2>
+          <p>同一行比较项目在不同级别赛事中的参赛、获奖与晋级数量</p>
+        </div>
+        <span class="matrix-count">{{ matrix.length }} 个项目</span>
+      </header>
+
       <el-table
         v-loading="loading"
         :data="matrix"
         border
-        stripe
         show-summary
         :summary-method="getSummary"
         :cell-class-name="cellClassName"
         size="small"
+        table-layout="fixed"
       >
         <template #empty>
-          <EmptyState text="暂无参赛矩阵数据" description="项目参赛后将在此展示" accent="#9B59B6" />
+          <EmptyState
+            v-if="!loading"
+            text="暂无参赛矩阵数据"
+            description="项目关联比赛后，比较结果会显示在这里"
+          />
         </template>
-        <el-table-column label="项目名称" fixed min-width="220" show-overflow-tooltip>
+
+        <el-table-column label="项目" fixed min-width="210" show-overflow-tooltip>
           <template #default="{ row }">
             <div class="project-cell">
-              <span class="project-name">{{ row.project_name }}</span>
-              <span class="project-code">{{ row.project_code }}</span>
+              <strong>{{ row.project_name }}</strong>
+              <span>{{ row.project_code }}</span>
             </div>
           </template>
         </el-table-column>
         <el-table-column
-          v-for="(level, idx) in levels"
+          v-for="(level, index) in levels"
           :key="level.key"
           :label="level.name"
           align="center"
-          min-width="120"
+          min-width="116"
         >
           <template #header>
             <div class="level-header">
-              <span class="level-dot" :style="{ background: getCompetitionStageColor(level.key) }"></span>
-              {{ level.name }}
+              <span
+                class="level-dot"
+                :style="{ backgroundColor: getCompetitionStageColor(level.key) }"
+              />
+              <span>{{ level.name }}</span>
             </div>
           </template>
           <template #default="{ row }">
             <el-tooltip
-              v-if="getCell(row, idx) && getCell(row, idx)!.total > 0"
-              :content="tooltipContent(getCell(row, idx)!)"
+              v-if="getCell(row as CompetitionMatrixRow, index)?.total"
+              :content="tooltipContent(getCell(row as CompetitionMatrixRow, index)!)"
               placement="top"
             >
-              <span class="cell-text">{{ formatCell(getCell(row, idx)) }}</span>
+              <span class="cell-value">
+                {{ formatCell(getCell(row as CompetitionMatrixRow, index)) }}
+              </span>
             </el-tooltip>
-            <span v-else class="cell-text cell-empty">-</span>
+            <span v-else class="cell-value is-empty">-</span>
           </template>
         </el-table-column>
-        <el-table-column label="合计" fixed="right" align="center" min-width="130">
+        <el-table-column label="合计" fixed="right" align="center" min-width="124">
           <template #default="{ row }">
             <el-tooltip
-              v-if="getRowTotal(row).total > 0"
-              :content="tooltipContent(getRowTotal(row))"
+              v-if="getRowTotal(row as CompetitionMatrixRow).total"
+              :content="tooltipContent(getRowTotal(row as CompetitionMatrixRow))"
               placement="top"
             >
-              <span class="cell-text cell-total">{{ formatTotal(getRowTotal(row)) }}</span>
+              <span class="cell-value is-total">
+                {{ formatCell(getRowTotal(row as CompetitionMatrixRow)) }}
+              </span>
             </el-tooltip>
-            <span v-else class="cell-text cell-empty">-</span>
+            <span v-else class="cell-value is-empty">-</span>
           </template>
         </el-table-column>
       </el-table>
 
-      <!-- 图例说明 -->
-      <div class="legend">
-        <span class="legend-item">
-          <span class="legend-swatch legend-sw-1"></span>单元格格式：参赛数(获奖数/晋级数)
-        </span>
-        <span class="legend-item">
-          <span class="legend-swatch legend-sw-2"></span>浅色背景表示有参赛记录
-        </span>
-        <span class="legend-item">0 显示为 "-"</span>
+      <div class="matrix-legend" aria-label="矩阵数据说明">
+        <span><i class="legend-swatch" />有参赛记录</span>
+        <span>数字顺序：参赛 / 获奖 / 晋级</span>
+        <span>“-” 表示暂无记录</span>
       </div>
-    </div>
+    </section>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
-import { TrendCharts, Trophy, Promotion } from '@element-plus/icons-vue'
+import { computed, onMounted, ref } from 'vue'
 import type { TableColumnCtx } from 'element-plus'
-import { getCompetitionMatrix, type CompetitionMatrixData, type CompetitionMatrixCell, type CompetitionMatrixRow } from '@/api/dashboard'
+import {
+  getCompetitionMatrix,
+  type CompetitionMatrixCell,
+  type CompetitionMatrixData,
+  type CompetitionMatrixRow,
+} from '@/api/dashboard'
 import { getCompetitionStageColor } from '@/utils/format'
 import EmptyState from '@/components/EmptyState.vue'
 
-const loading = ref(false)
-const matrixData = ref<CompetitionMatrixData | null>(null)
-
-const levels = computed(() => matrixData.value?.levels || [])
-const matrix = computed(() => matrixData.value?.matrix || [])
-const levelKeys = computed(() => levels.value.map((l) => l.key))
-
-/** 单元格汇总结构 */
 interface CellSummary {
   total: number
   awarded: number
   promoted: number
 }
 
-/** 获取某行某级别的单元格（row 来自 el-table 插槽，类型较宽，内部断言为强类型） */
-function getCell(row: any, idx: number): CompetitionMatrixCell | undefined {
-  const key = levelKeys.value[idx]
-  return key ? (row as CompetitionMatrixRow).cells[key] : undefined
-}
+const loading = ref(false)
+const loadFailed = ref(false)
+const matrixData = ref<CompetitionMatrixData | null>(null)
 
-/** 格式化单元格：参赛数(获奖数/晋级数)，0 显示为 "-" */
-function formatCell(cell?: CompetitionMatrixCell): string {
-  if (!cell || cell.total === 0) return '-'
-  return `${cell.total}(${cell.awarded}/${cell.promoted})`
-}
+const levels = computed(() => matrixData.value?.levels || [])
+const matrix = computed(() => matrixData.value?.matrix || [])
+const levelKeys = computed(() => levels.value.map((level) => level.key))
 
-/** 格式化汇总单元格 */
-function formatTotal(t: CellSummary): string {
-  if (t.total === 0) return '-'
-  return `${t.total}(${t.awarded}/${t.promoted})`
-}
-
-/** tooltip 内容 */
-function tooltipContent(t: CellSummary): string {
-  return `参赛数：${t.total}　获奖数：${t.awarded}　晋级数：${t.promoted}`
-}
-
-/** 计算某行合计（row 来自 el-table 插槽，类型较宽，内部断言为强类型） */
-function getRowTotal(row: any): CellSummary {
-  const typedRow = row as CompetitionMatrixRow
-  let total = 0
-  let awarded = 0
-  let promoted = 0
-  for (const key of levelKeys.value) {
-    const cell = typedRow.cells[key]
-    if (cell) {
-      total += cell.total
-      awarded += cell.awarded
-      promoted += cell.promoted
-    }
-  }
-  return { total, awarded, promoted }
-}
-
-/** 总计（所有级别汇总） */
 const grandTotal = computed<CellSummary>(() => {
-  let total = 0
-  let awarded = 0
-  let promoted = 0
   const totals = matrixData.value?.level_totals || {}
-  for (const key of levelKeys.value) {
-    const t = totals[key]
-    if (t) {
-      total += t.total
-      awarded += t.awarded
-      promoted += t.promoted
-    }
-  }
-  return { total, awarded, promoted }
+  return levelKeys.value.reduce<CellSummary>(
+    (result, key) => {
+      const item = totals[key]
+      if (item) {
+        result.total += item.total
+        result.awarded += item.awarded
+        result.promoted += item.promoted
+      }
+      return result
+    },
+    { total: 0, awarded: 0, promoted: 0 },
+  )
 })
 
-/** 表尾汇总行 */
-function getSummary({ columns }: { columns: TableColumnCtx<CompetitionMatrixRow>[]; data: CompetitionMatrixRow[] }): string[] {
-  const totals = matrixData.value?.level_totals || {}
-  const result: string[] = []
-  columns.forEach((_, index) => {
-    if (index === 0) {
-      result.push('合计')
-      return
-    }
-    // 级别列：index 1 .. levelKeys.length
-    if (index >= 1 && index <= levelKeys.value.length) {
-      const key = levelKeys.value[index - 1]
-      const t = totals[key]
-      result.push(t ? formatTotal(t) : '-')
-      return
-    }
-    // 合计列（最后一列）
-    result.push(formatTotal(grandTotal.value))
-  })
-  return result
+function getCell(row: CompetitionMatrixRow, index: number): CompetitionMatrixCell | undefined {
+  const key = levelKeys.value[index]
+  return key ? row.cells[key] : undefined
 }
 
-/** 单元格高亮类名 */
+function getRowTotal(row: CompetitionMatrixRow): CellSummary {
+  return levelKeys.value.reduce<CellSummary>(
+    (result, key) => {
+      const item = row.cells[key]
+      if (item) {
+        result.total += item.total
+        result.awarded += item.awarded
+        result.promoted += item.promoted
+      }
+      return result
+    },
+    { total: 0, awarded: 0, promoted: 0 },
+  )
+}
+
+function formatCell(cell?: CellSummary): string {
+  return !cell || cell.total === 0 ? '-' : `${cell.total} / ${cell.awarded} / ${cell.promoted}`
+}
+
+function tooltipContent(cell: CellSummary): string {
+  return `参赛 ${cell.total}，获奖 ${cell.awarded}，晋级 ${cell.promoted}`
+}
+
+function getSummary({
+  columns,
+}: {
+  columns: TableColumnCtx<CompetitionMatrixRow>[]
+  data: CompetitionMatrixRow[]
+}): string[] {
+  const totals = matrixData.value?.level_totals || {}
+  return columns.map((_, index) => {
+    if (index === 0) return '合计'
+    if (index <= levelKeys.value.length) {
+      return formatCell(totals[levelKeys.value[index - 1]])
+    }
+    return formatCell(grandTotal.value)
+  })
+}
+
 function cellClassName({
   row,
   columnIndex,
@@ -224,250 +218,258 @@ function cellClassName({
   rowIndex: number
   columnIndex: number
 }): string {
-  // 级别列
   if (columnIndex >= 1 && columnIndex <= levelKeys.value.length) {
-    const cell = getCell(row, columnIndex - 1)
-    if (cell && cell.total > 0) return 'cell-has-data'
+    return getCell(row, columnIndex - 1)?.total ? 'matrix-cell-has-data' : ''
   }
-  // 合计列
   if (columnIndex === levelKeys.value.length + 1) {
-    if (getRowTotal(row).total > 0) return 'cell-has-data cell-has-data-total'
+    return getRowTotal(row).total ? 'matrix-cell-has-data matrix-cell-total' : ''
   }
   return ''
 }
 
-// 加载矩阵数据
 async function loadData(): Promise<void> {
   loading.value = true
+  loadFailed.value = false
   try {
     matrixData.value = await getCompetitionMatrix()
   } catch {
-    // 错误已由拦截器处理
+    loadFailed.value = true
   } finally {
     loading.value = false
   }
 }
 
-onMounted(() => {
-  loadData()
-})
+onMounted(loadData)
 </script>
 
 <style lang="scss" scoped>
-.mt-16 {
-  margin-top: 16px;
-}
-
-/* ==================== 统计卡片 ==================== */
-.stat-cards {
+.matrix-view {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
+  gap: 12px;
+}
 
-  > .el-col {
-    margin-bottom: 16px;
+.summary-band {
+  display: flex;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 14px 18px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-md);
+}
+
+.summary-band__intro {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 0;
+
+  span {
+    color: var(--color-text-muted);
+    font-size: 12px;
   }
 
-  .stat-card {
-    display: flex;
-    align-items: center;
-    gap: 14px;
-    padding: 16px 18px;
-    background: #fff;
-    border-radius: 8px;
-    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
-    min-height: 100px;
-
-    .stat-icon {
-      width: 52px;
-      height: 52px;
-      border-radius: 12px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      color: #fff;
-      flex-shrink: 0;
-    }
-
-    &.stat-blue .stat-icon {
-      background: linear-gradient(135deg, #409eff, #36cfc9);
-    }
-    &.stat-orange .stat-icon {
-      background: linear-gradient(135deg, #e6a23c, #ffd591);
-    }
-    &.stat-green .stat-icon {
-      background: linear-gradient(135deg, #67c23a, #95de64);
-    }
-
-    .stat-info {
-      .stat-value {
-        font-size: 26px;
-        font-weight: 700;
-        color: #303133;
-        font-variant-numeric: tabular-nums;
-      }
-
-      .stat-label {
-        font-size: 13px;
-        color: #909399;
-        margin-top: 4px;
-      }
-    }
+  strong {
+    margin-top: 2px;
+    color: var(--color-text);
+    font-size: 14px;
+    font-weight: 600;
   }
 }
 
-/* ==================== 卡片 ==================== */
-.card {
-  background: #fff;
-  border-radius: 8px;
-  padding: 16px;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+.summary-band__metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(82px, 1fr));
+  min-width: 294px;
 
-  .card-title {
+  > div {
+    padding: 2px 18px;
+    text-align: right;
+    border-left: 1px solid var(--color-border-light);
+  }
+
+  dt {
+    color: var(--color-text-muted);
+    font-size: 11px;
+  }
+
+  dd {
+    margin-top: 2px;
+    color: var(--color-text);
+    font-size: 22px;
+    font-weight: 600;
+    line-height: 1.2;
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+.matrix-surface {
+  overflow: hidden;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-md);
+}
+
+.section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--color-border-light);
+
+  h2 {
+    color: var(--color-text);
     font-size: 16px;
     font-weight: 600;
-    color: #303133;
-    margin-bottom: 16px;
-    display: flex;
-    align-items: center;
+    line-height: 1.4;
+    letter-spacing: 0;
+  }
 
-    &::before {
-      content: '';
-      width: 4px;
-      height: 16px;
-      background: #409eff;
-      border-radius: 2px;
-      margin-right: 8px;
-    }
+  p {
+    margin-top: 3px;
+    color: var(--color-text-muted);
+    font-size: 12px;
   }
 }
 
-/* ==================== 表格单元格 ==================== */
+.matrix-count {
+  flex: 0 0 auto;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
 .project-cell {
   display: flex;
   flex-direction: column;
-  line-height: 1.4;
+  min-width: 0;
+  gap: 2px;
 
-  .project-name {
-    font-weight: 500;
-    color: #303133;
+  strong {
+    overflow: hidden;
+    color: var(--color-text);
+    font-weight: 600;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
-  .project-code {
-    font-size: 12px;
-    color: #909399;
+  span {
+    color: var(--color-text-muted);
+    font-size: 11px;
   }
 }
 
 .level-header {
-  font-weight: 600;
-  color: #303133;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
-
-  .level-dot {
-    display: inline-block;
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    flex-shrink: 0;
-  }
+  color: var(--color-text-regular);
+  font-weight: 600;
 }
 
-.cell-text {
+.level-dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+}
+
+.cell-value {
+  color: var(--color-text-regular);
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
-  font-feature-settings: 'tnum';
-  color: #303133;
+  white-space: nowrap;
 
-  &.cell-empty {
-    color: #c0c4cc;
+  &.is-empty {
+    color: var(--text-placeholder);
   }
 
-  &.cell-total {
+  &.is-total {
+    color: var(--color-primary);
     font-weight: 600;
-    color: #409eff;
   }
 }
 
-/* 有数据的单元格高亮（el-table 内部 td，需穿透） */
-:deep(.cell-has-data) {
-  background-color: #ecf5ff !important;
+:deep(.matrix-cell-has-data) {
+  background: var(--color-primary-soft) !important;
 
-  &.cell-has-data-total {
-    background-color: #e1f3d8 !important;
+  &.matrix-cell-total {
+    background: var(--success-light) !important;
   }
 }
 
-/* 表尾汇总行加粗 */
 :deep(.el-table__footer-wrapper) {
   .cell {
+    color: var(--color-text);
     font-weight: 600;
-    color: #303133;
     font-variant-numeric: tabular-nums;
   }
+
   td.el-table__cell {
-    background-color: #fafafa !important;
+    background: var(--color-surface-subtle) !important;
   }
 }
 
-/* ==================== 图例 ==================== */
-.legend {
+.matrix-legend {
   display: flex;
   flex-wrap: wrap;
-  gap: 20px;
-  margin-top: 14px;
-  padding: 10px 4px 0;
-  font-size: 12px;
-  color: #909399;
+  gap: 10px 22px;
+  padding: 12px 18px;
+  color: var(--color-text-muted);
+  font-size: 11px;
+  border-top: 1px solid var(--color-border-light);
 
-  .legend-item {
+  span {
     display: inline-flex;
     align-items: center;
     gap: 6px;
   }
-
-  .legend-swatch {
-    display: inline-block;
-    width: 14px;
-    height: 14px;
-    border-radius: 3px;
-    border: 1px solid #e4e7ed;
-  }
-
-  .legend-sw-1 {
-    background: #fff;
-    border: 1px solid #dcdfe6;
-  }
-
-  .legend-sw-2 {
-    background: #ecf5ff;
-    border-color: #d9ecff;
-  }
 }
 
-/* ==================== 移动端适配 ==================== */
+.legend-swatch {
+  width: 12px;
+  height: 12px;
+  background: var(--color-primary-soft);
+  border: 1px solid var(--color-border);
+  border-radius: 3px;
+}
+
 @media screen and (max-width: 768px) {
-  .stat-cards {
-    .stat-card {
-      padding: 12px 14px;
-      gap: 10px;
-      min-height: 86px;
+  .summary-band {
+    flex-direction: column;
+    gap: 12px;
+    padding: 14px;
+  }
 
-      .stat-icon {
-        width: 42px;
-        height: 42px;
-      }
+  .summary-band__metrics {
+    width: 100%;
+    min-width: 0;
 
-      .stat-info {
-        .stat-value {
-          font-size: 20px;
-        }
+    > div {
+      padding: 2px 12px;
+
+      &:first-child {
+        padding-left: 0;
+        border-left: 0;
       }
+    }
+
+    dd {
+      font-size: 19px;
     }
   }
 
-  .legend {
-    gap: 12px;
+  .section-heading {
+    align-items: flex-start;
+    padding: 14px;
+  }
+
+  .matrix-legend {
+    padding: 12px 14px;
   }
 }
 </style>

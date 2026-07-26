@@ -135,7 +135,7 @@ const resultColor = computed(() => {
       .return-time {
         font-size: 14px;
         font-weight: 600;
-        color: #303133;
+        color: var(--color-text);
       }
     }
   }
@@ -146,12 +146,12 @@ const resultColor = computed(() => {
     line-height: 1.6;
 
     .field-label {
-      color: #909399;
+      color: var(--color-text-muted);
       flex-shrink: 0;
     }
 
     .field-value {
-      color: #303133;
+      color: var(--color-text);
     }
   }
 

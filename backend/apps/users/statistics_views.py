@@ -9,9 +9,9 @@
 from decimal import Decimal
 
 from django.db.models import Sum, Q
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
+from common.permissions import IsInternalTeamMember
 from common.response import success_response
 from common.mixins import MultiSerializerMixin
 from .models import User
@@ -24,7 +24,7 @@ class MemberStatisticsView(APIView):
     返回每个成员的综合统计：任务完成率、项目参与数、贡献得分、出勤率
     支持按 user 筛选单个成员
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsInternalTeamMember]
 
     def get(self, request):
         from apps.tasks.models import Task

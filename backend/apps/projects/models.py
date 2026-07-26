@@ -149,6 +149,13 @@ class ProjectMember(models.Model):
         LEADER = 'leader', '负责人'
         CORE = 'core', '核心成员'
         PARTICIPANT = 'participant', '普通参与'
+        ADVISOR = 'advisor', '项目顾问'
+        EXTERNAL = 'external', '外部协作者'
+
+    class Status(models.TextChoices):
+        ACTIVE = 'active', '参与中'
+        ON_LEAVE = 'on_leave', '暂离'
+        EXITED = 'exited', '已退出'
 
     # 所属项目
     project = models.ForeignKey(
@@ -171,8 +178,26 @@ class ProjectMember(models.Model):
         choices=RoleInProject.choices,
         default=RoleInProject.PARTICIPANT,
     )
+    status = models.CharField(
+        '参与状态',
+        max_length=20,
+        choices=Status.choices,
+        default=Status.ACTIVE,
+        db_index=True,
+    )
     # 加入时间
     joined_at = models.DateTimeField('加入时间', auto_now_add=True)
+    exited_at = models.DateTimeField('退出时间', null=True, blank=True)
+    exit_reason = models.TextField('退出原因', blank=True, default='')
+    handover_to = models.ForeignKey(
+        'self',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='handover_from_memberships',
+        verbose_name='项目交接成员',
+    )
+    handover_notes = models.TextField('交接说明', blank=True, default='')
 
     class Meta:
         db_table = 'project_members'
@@ -183,6 +208,58 @@ class ProjectMember(models.Model):
 
     def __str__(self):
         return f'{self.project.name} - {self.user.name}'
+
+
+class ProjectMembershipEvent(models.Model):
+    """项目成员加入、调岗、暂离、退出与交接的不可变记录。"""
+
+    class EventType(models.TextChoices):
+        JOINED = 'joined', '加入项目'
+        ROLE_CHANGED = 'role_changed', '角色变更'
+        STATUS_CHANGED = 'status_changed', '状态变更'
+        EXITED = 'exited', '退出项目'
+        REACTIVATED = 'reactivated', '重新加入'
+        HANDOVER = 'handover', '项目交接'
+
+    membership = models.ForeignKey(
+        ProjectMember,
+        on_delete=models.CASCADE,
+        related_name='events',
+        verbose_name='项目成员关系',
+    )
+    event_type = models.CharField('事件类型', max_length=30, choices=EventType.choices)
+    from_role = models.CharField('原角色', max_length=20, blank=True, default='')
+    to_role = models.CharField('新角色', max_length=20, blank=True, default='')
+    from_status = models.CharField('原状态', max_length=20, blank=True, default='')
+    to_status = models.CharField('新状态', max_length=20, blank=True, default='')
+    reason = models.TextField('原因', blank=True, default='')
+    handover_to = models.ForeignKey(
+        ProjectMember,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='received_handover_events',
+        verbose_name='交接成员',
+    )
+    handover_notes = models.TextField('交接说明', blank=True, default='')
+    operator = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='operated_project_membership_events',
+        verbose_name='操作人',
+    )
+    created_at = models.DateTimeField('发生时间', auto_now_add=True)
+
+    class Meta:
+        db_table = 'project_membership_events'
+        verbose_name = '项目成员变动记录'
+        verbose_name_plural = verbose_name
+        ordering = ['-created_at', '-id']
+
+    def __str__(self):
+        return f'{self.membership} - {self.get_event_type_display()}'
 
 
 class ProjectStageLog(models.Model):

@@ -10,6 +10,7 @@ from decimal import Decimal
 import openpyxl
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from django.http import HttpResponse
+from django.db.models import Q
 
 
 # ============ 样式常量 ============
@@ -74,6 +75,117 @@ def _wb_to_response(wb, filename):
     # 文件名兼容中文
     response['Content-Disposition'] = f"attachment; filename*=UTF-8''{filename}.xlsx"
     return response
+
+
+def _task_export_queryset(project_id=None, filters=None, user=None):
+    """复用任务列表的核心筛选语义生成导出数据集。"""
+    from apps.tasks.models import Task
+
+    filters = filters or {}
+    tasks = (
+        Task.objects.select_related(
+            'project',
+            'assignee',
+            'creator',
+            'reviewer',
+        )
+        .prefetch_related('collaborators')
+    )
+    if project_id:
+        tasks = tasks.filter(project_id=project_id)
+    if filters.get('status'):
+        tasks = tasks.filter(status=filters['status'])
+    if filters.get('priority'):
+        tasks = tasks.filter(priority=filters['priority'])
+    if filters.get('assignee'):
+        tasks = tasks.filter(assignee_id=filters['assignee'])
+    search = str(filters.get('search') or '').strip()
+    if search:
+        tasks = tasks.filter(
+            Q(title__icontains=search)
+            | Q(description__icontains=search)
+            | Q(project__name__icontains=search)
+        )
+    if filters.get('scope') == 'mine' and user:
+        tasks = tasks.filter(
+            Q(assignee=user)
+            | Q(creator=user)
+            | Q(reviewer=user)
+            | Q(collaborators=user)
+        )
+    return tasks.distinct().order_by('-created_at')
+
+
+_COMPETITION_EXPORT_HEADERS = [
+    '所属项目', '项目编号', '比赛名称', '比赛类型', '级别', '主办单位',
+    '状态', '当前阶段', '是否晋级', '是否获奖', '获奖等级',
+    '报名日期', '材料提交截止', '网评日期', '答辩日期',
+    '校赛日期', '市赛日期', '省赛日期', '国赛日期', '结果公布日期',
+    '未晋级原因', '评审/答辩复盘', '改进建议', '创建时间',
+]
+
+
+def _format_date(value):
+    return value.strftime('%Y-%m-%d') if value else ''
+
+
+def _filtered_competitions(search='', level='', status='', project_id=None):
+    """构建与比赛列表筛选语义一致的导出查询集。"""
+    from apps.competitions.models import Competition
+
+    queryset = Competition.objects.select_related('project').all().order_by('-created_at')
+    search = (search or '').strip()
+    if search:
+        queryset = queryset.filter(
+            Q(name__icontains=search)
+            | Q(organizer__icontains=search)
+            | Q(project__name__icontains=search)
+        )
+    if level:
+        queryset = queryset.filter(level=level)
+    if status:
+        queryset = queryset.filter(status=status)
+    if project_id:
+        project_id_value = str(project_id)
+        queryset = (
+            queryset.filter(project_id=int(project_id_value))
+            if project_id_value.isdigit() and int(project_id_value) > 0
+            else queryset.none()
+        )
+    return queryset
+
+
+def _competition_export_rows(search='', level='', status='', project_id=None):
+    rows = []
+    for competition in _filtered_competitions(search, level, status, project_id):
+        rows.append([
+            competition.project.name if competition.project else '',
+            competition.project.code if competition.project else '',
+            competition.name,
+            competition.comp_type,
+            competition.get_level_display(),
+            competition.organizer,
+            competition.get_status_display(),
+            competition.current_stage,
+            '是' if competition.is_promoted else '否',
+            '是' if competition.is_awarded else '否',
+            competition.award_level,
+            _format_date(competition.register_date),
+            _format_date(competition.material_deadline),
+            _format_date(competition.review_date),
+            _format_date(competition.defense_date),
+            _format_date(competition.school_date),
+            _format_date(competition.city_date),
+            _format_date(competition.province_date),
+            _format_date(competition.national_date),
+            _format_date(competition.result_date),
+            competition.not_promoted_reason,
+            competition.review_summary,
+            competition.improvement_suggestion,
+            competition.created_at.strftime('%Y-%m-%d %H:%M')
+            if competition.created_at else '',
+        ])
+    return rows
 
 
 class ExcelExportService:
@@ -168,31 +280,35 @@ class ExcelExportService:
         return _wb_to_response(wb, '经费明细')
 
     @staticmethod
-    def export_tasks(project_id=None):
-        """导出任务清单 Excel（可指定项目）"""
-        from apps.tasks.models import Task
+    def export_tasks(project_id=None, filters=None, user=None):
+        """按任务列表当前筛选导出任务清单 Excel。"""
         wb = openpyxl.Workbook()
         ws = wb.active
         ws.title = '任务清单'
-        headers = ['任务标题', '所属项目', '指派给', '创建者', '状态', '截止时间',
-                   '完成时间', '是否逾期', '创建时间']
+        headers = [
+            '任务标题', '所属项目', '指派给', '协作者', '审核人', '创建者',
+            '状态', '优先级', '截止时间', '完成时间', '是否逾期',
+            '延期原因', '完成说明', '创建时间',
+        ]
         _apply_header_style(ws, headers)
 
-        tasks = Task.objects.select_related('project', 'assignee', 'creator')
-        if project_id:
-            tasks = tasks.filter(project_id=project_id)
-        tasks = tasks.order_by('-created_at')
+        tasks = _task_export_queryset(project_id, filters, user)
         data_rows = []
         for t in tasks:
             data_rows.append([
                 t.title,
                 t.project.name if t.project else '',
                 t.assignee.name if t.assignee else '',
+                '、'.join(user.name for user in t.collaborators.all()),
+                t.reviewer.name if t.reviewer else '',
                 t.creator.name if t.creator else '',
                 t.get_status_display(),
+                t.get_priority_display(),
                 t.deadline.strftime('%Y-%m-%d %H:%M') if t.deadline else '',
                 t.completed_at.strftime('%Y-%m-%d %H:%M') if t.completed_at else '',
                 '是' if t.is_overdue else '否',
+                t.delay_reason,
+                t.completion_note,
                 t.created_at.strftime('%Y-%m-%d %H:%M') if t.created_at else '',
             ])
         _apply_body_style(ws, data_rows)
@@ -296,33 +412,16 @@ class ExcelExportService:
         return _wb_to_response(wb, '成员列表')
 
     @staticmethod
-    def export_competitions():
-        """导出比赛列表 Excel"""
-        from apps.competitions.models import Competition
+    def export_competitions(search='', level='', status='', project_id=None):
+        """按比赛列表当前筛选导出全流程 Excel。"""
         wb = openpyxl.Workbook()
         ws = wb.active
         ws.title = '比赛列表'
-        headers = ['比赛名称', '比赛类型', '级别', '主办单位', '状态', '是否晋级',
-                   '是否获奖', '获奖等级', '报名日期', '创建时间']
-        _apply_header_style(ws, headers)
+        _apply_header_style(ws, _COMPETITION_EXPORT_HEADERS)
 
-        competitions = Competition.objects.select_related('project').all().order_by('-created_at')
-        data_rows = []
-        for c in competitions:
-            data_rows.append([
-                c.name,
-                c.comp_type,
-                c.get_level_display(),
-                c.organizer,
-                c.get_status_display(),
-                '是' if c.is_promoted else '否',
-                '是' if c.is_awarded else '否',
-                c.award_level,
-                c.register_date.strftime('%Y-%m-%d') if c.register_date else '',
-                c.created_at.strftime('%Y-%m-%d %H:%M') if c.created_at else '',
-            ])
+        data_rows = _competition_export_rows(search, level, status, project_id)
         _apply_body_style(ws, data_rows)
-        _auto_column_width(ws, headers, data_rows)
+        _auto_column_width(ws, _COMPETITION_EXPORT_HEADERS, data_rows)
         return _wb_to_response(wb, '比赛列表')
 
 
@@ -419,26 +518,30 @@ class CsvExportService:
         return CsvExportService._csv_to_response(headers, data_rows, '经费明细')
 
     @staticmethod
-    def export_tasks(project_id=None):
-        """导出任务清单 CSV（可指定项目）"""
-        from apps.tasks.models import Task
-        headers = ['任务标题', '所属项目', '指派给', '创建者', '状态', '截止时间',
-                   '完成时间', '是否逾期', '创建时间']
-        tasks = Task.objects.select_related('project', 'assignee', 'creator')
-        if project_id:
-            tasks = tasks.filter(project_id=project_id)
-        tasks = tasks.order_by('-created_at')
+    def export_tasks(project_id=None, filters=None, user=None):
+        """按任务列表当前筛选导出任务清单 CSV。"""
+        headers = [
+            '任务标题', '所属项目', '指派给', '协作者', '审核人', '创建者',
+            '状态', '优先级', '截止时间', '完成时间', '是否逾期',
+            '延期原因', '完成说明', '创建时间',
+        ]
+        tasks = _task_export_queryset(project_id, filters, user)
         data_rows = []
         for t in tasks:
             data_rows.append([
                 t.title,
                 t.project.name if t.project else '',
                 t.assignee.name if t.assignee else '',
+                '、'.join(user.name for user in t.collaborators.all()),
+                t.reviewer.name if t.reviewer else '',
                 t.creator.name if t.creator else '',
                 t.get_status_display(),
+                t.get_priority_display(),
                 t.deadline.strftime('%Y-%m-%d %H:%M') if t.deadline else '',
                 t.completed_at.strftime('%Y-%m-%d %H:%M') if t.completed_at else '',
                 '是' if t.is_overdue else '否',
+                t.delay_reason,
+                t.completion_note,
                 t.created_at.strftime('%Y-%m-%d %H:%M') if t.created_at else '',
             ])
         return CsvExportService._csv_to_response(headers, data_rows, '任务清单')
@@ -519,24 +622,11 @@ class CsvExportService:
         return CsvExportService._csv_to_response(headers, data_rows, '成员列表')
 
     @staticmethod
-    def export_competitions():
-        """导出比赛列表 CSV"""
-        from apps.competitions.models import Competition
-        headers = ['比赛名称', '比赛类型', '级别', '主办单位', '状态', '是否晋级',
-                   '是否获奖', '获奖等级', '报名日期', '创建时间']
-        competitions = Competition.objects.select_related('project').all().order_by('-created_at')
-        data_rows = []
-        for c in competitions:
-            data_rows.append([
-                c.name,
-                c.comp_type,
-                c.get_level_display(),
-                c.organizer,
-                c.get_status_display(),
-                '是' if c.is_promoted else '否',
-                '是' if c.is_awarded else '否',
-                c.award_level,
-                c.register_date.strftime('%Y-%m-%d') if c.register_date else '',
-                c.created_at.strftime('%Y-%m-%d %H:%M') if c.created_at else '',
-            ])
-        return CsvExportService._csv_to_response(headers, data_rows, '比赛列表')
+    def export_competitions(search='', level='', status='', project_id=None):
+        """按比赛列表当前筛选导出全流程 CSV。"""
+        data_rows = _competition_export_rows(search, level, status, project_id)
+        return CsvExportService._csv_to_response(
+            _COMPETITION_EXPORT_HEADERS,
+            data_rows,
+            '比赛列表',
+        )

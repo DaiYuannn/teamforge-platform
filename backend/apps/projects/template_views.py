@@ -10,6 +10,7 @@ from rest_framework.viewsets import ModelViewSet
 from common.response import success_response, error_response
 from common.mixins import MultiSerializerMixin, MultiPermissionMixin
 from common.permissions import IsTeacherOrAdmin
+from common.project_access import is_external_collaborator
 from .template_models import ProjectTemplate
 from .template_serializers import (
     ProjectTemplateSerializer,
@@ -47,6 +48,12 @@ class ProjectTemplateViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelVi
     filterset_fields = ['category', 'is_active', 'created_by']
     search_fields = ['name', 'description', 'category']
     ordering_fields = ['created_at', 'name']
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        if is_external_collaborator(self.request.user):
+            return queryset.none()
+        return queryset
 
     def create(self, request, *args, **kwargs):
         """创建模板，自动设置创建人为当前用户"""

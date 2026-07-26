@@ -8,12 +8,27 @@
 - RankingObjectionSerializer / RankingObjectionCreateSerializer / RankingObjectionReviewSerializer: 排名异议
 """
 from rest_framework import serializers
+from django.utils import timezone
 
 from .models import Contribution, MemberRanking, RankingObjection
 from apps.users.serializers import UserListSerializer
 
 
 # ============ 贡献记录 ============
+
+def _create_proof_asset(contribution, uploaded_file, uploader):
+    """Store a contribution proof as an internal project file."""
+    from apps.files.models import FileAsset
+
+    return FileAsset.objects.create(
+        project=contribution.project,
+        name=uploaded_file.name,
+        file=uploaded_file,
+        level=FileAsset.Level.INTERNAL,
+        size=uploaded_file.size,
+        content_type=getattr(uploaded_file, 'content_type', '') or '',
+        uploader=uploader,
+    )
 
 class ContributionSerializer(serializers.ModelSerializer):
     """贡献记录完整序列化器（含关联名称）"""
@@ -26,6 +41,7 @@ class ContributionSerializer(serializers.ModelSerializer):
     reviewer_name = serializers.CharField(source='reviewer.name', read_only=True, default='')
     filled_by_name = serializers.CharField(source='filled_by.name', read_only=True, default='')
     proof_file_name = serializers.CharField(source='proof_file.name', read_only=True, default='')
+    proof_upload = serializers.FileField(write_only=True, required=False)
 
     class Meta:
         model = Contribution
@@ -35,7 +51,7 @@ class ContributionSerializer(serializers.ModelSerializer):
             'description', 'content', 'score', 'weight',
             'status', 'status_display',
             'related_object_id', 'period',
-            'proof_file', 'proof_file_name',
+            'proof_file', 'proof_file_name', 'proof_upload',
             'filled_by', 'filled_by_name',
             'reviewer', 'reviewer_name', 'reviewed_at', 'review_opinion',
             'created_at', 'updated_at',
@@ -44,6 +60,20 @@ class ContributionSerializer(serializers.ModelSerializer):
             'id', 'score', 'status', 'reviewer', 'reviewed_at',
             'review_opinion', 'created_at', 'updated_at',
         )
+
+    def update(self, instance, validated_data):
+        proof_upload = validated_data.pop('proof_upload', None)
+        contribution = super().update(instance, validated_data)
+        if proof_upload:
+            request = self.context.get('request')
+            proof_asset = _create_proof_asset(
+                contribution,
+                proof_upload,
+                request.user if request and request.user.is_authenticated else None,
+            )
+            contribution.proof_file = proof_asset
+            contribution.save(update_fields=['proof_file', 'updated_at'])
+        return contribution
 
 
 class ContributionListSerializer(serializers.ModelSerializer):
@@ -70,16 +100,19 @@ class ContributionListSerializer(serializers.ModelSerializer):
 class ContributionCreateSerializer(serializers.ModelSerializer):
     """贡献记录创建序列化器"""
 
+    proof_upload = serializers.FileField(write_only=True, required=False)
+
     class Meta:
         model = Contribution
         fields = (
             'id', 'project', 'user', 'contribution_type',
-            'content', 'proof_file', 'period',
+            'content', 'proof_file', 'proof_upload', 'period',
         )
         read_only_fields = ('id',)
 
     def create(self, validated_data):
         """创建贡献记录时自动设置填写人，默认待审核状态"""
+        proof_upload = validated_data.pop('proof_upload', None)
         request = self.context.get('request')
         if request and request.user.is_authenticated:
             # 填写人默认为当前操作用户
@@ -87,7 +120,18 @@ class ContributionCreateSerializer(serializers.ModelSerializer):
             # 若未指定贡献本人，则默认为当前操作用户
             validated_data.setdefault('user', request.user)
         validated_data.setdefault('status', Contribution.Status.PENDING)
-        return super().create(validated_data)
+        if not validated_data.get('period'):
+            validated_data['period'] = timezone.localdate().strftime('%Y-%m')
+        contribution = super().create(validated_data)
+        if proof_upload:
+            proof_asset = _create_proof_asset(
+                contribution,
+                proof_upload,
+                request.user if request and request.user.is_authenticated else None,
+            )
+            contribution.proof_file = proof_asset
+            contribution.save(update_fields=['proof_file', 'updated_at'])
+        return contribution
 
 
 class ContributionReviewSerializer(serializers.Serializer):
@@ -121,12 +165,17 @@ class MemberRankingSerializer(serializers.ModelSerializer):
             'task_completed_count', 'project_count', 'competition_count',
             'ip_contribution_count',
             'is_published', 'is_public',
+            'rule_version', 'rule_snapshot', 'score_snapshot',
+            'generated_at', 'confirmed_at', 'confirmed_by',
             'created_at', 'updated_at',
         )
         read_only_fields = (
             'id', 'total_score', 'rank', 'task_completed_count',
             'project_count', 'competition_count', 'ip_contribution_count',
-            'is_published', 'is_public', 'created_at', 'updated_at',
+            'is_published', 'is_public',
+            'rule_version', 'rule_snapshot', 'score_snapshot',
+            'generated_at', 'confirmed_at', 'confirmed_by',
+            'created_at', 'updated_at',
         )
 
 
@@ -165,13 +214,21 @@ class RankingObjectionSerializer(serializers.ModelSerializer):
             'leader_opinion', 'leader_reviewer', 'leader_reviewer_name', 'leader_reviewed_at',
             'teacher_opinion', 'teacher_confirmer', 'teacher_confirmer_name',
             'teacher_confirmed_at', 'final_result',
+            'original_rank', 'corrected_rank',
+            'original_total_score', 'corrected_total_score',
+            'adjustment_snapshot', 'adjustment_applied_at',
+            'adjustment_applied_by',
             'handler', 'created_at', 'updated_at',
         )
         read_only_fields = (
             'id', 'objector', 'status', 'reply',
             'leader_opinion', 'leader_reviewer', 'leader_reviewed_at',
             'teacher_opinion', 'teacher_confirmer', 'teacher_confirmed_at',
-            'final_result', 'handler', 'created_at', 'updated_at',
+            'final_result', 'original_rank', 'corrected_rank',
+            'original_total_score', 'corrected_total_score',
+            'adjustment_snapshot', 'adjustment_applied_at',
+            'adjustment_applied_by',
+            'handler', 'created_at', 'updated_at',
         )
 
 
@@ -208,6 +265,13 @@ class RankingObjectionReviewSerializer(serializers.Serializer):
     final_status = serializers.ChoiceField(
         choices=['approved', 'rejected'], required=False
     )
+    corrected_rank = serializers.IntegerField(min_value=1, required=False)
+    corrected_total_score = serializers.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        min_value=0,
+        required=False,
+    )
 
     def validate(self, attrs):
         """校验处理动作对应的必填字段"""
@@ -218,4 +282,12 @@ class RankingObjectionReviewSerializer(serializers.Serializer):
         elif action == 'teacher_confirm':
             if not attrs.get('final_status'):
                 raise serializers.ValidationError({'final_status': '老师确认需指定最终状态'})
+            if (
+                attrs.get('final_status') == 'approved'
+                and attrs.get('corrected_rank') is None
+                and attrs.get('corrected_total_score') is None
+            ):
+                raise serializers.ValidationError({
+                    'corrected_rank': '异议成立时需填写更正名次或更正总分'
+                })
         return attrs

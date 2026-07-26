@@ -10,7 +10,6 @@ from .statistics_views import MemberStatisticsView
 from .workload_views import MemberWorkloadView
 from .skill_views import MemberSkillViewSet
 from .growth_views import MemberGrowthViewSet
-from .two_factor_views import Generate2FAView, Verify2FAView, Disable2FAView
 from .role_views import CustomRoleViewSet, UserRoleAssignmentViewSet
 from .oauth_views import (
     OAuthProvidersView, OAuthCallbackView, OAuthBindListView,
@@ -45,10 +44,6 @@ urlpatterns = [
     path('statistics/', MemberStatisticsView.as_view(), name='member-statistics'),
     # 成员工作量分析
     path('workload/', MemberWorkloadView.as_view(), name='member-workload'),
-    # 双因素认证（2FA）
-    path('2fa/generate/', Generate2FAView.as_view(), name='2fa-generate'),
-    path('2fa/verify/', Verify2FAView.as_view(), name='2fa-verify'),
-    path('2fa/disable/', Disable2FAView.as_view(), name='2fa-disable'),
     # 第三方登录（OAuth）
     path('oauth/providers/', OAuthProvidersView.as_view(), name='oauth-providers'),
     path('oauth/callback/', OAuthCallbackView.as_view(), name='oauth-callback'),

@@ -6,6 +6,7 @@
 - 禁用 debug toolbar
 """
 import os
+import tempfile
 
 from .base import *  # noqa: F401,F403
 
@@ -35,6 +36,7 @@ CELERY_TASK_ALWAYS_EAGER = True
 CELERY_TASK_EAGER_PROPAGATES = True
 CELERY_BROKER_URL = 'memory://'
 CELERY_RESULT_BACKEND = 'cache+memory://'
+NOTIFICATION_STREAM_ENABLED = False
 
 # 内存邮件后端
 EMAIL_BACKEND = 'django.core.mail.backends.locmem.EmailBackend'
@@ -48,5 +50,10 @@ PASSWORD_HASHERS = [
 INSTALLED_APPS = [app for app in INSTALLED_APPS if app != 'debug_toolbar']  # noqa: F405
 MIDDLEWARE = [m for m in MIDDLEWARE if 'debug_toolbar' not in m]  # noqa: F405
 
-# 测试环境媒体文件
-MEDIA_ROOT = str(BASE_DIR / 'test_media')
+# 每次测试进程使用独立临时媒体目录，退出时自动清理，避免测试上传物
+# 污染工作区或让后续用例误读上一轮残留文件。
+TEST_MEDIA_DIRECTORY = tempfile.TemporaryDirectory(
+    prefix='team-management-test-media-',
+)
+MEDIA_ROOT = TEST_MEDIA_DIRECTORY.name
+PROTECTED_MEDIA_USE_X_ACCEL_REDIRECT = False

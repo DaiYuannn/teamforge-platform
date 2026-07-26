@@ -3,12 +3,11 @@
 - MemberSkillViewSet: 成员技能 CRUD
 """
 from rest_framework import status
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
 
 from common.response import success_response, error_response
 from common.mixins import MultiSerializerMixin, MultiPermissionMixin
-from common.permissions import IsTeacherOrAdmin
+from common.permissions import IsInternalTeamMember, IsTeacherOrAdmin
 from .skill_models import MemberSkill
 from .skill_serializers import MemberSkillSerializer
 
@@ -30,13 +29,14 @@ class MemberSkillViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSe
     }
 
     permission_classes_by_action = {
-        'list': [IsAuthenticated],
-        'retrieve': [IsAuthenticated],
+        'list': [IsInternalTeamMember],
+        'retrieve': [IsInternalTeamMember],
         'create': [IsTeacherOrAdmin],
         'update': [IsTeacherOrAdmin],
         'partial_update': [IsTeacherOrAdmin],
         'destroy': [IsTeacherOrAdmin],
     }
+    permission_classes = [IsInternalTeamMember]
 
     filterset_fields = ['user', 'name', 'certified']
     search_fields = ['name', 'user__name']

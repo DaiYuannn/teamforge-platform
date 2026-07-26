@@ -8,10 +8,10 @@ from decimal import Decimal
 
 from django.db.models import Count, Q, Sum
 from django.utils import timezone
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
 from common.response import success_response, error_response
+from common.permissions import IsInternalTeamMember
 from apps.projects.models import Project, ProjectMember, ProjectStageLog
 from apps.tasks.models import Task
 from apps.finance.models import FinanceBudget, FinanceExpense
@@ -27,7 +27,8 @@ class SmartReviewView(APIView):
     自动生成复盘建议：成果总结、问题领域、时间线分析、团队表现
     """
 
-    permission_classes = [IsAuthenticated]
+    # 智能复盘会返回经费汇总，必须与财务模块保持同一内部数据域。
+    permission_classes = [IsInternalTeamMember]
 
     def get(self, request):
         project_id = request.query_params.get('project_id')
@@ -84,7 +85,9 @@ def _generate_smart_review(project):
         })
 
     # ---------- 团队表现 ----------
-    members = ProjectMember.objects.filter(project=project).select_related('user')
+    members = ProjectMember.objects.filter(
+        project=project, status=ProjectMember.Status.ACTIVE
+    ).select_related('user')
     team_performance = []
     for member in members:
         member_tasks = tasks.filter(assignee=member.user)
@@ -126,15 +129,13 @@ def _generate_smart_review(project):
             'label': '未关闭风险',
             'detail': f'共 {open_risks} 个未关闭风险',
         })
-    stale = (
-        project.last_leader_update is None
-        or project.last_leader_update < now - timedelta(days=14)
-    )
+    update_baseline = project.last_leader_update or project.created_at
+    stale = update_baseline <= now - timedelta(days=11)
     if stale:
         problem_areas.append({
             'area': 'stale_update',
             'label': '更新滞后',
-            'detail': '项目负责人超过 14 天未更新',
+            'detail': '项目负责人超过 11 天未更新',
         })
     if completion_rate < 0.5 and total_tasks > 0:
         problem_areas.append({

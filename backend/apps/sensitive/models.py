@@ -80,6 +80,25 @@ class SensitiveData(models.Model):
     def __str__(self):
         return f'[敏感]{self.title}'
 
+    def save(self, *args, **kwargs):
+        """
+        关联附件在敏感资料写入前立即升级为敏感级别，并撤销全部有效分享。
+
+        即使后续敏感资料保存失败，附件保持更严格权限也是安全的失败方式。
+        """
+        if self.file_attachment_id:
+            from apps.files.models import FileAsset
+            from apps.files.share_models import FileShareLink
+
+            FileAsset.objects.filter(pk=self.file_attachment_id).update(
+                level=FileAsset.Level.SENSITIVE
+            )
+            FileShareLink.objects.filter(
+                file_id=self.file_attachment_id,
+                is_active=True,
+            ).update(is_active=False)
+        return super().save(*args, **kwargs)
+
     def encrypt_content(self, plaintext):
         """加密内容并保存"""
         from common.encryption import get_field_cipher
@@ -189,6 +208,17 @@ class SensitiveAccessRequest(models.Model):
         from django.utils import timezone
         if self.status != self.Status.APPROVED:
             return False
-        if self.access_expires_at and timezone.now() > self.access_expires_at:
+        if not self.access_expires_at:
+            return False
+        if timezone.now() >= self.access_expires_at:
             return False
         return True
+
+    @property
+    def can_download_attachment(self):
+        """是否满足申请人下载附件的全部业务条件。"""
+        return bool(
+            self.is_download
+            and self.is_accessible
+            and self.sensitive_data.file_attachment_id
+        )

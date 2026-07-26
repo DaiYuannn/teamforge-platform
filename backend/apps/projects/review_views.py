@@ -8,6 +8,7 @@ from rest_framework.permissions import IsAuthenticated
 from django.utils import timezone
 
 from common.response import success_response, error_response
+from common.project_access import scope_project_queryset, user_can_access_project
 from .review_models import ProjectReview
 from .review_serializers import ProjectReviewSerializer
 
@@ -18,7 +19,18 @@ class ProjectReviewViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        return ProjectReview.objects.select_related('project', 'reviewer').all()
+        queryset = ProjectReview.objects.select_related('project', 'reviewer').all()
+        return scope_project_queryset(
+            queryset,
+            self.request.user,
+            project_lookup='project',
+        )
+
+    def check_object_permissions(self, request, obj):
+        super().check_object_permissions(request, obj)
+        write = request.method not in ('GET', 'HEAD', 'OPTIONS')
+        if not user_can_access_project(request.user, obj.project, write=write):
+            self.permission_denied(request, message='无权访问该项目复盘')
 
     def perform_create(self, serializer):
         """创建复盘：仅老师/管理员可创建"""

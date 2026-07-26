@@ -3,7 +3,7 @@
     <PageHeader title="项目历程" subtitle="项目甘特图 · 阶段与里程碑全景" />
 
     <!-- 筛选栏 -->
-    <div class="card gantt-toolbar">
+    <div class="surface-panel gantt-toolbar">
       <div class="toolbar-left">
         <span class="toolbar-label">项目：</span>
         <el-select
@@ -11,7 +11,7 @@
           clearable
           filterable
           placeholder="全部项目"
-          style="width: 240px"
+          class="project-select"
           @change="loadGantt"
         >
           <el-option
@@ -27,7 +27,7 @@
           v-model="selectedStatus"
           clearable
           placeholder="全部状态"
-          style="width: 140px"
+          class="status-select"
           @change="loadGantt"
         >
           <el-option
@@ -41,29 +41,41 @@
 
       <div class="toolbar-right">
         <span class="legend-label">图例：</span>
-        <span class="legend-item"><i class="legend-bar" style="background: #409EFF"></i>进行中</span>
-        <span class="legend-item"><i class="legend-bar" style="background: #E6A23C"></i>已暂停</span>
-        <span class="legend-item"><i class="legend-bar" style="background: #909399"></i>已关闭</span>
-        <span class="legend-item"><i class="legend-diamond" style="color: #F56C6C">◆</i>里程碑</span>
+        <span class="legend-item"><i class="legend-bar active"></i>进行中</span>
+        <span class="legend-item"><i class="legend-bar paused"></i>已暂停</span>
+        <span class="legend-item"><i class="legend-bar closed"></i>已关闭</span>
+        <span class="legend-item"><i class="legend-diamond">◆</i>里程碑</span>
       </div>
     </div>
 
     <!-- 甘特图 -->
-    <div class="card mt-16">
+    <section class="surface-panel chart-panel">
+      <div class="section-bar">
+        <h2>项目时间轴</h2>
+        <span>{{ ganttProjects.length }} 个项目</span>
+      </div>
       <div v-loading="loading" class="gantt-wrapper">
         <el-empty v-if="!loading && ganttProjects.length === 0" description="暂无项目数据" />
-        <div
-          ref="chartRef"
-          class="gantt-chart"
-          :style="{ display: ganttProjects.length > 0 ? 'block' : 'none', height: chartHeight + 'px' }"
-        ></div>
+        <div v-show="ganttProjects.length > 0" class="gantt-scroll">
+          <div
+            ref="chartRef"
+            class="gantt-chart"
+            :style="{ height: chartHeight + 'px' }"
+          ></div>
+        </div>
       </div>
-    </div>
+    </section>
 
     <!-- 项目明细列表 -->
-    <div class="card mt-16">
-      <h3 class="section-title">项目明细</h3>
-      <el-table :data="ganttProjects" border size="small" style="width: 100%">
+    <section class="surface-panel detail-panel">
+      <div class="section-bar">
+        <h2>项目明细</h2>
+        <span>阶段、日期与里程碑</span>
+      </div>
+      <el-table v-if="!isMobile" :data="ganttProjects" size="small" style="width: 100%">
+        <template #empty>
+          <EmptyState text="暂无项目明细" :compact="true" />
+        </template>
         <el-table-column prop="project_name" label="项目名称" min-width="160" show-overflow-tooltip />
         <el-table-column prop="project_code" label="编号" width="110" />
         <el-table-column prop="leader_name" label="负责人" width="100" />
@@ -97,7 +109,32 @@
           </template>
         </el-table-column>
       </el-table>
-    </div>
+
+      <div v-else class="mobile-projects">
+        <EmptyState v-if="ganttProjects.length === 0" text="暂无项目明细" :compact="true" />
+        <article v-for="row in ganttProjects" :key="row.project_id" class="mobile-project">
+          <div class="mobile-project-heading">
+            <div>
+              <h3>{{ row.project_name }}</h3>
+              <span>{{ row.project_code }}</span>
+            </div>
+            <el-tag :type="getStatusTagType(row.status) as any" size="small">
+              {{ row.status_display }}
+            </el-tag>
+          </div>
+          <div class="mobile-project-meta">
+            <span>负责人 {{ row.leader_name || '-' }}</span>
+            <el-tag size="small" effect="plain">{{ row.current_stage_display || '-' }}</el-tag>
+            <span v-if="row.milestones?.length">{{ row.milestones.length }} 个里程碑</span>
+          </div>
+          <div class="mobile-project-dates">
+            <span><small>开始</small>{{ formatDate(row.start_date) }}</span>
+            <span><small>计划结束</small>{{ formatDate(row.planned_end_date) }}</span>
+            <span v-if="row.actual_end_date"><small>实际结束</small>{{ formatDate(row.actual_end_date) }}</span>
+          </div>
+        </article>
+      </div>
+    </section>
   </div>
 </template>
 
@@ -111,6 +148,10 @@ import { getProjects } from '@/api/projects'
 import type { Project } from '@/types'
 import { PROJECT_STATUS_MAP } from '@/utils/constants'
 import { formatDate } from '@/utils/format'
+import EmptyState from '@/components/EmptyState.vue'
+import { useDevice } from '@/composables/useDevice'
+
+const { isMobile } = useDevice()
 
 /**
  * 项目 Gantt 历程条页面
@@ -130,18 +171,18 @@ let chart: echarts.ECharts | null = null
 
 // 状态颜色映射
 const STATUS_COLOR_MAP: Record<string, string> = {
-  active: '#409EFF',
-  paused: '#E6A23C',
-  closed: '#909399',
+  active: '#176b73',
+  paused: '#a66116',
+  closed: '#4c6475',
 }
 
 // 里程碑级别颜色映射
 const MILESTONE_COLOR_MAP: Record<string, string> = {
-  national: '#F56C6C',
-  provincial: '#E6A23C',
-  municipal: '#409EFF',
-  school: '#67C23A',
-  enterprise: '#9B59B6',
+  national: '#b64242',
+  provincial: '#a66116',
+  municipal: '#315c86',
+  school: '#237a55',
+  enterprise: '#76559b',
 }
 
 // 获取状态 Tag 类型
@@ -151,17 +192,17 @@ function getStatusTagType(status: string): string {
 
 // 获取状态颜色
 function getStatusColor(status: string): string {
-  return STATUS_COLOR_MAP[status] || '#409EFF'
+  return STATUS_COLOR_MAP[status] || '#176b73'
 }
 
 // 获取里程碑颜色
 function getMilestoneColor(level: string): string {
-  return MILESTONE_COLOR_MAP[level] || '#F56C6C'
+  return MILESTONE_COLOR_MAP[level] || '#b64242'
 }
 
 // 图表高度（根据项目数量动态计算）
 const chartHeight = computed(() => {
-  return Math.max(300, ganttProjects.value.length * 56 + 100)
+  return Math.max(280, ganttProjects.value.length * 48 + 88)
 })
 
 // 加载项目列表（用于筛选）
@@ -262,7 +303,7 @@ function renderChart(): void {
         milestoneData.push({
           value: [dayjs(m.date).valueOf(), idx],
           itemStyle: {
-            color: m.is_awarded ? getMilestoneColor(m.award_level || m.level) : '#fff',
+            color: m.is_awarded ? getMilestoneColor(m.award_level || m.level) : '#ffffff',
             borderColor: getMilestoneColor(m.level),
             borderWidth: 2,
           },
@@ -321,7 +362,7 @@ function renderChart(): void {
           textAlign: 'left',
           textVerticalAlign: 'middle',
           fontSize: 11,
-          fill: '#fff',
+          fill: '#ffffff',
           fontWeight: 'bold',
         },
         silent: true,
@@ -388,12 +429,12 @@ function renderChart(): void {
       max: maxTime === -Infinity ? undefined : maxTime,
       axisLabel: {
         fontSize: 12,
-        color: '#606266',
+        color: '#46524e',
         formatter: (val: number) => {
           return dayjs(val).format('YYYY-MM-DD')
         },
       },
-      splitLine: { show: true, lineStyle: { type: 'dashed', color: '#ebeef5' } },
+      splitLine: { show: true, lineStyle: { type: 'dashed', color: '#e6ebe9' } },
     },
     yAxis: {
       type: 'category',
@@ -401,7 +442,7 @@ function renderChart(): void {
       inverse: true,
       axisLabel: {
         fontSize: 12,
-        color: '#303133',
+        color: '#18221f',
         width: 160,
         overflow: 'truncate',
       },
@@ -440,10 +481,10 @@ function renderChart(): void {
             formatter: '今日',
             position: 'insideEndTop',
             fontSize: 11,
-            color: '#F56C6C',
+            color: '#b64242',
           },
           lineStyle: {
-            color: '#F56C6C',
+            color: '#b64242',
             type: 'dashed',
             width: 1.5,
           },
@@ -481,16 +522,13 @@ onUnmounted(() => {
 
 <style lang="scss" scoped>
 .project-gantt-view {
-  .mt-16 {
-    margin-top: 16px;
-  }
-
   .gantt-toolbar {
     display: flex;
     align-items: center;
     justify-content: space-between;
     flex-wrap: wrap;
-    gap: 16px;
+    gap: 12px 20px;
+    padding: 10px 14px;
 
     .toolbar-left {
       display: flex;
@@ -501,7 +539,7 @@ onUnmounted(() => {
 
     .toolbar-label {
       font-size: 14px;
-      color: #606266;
+      color: var(--color-text-muted);
     }
 
     .toolbar-right {
@@ -509,7 +547,7 @@ onUnmounted(() => {
       align-items: center;
       gap: 12px;
       font-size: 13px;
-      color: #909399;
+      color: var(--color-text-muted);
       flex-wrap: wrap;
 
       .legend-label {
@@ -527,44 +565,133 @@ onUnmounted(() => {
         width: 18px;
         height: 10px;
         border-radius: 2px;
+
+        &.active { background: var(--color-primary); }
+        &.paused { background: var(--color-warning); }
+        &.closed { background: var(--color-info); }
       }
 
       .legend-diamond {
+        color: var(--color-danger);
         font-size: 14px;
         line-height: 1;
       }
     }
   }
 
-  .gantt-wrapper {
-    min-height: 300px;
-    width: 100%;
+  .project-select { width: 240px; }
+  .status-select { width: 140px; }
 
-    .gantt-chart {
-      width: 100%;
-      min-height: 300px;
+  .chart-panel,
+  .detail-panel {
+    padding: 0;
+    margin-top: var(--space-4);
+    overflow: hidden;
+  }
+
+  .section-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-height: 52px;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--color-border-light);
+
+    h2 {
+      margin: 0;
+      color: var(--color-text);
+      font-size: 14px;
+      font-weight: 600;
+    }
+
+    span {
+      color: var(--color-text-muted);
+      font-size: 12px;
     }
   }
 
-  .section-title {
-    font-size: 15px;
-    font-weight: 600;
-    color: #303133;
-    margin: 0 0 16px;
-    position: relative;
-    padding-left: 12px;
+  .gantt-wrapper {
+    min-height: 300px;
+    width: 100%;
+    padding: 8px 12px 0;
 
-    &::before {
-      content: '';
-      position: absolute;
-      left: 0;
-      top: 50%;
-      transform: translateY(-50%);
-      width: 4px;
-      height: 16px;
-      border-radius: 2px;
-      background: #409eff;
+    .gantt-scroll {
+      width: 100%;
+      overflow-x: auto;
+      overflow-y: hidden;
     }
+
+    .gantt-chart {
+      width: 100%;
+      min-width: 820px;
+      min-height: 300px;
+    }
+  }
+}
+
+.mobile-projects {
+  min-height: 160px;
+  padding: 0 12px;
+}
+
+.mobile-project {
+  padding: 13px 0;
+  border-bottom: 1px solid var(--color-border-light);
+
+  &:last-child { border-bottom: 0; }
+}
+
+.mobile-project-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+
+  h3 {
+    margin: 0;
+    color: var(--color-text);
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 1.45;
+  }
+
+  span {
+    color: var(--color-text-muted);
+    font-size: 12px;
+  }
+}
+
+.mobile-project-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  margin-top: 8px;
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
+.mobile-project-dates {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  padding: 8px 10px;
+  margin-top: 8px;
+  background: var(--color-surface-subtle);
+  border-radius: var(--radius-xs);
+
+  span {
+    display: flex;
+    flex-direction: column;
+    color: var(--color-text);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  small {
+    margin-bottom: 2px;
+    color: var(--color-text-muted);
+    font-size: 11px;
   }
 }
 
@@ -572,8 +699,38 @@ onUnmounted(() => {
   .project-gantt-view {
     .gantt-toolbar {
       flex-direction: column;
-      align-items: flex-start;
+      align-items: stretch;
+      padding: 10px 12px;
+
+      .toolbar-left {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr);
+        gap: 8px;
+      }
+
+      .project-select,
+      .status-select {
+        width: 100%;
+      }
+
+      .toolbar-right {
+        padding-top: 8px;
+        border-top: 1px solid var(--color-border-light);
+      }
     }
+
+    .gantt-wrapper {
+      padding: 4px 6px 0;
+
+      .gantt-chart {
+        width: 860px;
+        min-width: 860px;
+      }
+    }
+  }
+
+  .mobile-project-dates {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 </style>

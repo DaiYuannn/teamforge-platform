@@ -2,16 +2,21 @@
   <div class="page-container" v-permission="'sys_admin'">
     <PageHeader title="第三方集成配置" subtitle="管理企业微信、Webhook、邮件等通知渠道">
       <template #actions>
-        <el-button type="success" :icon="Promotion" @click="handleTestPush" :loading="pushLoading">测试群机器人推送</el-button>
+        <el-button :icon="Promotion" :loading="pushLoading" @click="handleTestPush">测试推送</el-button>
         <el-button type="primary" :icon="Plus" @click="handleCreate">新增配置</el-button>
-        <el-button :icon="Refresh" @click="loadConfigs">刷新</el-button>
+        <el-tooltip content="刷新配置" placement="bottom">
+          <el-button :icon="Refresh" circle aria-label="刷新配置" @click="loadConfigs" />
+        </el-tooltip>
       </template>
     </PageHeader>
 
-    <el-tabs v-model="activeTab" class="card tabs-card" @tab-change="handleTabChange">
+    <el-tabs v-model="activeTab" class="surface-panel integration-workspace" @tab-change="handleTabChange">
       <!-- 集成配置 Tab -->
-      <el-tab-pane label="集成配置" name="configs">
-        <el-table v-loading="configLoading" :data="configList" border stripe>
+      <el-tab-pane :label="`集成配置 ${configList.length}`" name="configs">
+        <el-table v-if="!isMobile" v-loading="configLoading" :data="configList">
+          <template #empty>
+            <EmptyState text="暂无集成配置" description="新建配置后可启用消息推送" :compact="true" />
+          </template>
           <el-table-column prop="name" label="名称" min-width="140" />
           <el-table-column prop="provider" label="Provider" width="130">
             <template #default="{ row }">
@@ -31,18 +36,48 @@
               </el-tag>
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="140" fixed="right">
+          <el-table-column label="操作" width="92" align="right" fixed="right">
             <template #default="{ row }">
-              <el-button type="warning" link @click="handleEdit(row as any)">编辑</el-button>
-              <el-button type="danger" link @click="handleDelete(row as any)">删除</el-button>
+              <el-tooltip content="编辑配置" placement="top">
+                <el-button text :icon="Edit" aria-label="编辑配置" @click="handleEdit(row as any)" />
+              </el-tooltip>
+              <el-tooltip content="删除配置" placement="top">
+                <el-button text type="danger" :icon="Delete" aria-label="删除配置" @click="handleDelete(row as any)" />
+              </el-tooltip>
             </template>
           </el-table-column>
         </el-table>
+
+        <div v-else v-loading="configLoading" class="mobile-records">
+          <EmptyState v-if="configList.length === 0 && !configLoading" text="暂无集成配置" :compact="true" />
+          <article v-for="row in configList" :key="row.id" class="mobile-record">
+            <div class="record-heading">
+              <h2>{{ row.name }}</h2>
+              <el-tag :type="row.is_enabled ? 'success' : 'info'" size="small">
+                {{ row.is_enabled ? '启用' : '禁用' }}
+              </el-tag>
+            </div>
+            <div class="record-meta">
+              <el-tag :type="INTEGRATION_PROVIDER_MAP[row.provider]?.tagType as any" size="small" effect="plain">
+                {{ INTEGRATION_PROVIDER_MAP[row.provider]?.label || row.provider }}
+              </el-tag>
+              <span v-if="row.app_id">应用 ID：{{ row.app_id }}</span>
+            </div>
+            <p class="record-address">{{ row.webhook_url || '未配置 Webhook 地址' }}</p>
+            <div class="record-actions">
+              <el-button text :icon="Edit" @click="handleEdit(row as any)">编辑</el-button>
+              <el-button text type="danger" :icon="Delete" @click="handleDelete(row as any)">删除</el-button>
+            </div>
+          </article>
+        </div>
       </el-tab-pane>
 
       <!-- 集成日志 Tab -->
-      <el-tab-pane label="集成日志" name="logs">
-        <el-table v-loading="logLoading" :data="logList" border stripe>
+      <el-tab-pane :label="`集成日志 ${logList.length}`" name="logs">
+        <el-table v-if="!isMobile" v-loading="logLoading" :data="logList">
+          <template #empty>
+            <EmptyState text="暂无集成日志" :compact="true" />
+          </template>
           <el-table-column prop="config_name" label="配置名称" width="140" />
           <el-table-column prop="event_type" label="事件类型" width="140" />
           <el-table-column prop="status" label="状态" width="100">
@@ -57,6 +92,23 @@
             <template #default="{ row }">{{ formatDateTime(row.created_at) }}</template>
           </el-table-column>
         </el-table>
+
+        <div v-else v-loading="logLoading" class="mobile-records">
+          <EmptyState v-if="logList.length === 0 && !logLoading" text="暂无集成日志" :compact="true" />
+          <article v-for="row in logList" :key="row.id" class="mobile-record log-record">
+            <div class="record-heading">
+              <h2>{{ row.config_name || '未知配置' }}</h2>
+              <el-tag :type="INTEGRATION_LOG_STATUS_MAP[row.status]?.tagType as any" size="small">
+                {{ INTEGRATION_LOG_STATUS_MAP[row.status]?.label || row.status }}
+              </el-tag>
+            </div>
+            <div class="record-meta">
+              <span>{{ row.event_type }}</span>
+              <time>{{ formatDateTime(row.created_at) }}</time>
+            </div>
+            <p v-if="row.message" class="record-message">{{ row.message }}</p>
+          </article>
+        </div>
       </el-tab-pane>
     </el-tabs>
 
@@ -65,9 +117,17 @@
       v-model="formDialogVisible"
       :title="isEdit ? '编辑配置' : '新增配置'"
       width="560px"
+      :fullscreen="isMobile"
+      append-to-body
       @close="handleCloseForm"
     >
-      <el-form ref="formRef" :model="form" :rules="rules" label-width="110px">
+      <el-form
+        ref="formRef"
+        :model="form"
+        :rules="rules"
+        :label-width="isMobile ? 'auto' : '110px'"
+        :label-position="isMobile ? 'top' : 'right'"
+      >
         <el-form-item label="名称" prop="name">
           <el-input v-model="form.name" placeholder="请输入配置名称" />
         </el-form-item>
@@ -105,7 +165,7 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
-import { Plus, Refresh, Promotion } from '@element-plus/icons-vue'
+import { Delete, Edit, Plus, Refresh, Promotion } from '@element-plus/icons-vue'
 import {
   getIntegrationConfigs,
   createIntegrationConfig,
@@ -117,7 +177,11 @@ import {
 import { formatDateTime } from '@/utils/format'
 import { INTEGRATION_PROVIDER_MAP, INTEGRATION_LOG_STATUS_MAP } from '@/utils/constants'
 import PageHeader from '@/components/PageHeader.vue'
+import EmptyState from '@/components/EmptyState.vue'
+import { useDevice } from '@/composables/useDevice'
 import type { IntegrationConfig, IntegrationLog } from '@/types'
+
+const { isMobile } = useDevice()
 
 const activeTab = ref('configs')
 const configLoading = ref(false)
@@ -274,7 +338,7 @@ async function handleTestPush() {
   try {
     const resp = await testBotPush({
       title: '群机器人推送测试',
-      content: '这是一条来自团队管理系统的测试消息，收到此消息说明推送配置正常工作。',
+      content: '这是一条来自团队管理平台的测试消息，收到此消息说明推送配置正常工作。',
     })
     const data = resp.data || resp
     if (data.total === 0) {
@@ -295,7 +359,92 @@ onMounted(() => {
 </script>
 
 <style lang="scss" scoped>
-.tabs-card {
-  padding: 16px;
+.integration-workspace {
+  padding: 0 16px 14px;
+  overflow: hidden;
+
+  :deep(.el-tabs__header) {
+    margin-bottom: 10px;
+  }
+
+  :deep(.el-tabs__nav-wrap::after) {
+    height: 1px;
+    background: var(--color-border-light);
+  }
+}
+
+.mobile-records {
+  min-height: 160px;
+}
+
+.mobile-record {
+  padding: 13px 0;
+  border-bottom: 1px solid var(--color-border-light);
+
+  &:last-child {
+    border-bottom: 0;
+  }
+}
+
+.record-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+
+  h2 {
+    min-width: 0;
+    margin: 0;
+    color: var(--color-text);
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 1.45;
+  }
+}
+
+.record-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin-top: 7px;
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
+.record-address,
+.record-message {
+  margin: 8px 0 0;
+  overflow: hidden;
+  color: var(--color-text-regular);
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.record-message {
+  display: -webkit-box;
+  font-family: inherit;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.record-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 5px;
+}
+
+@media screen and (max-width: 768px) {
+  .integration-workspace {
+    padding: 0 12px 10px;
+  }
+
+  :deep(.el-dialog__body) {
+    padding-bottom: calc(16px + env(safe-area-inset-bottom));
+  }
 }
 </style>

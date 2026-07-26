@@ -97,6 +97,8 @@ class Task(SoftDeleteMixin, models.Model):
     overdue_reminded = models.BooleanField('已逾期提醒', default=False)
     # 延期原因
     delay_reason = models.TextField('延期原因', blank=True, default='')
+    # 完成说明（执行人提交审核时填写，审核完成后继续保留）
+    completion_note = models.TextField('完成说明', blank=True, default='')
     # 审核人
     reviewer = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -107,6 +109,13 @@ class Task(SoftDeleteMixin, models.Model):
     )
     # 附件（JSON格式存储文件信息）
     attachments = models.TextField('附件', blank=True, default='')
+    # 结构化附件，统一复用文件中心的权限、版本和下载能力。
+    attachment_files = models.ManyToManyField(
+        'files.FileAsset',
+        related_name='tasks',
+        verbose_name='任务附件',
+        blank=True,
+    )
     # 创建时间
     created_at = models.DateTimeField('创建时间', auto_now_add=True)
     # 更新时间

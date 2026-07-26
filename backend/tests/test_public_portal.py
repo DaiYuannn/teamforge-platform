@@ -7,6 +7,7 @@ P17 公共门户增强测试
 import pytest
 from django.utils import timezone
 
+from apps.intellectual_property.models import IntellectualPropertyApplication
 from apps.notifications.models import Announcement
 from apps.projects.models import Project
 
@@ -166,3 +167,40 @@ class TestPublicPortalProjectStatistics:
         assert stats['total_projects'] == 0
         assert stats['active_projects'] == 0
         assert stats['completed_projects'] == 0
+
+
+@pytest.mark.api
+@pytest.mark.django_db
+class TestPublicPortalIPStatistics:
+    def test_authorized_and_archived_results_are_counted(
+        self, api_client, make_project
+    ):
+        project = make_project()
+        common = {
+            'related_project': project,
+            'main_writer': project.leader,
+            'created_by': project.leader,
+        }
+        IntellectualPropertyApplication.objects.create(
+            title='已授权成果',
+            application_code='IP-PORTAL-AUTHORIZED',
+            status=IntellectualPropertyApplication.Status.AUTHORIZED,
+            **common,
+        )
+        IntellectualPropertyApplication.objects.create(
+            title='已归档成果',
+            application_code='IP-PORTAL-ARCHIVED',
+            status=IntellectualPropertyApplication.Status.ARCHIVED,
+            **common,
+        )
+        IntellectualPropertyApplication.objects.create(
+            title='仍在撰写的申请',
+            application_code='IP-PORTAL-WRITING',
+            status=IntellectualPropertyApplication.Status.WRITING,
+            **common,
+        )
+
+        response = api_client.get('/api/v1/dashboard/public-portal/')
+
+        assert response.status_code == 200
+        assert extract_data(response)['stats']['total_ip'] == 2

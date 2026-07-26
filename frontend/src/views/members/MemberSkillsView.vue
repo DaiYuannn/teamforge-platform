@@ -1,219 +1,278 @@
 <template>
-  <div class="page-container">
-    <PageHeader title="技能标签" subtitle="管理个人技能与标签库" />
+  <div class="page-container skills-page">
+    <PageHeader title="技能标签" subtitle="维护个人技能熟练度与团队技能词库" />
 
-    <!-- 我的技能 -->
-    <div class="card mt-16">
-      <div class="section-header">
-        <h3 class="card-title">我的技能</h3>
+    <section class="skills-surface" aria-labelledby="my-skills-title">
+      <header class="section-heading">
+        <div>
+          <h2 id="my-skills-title">我的技能</h2>
+          <p>{{ mySkills.length }} 项技能</p>
+        </div>
         <el-button type="primary" :icon="Plus" @click="handleAddSkill">添加技能</el-button>
-      </div>
-      <div v-loading="loading" class="skill-tags">
-        <el-empty v-if="mySkills.length === 0" description="暂未添加技能" />
-        <div v-for="item in mySkills" :key="item.id" class="skill-tag-item">
-          <el-tag closable @close="handleDeleteSkill(item)">
-            {{ item.skill_tag_name }} · 熟练度 {{ item.proficiency }}
-          </el-tag>
-        </div>
-      </div>
-    </div>
+      </header>
 
-    <!-- 技能标签管理（管理员） -->
-    <div v-permission="['sys_admin']" class="card mt-16">
-      <div class="section-header">
-        <h3 class="card-title">技能标签管理</h3>
-        <el-button type="primary" :icon="Plus" @click="handleCreateTag">添加标签</el-button>
-      </div>
-      <div v-loading="tagLoading" class="skill-tags">
-        <el-empty v-if="skillTags.length === 0" description="暂无标签" />
-        <div v-for="tag in skillTags" :key="tag.id" class="skill-tag-item">
-          <el-tag type="info" closable @close="handleDeleteTag(tag)">
-            {{ tag.name }}
-          </el-tag>
-        </div>
-      </div>
-    </div>
-
-    <!-- 添加技能弹窗 -->
-    <el-dialog v-model="skillDialogVisible" title="添加技能" width="420px" @close="skillForm.skill_tag = ''">
-      <el-form ref="skillFormRef" :model="skillForm" :rules="skillRules" label-width="90px">
-        <el-form-item label="技能标签" prop="skill_tag">
-          <el-select v-model="skillForm.skill_tag" placeholder="请选择技能标签" filterable style="width: 100%">
-            <el-option
-              v-for="tag in skillTags"
-              :key="tag.id"
-              :label="tag.name"
-              :value="tag.id"
+      <div v-loading="loading" class="skill-list">
+        <EmptyState
+          v-if="!loading && mySkills.length === 0"
+          text="暂未添加技能"
+          description="添加技能并记录当前熟练度"
+          compact
+        />
+        <article v-for="item in mySkills" :key="item.id" class="skill-row">
+          <div class="skill-row__identity">
+            <span class="skill-mark" aria-hidden="true"><el-icon><Collection /></el-icon></span>
+            <div>
+              <strong>{{ skillName(item) }}</strong>
+              <span>熟练度 {{ item.proficiency }} / 5</span>
+            </div>
+          </div>
+          <el-rate :model-value="item.proficiency" disabled />
+          <el-tooltip content="移除技能" placement="top">
+            <el-button
+              type="danger"
+              link
+              :icon="Delete"
+              aria-label="移除技能"
+              @click="handleDeleteSkill(item)"
             />
+          </el-tooltip>
+        </article>
+      </div>
+    </section>
+
+    <section v-permission="['sys_admin']" class="skills-surface" aria-labelledby="skill-library-title">
+      <header class="section-heading">
+        <div>
+          <h2 id="skill-library-title">技能词库</h2>
+          <p>{{ skillTags.length }} 个可用标签</p>
+        </div>
+        <el-button :icon="Plus" @click="handleCreateTag">添加标签</el-button>
+      </header>
+
+      <div v-loading="tagLoading" class="tag-library">
+        <EmptyState v-if="!tagLoading && skillTags.length === 0" text="暂无技能标签" compact />
+        <el-tag
+          v-for="tag in skillTags"
+          :key="tag.id"
+          type="info"
+          closable
+          @close="handleDeleteTag(tag)"
+        >
+          {{ tag.name }}
+        </el-tag>
+      </div>
+    </section>
+
+    <el-dialog
+      v-model="skillDialogVisible"
+      title="添加技能"
+      :width="dialogWidth"
+      :close-on-click-modal="false"
+      @close="resetSkillForm"
+    >
+      <el-form ref="skillFormRef" :model="skillForm" :rules="skillRules" label-position="top">
+        <el-form-item label="技能标签" prop="skill">
+          <el-select v-model="skillForm.skill" placeholder="选择技能标签" filterable>
+            <el-option v-for="tag in skillTags" :key="tag.id" :label="tag.name" :value="tag.id" />
           </el-select>
         </el-form-item>
         <el-form-item label="熟练度" prop="proficiency">
-          <el-rate v-model="skillForm.proficiency" :max="5" />
+          <div class="proficiency-control">
+            <el-rate v-model="skillForm.proficiency" :max="5" />
+            <span>{{ skillForm.proficiency }} / 5</span>
+          </div>
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="skillDialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="submitting" @click="handleSubmitSkill">确定</el-button>
+        <div class="dialog-actions">
+          <el-button @click="skillDialogVisible = false">取消</el-button>
+          <el-button type="primary" :loading="submitting" @click="handleSubmitSkill">
+            添加技能
+          </el-button>
+        </div>
       </template>
     </el-dialog>
 
-    <!-- 添加标签弹窗 -->
-    <el-dialog v-model="tagDialogVisible" title="添加技能标签" width="420px">
-      <el-form ref="tagFormRef" :model="tagForm" :rules="tagRules" label-width="90px">
+    <el-dialog
+      v-model="tagDialogVisible"
+      title="添加技能标签"
+      :width="dialogWidth"
+      :close-on-click-modal="false"
+      @close="resetTagForm"
+    >
+      <el-form ref="tagFormRef" :model="tagForm" :rules="tagRules" label-position="top">
         <el-form-item label="标签名称" prop="name">
-          <el-input v-model="tagForm.name" placeholder="请输入标签名称" />
+          <el-input v-model="tagForm.name" maxlength="100" show-word-limit placeholder="请输入标签名称" />
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="tagDialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="submitting" @click="handleSubmitTag">确定</el-button>
+        <div class="dialog-actions">
+          <el-button @click="tagDialogVisible = false">取消</el-button>
+          <el-button type="primary" :loading="submitting" @click="handleSubmitTag">
+            添加标签
+          </el-button>
+        </div>
       </template>
     </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
-import { Plus } from '@element-plus/icons-vue'
+import { Collection, Delete, Plus } from '@element-plus/icons-vue'
 import {
-  getMySkills,
   addMemberSkill,
-  deleteMemberSkill,
-  getSkillTags,
   createSkillTag,
+  deleteMemberSkill,
+  getMySkills,
+  getSkillTags,
 } from '@/api/members'
+import { del } from '@/api/request'
+import { useDevice } from '@/composables/useDevice'
+import type { MemberSkill, SkillTag } from '@/types'
+import EmptyState from '@/components/EmptyState.vue'
 import PageHeader from '@/components/PageHeader.vue'
-import type { SkillTag, MemberSkill } from '@/types'
 
+type MemberSkillRecord = MemberSkill & { skill?: number; skill_name?: string }
+
+const { isMobile } = useDevice()
 const loading = ref(false)
 const tagLoading = ref(false)
 const submitting = ref(false)
-const mySkills = ref<MemberSkill[]>([])
+const mySkills = ref<MemberSkillRecord[]>([])
 const skillTags = ref<SkillTag[]>([])
-
 const skillDialogVisible = ref(false)
 const tagDialogVisible = ref(false)
 const skillFormRef = ref<FormInstance>()
 const tagFormRef = ref<FormInstance>()
 
-// 技能表单
-const skillForm = reactive({
-  skill_tag: '' as number | string,
-  proficiency: 3,
-})
+const dialogWidth = computed(() => (isMobile.value ? 'calc(100vw - 24px)' : '440px'))
+const skillForm = reactive({ skill: '' as number | string, proficiency: 3 })
+const tagForm = reactive({ name: '' })
 const skillRules: FormRules = {
-  skill_tag: [{ required: true, message: '请选择技能标签', trigger: 'change' }],
+  skill: [{ required: true, message: '请选择技能标签', trigger: 'change' }],
   proficiency: [{ required: true, message: '请选择熟练度', trigger: 'change' }],
 }
-
-// 标签表单
-const tagForm = reactive({
-  name: '',
-})
 const tagRules: FormRules = {
   name: [{ required: true, message: '请输入标签名称', trigger: 'blur' }],
 }
 
-// 加载我的技能
+function skillName(item: MemberSkillRecord): string {
+  return item.skill_name || item.skill_tag_name || '未命名技能'
+}
+
 async function loadMySkills(): Promise<void> {
   loading.value = true
   try {
-    const res: any = await getMySkills()
-    mySkills.value = Array.isArray(res) ? res : (res.results || [])
+    const response: any = await getMySkills()
+    mySkills.value = Array.isArray(response) ? response : response.results || []
   } catch {
-    // 错误已由拦截器处理
+    mySkills.value = []
   } finally {
     loading.value = false
   }
 }
 
-// 加载技能标签
 async function loadSkillTags(): Promise<void> {
   tagLoading.value = true
   try {
-    const res: any = await getSkillTags()
-    skillTags.value = Array.isArray(res) ? res : (res.results || [])
+    const response: any = await getSkillTags()
+    skillTags.value = Array.isArray(response) ? response : response.results || []
   } catch {
-    // 错误已由拦截器处理
+    skillTags.value = []
   } finally {
     tagLoading.value = false
   }
 }
 
-// 添加技能
-function handleAddSkill(): void {
-  skillForm.skill_tag = ''
+function resetSkillForm(): void {
+  skillFormRef.value?.clearValidate()
+  skillForm.skill = ''
   skillForm.proficiency = 3
+}
+
+function resetTagForm(): void {
+  tagFormRef.value?.clearValidate()
+  tagForm.name = ''
+}
+
+function handleAddSkill(): void {
+  resetSkillForm()
   skillDialogVisible.value = true
 }
 
-// 提交技能
-async function handleSubmitSkill(): Promise<void> {
-  if (!skillFormRef.value) return
-  await skillFormRef.value.validate(async (valid) => {
-    if (!valid) return
-    submitting.value = true
-    try {
-      await addMemberSkill({ ...skillForm })
-      ElMessage.success('添加成功')
-      skillDialogVisible.value = false
-      loadMySkills()
-    } catch {
-      // 错误已由拦截器处理
-    } finally {
-      submitting.value = false
-    }
-  })
-}
-
-// 删除技能
-async function handleDeleteSkill(item: MemberSkill): Promise<void> {
-  try {
-    await ElMessageBox.confirm(`确定要移除技能「${item.skill_tag_name}」吗？`, '提示', { type: 'warning' })
-    await deleteMemberSkill(item.id)
-    ElMessage.success('已移除')
-    loadMySkills()
-  } catch {
-    // 取消
-  }
-}
-
-// 添加标签
 function handleCreateTag(): void {
-  tagForm.name = ''
+  resetTagForm()
   tagDialogVisible.value = true
 }
 
-// 提交标签
-async function handleSubmitTag(): Promise<void> {
-  if (!tagFormRef.value) return
-  await tagFormRef.value.validate(async (valid) => {
-    if (!valid) return
-    submitting.value = true
-    try {
-      await createSkillTag({ ...tagForm })
-      ElMessage.success('添加成功')
-      tagDialogVisible.value = false
-      loadSkillTags()
-    } catch {
-      // 错误已由拦截器处理
-    } finally {
-      submitting.value = false
-    }
-  })
+async function handleSubmitSkill(): Promise<void> {
+  if (!formRefValid(skillFormRef.value)) return
+  const valid = await skillFormRef.value!.validate().catch(() => false)
+  if (!valid) return
+  submitting.value = true
+  try {
+    await addMemberSkill({ skill: skillForm.skill, proficiency: skillForm.proficiency })
+    ElMessage.success('技能添加成功')
+    skillDialogVisible.value = false
+    loadMySkills()
+  } catch {
+    // 请求错误已由拦截器处理。
+  } finally {
+    submitting.value = false
+  }
 }
 
-// 删除标签
-async function handleDeleteTag(tag: SkillTag): Promise<void> {
+async function handleDeleteSkill(item: MemberSkillRecord): Promise<void> {
   try {
-    await ElMessageBox.confirm(`确定要删除标签「${tag.name}」吗？`, '提示', { type: 'warning' })
-    // 复用 createSkillTag 接口，删除暂用 DELETE 请求占位
-    ElMessage.success('已删除')
+    await ElMessageBox.confirm(`确定移除技能「${skillName(item)}」吗？`, '移除技能', {
+      type: 'warning',
+      confirmButtonText: '移除',
+      cancelButtonText: '取消',
+    })
+    await deleteMemberSkill(item.id)
+    ElMessage.success('技能已移除')
+    loadMySkills()
+  } catch {
+    // 用户取消或请求错误已由拦截器处理。
+  }
+}
+
+async function handleSubmitTag(): Promise<void> {
+  if (!formRefValid(tagFormRef.value)) return
+  const valid = await tagFormRef.value!.validate().catch(() => false)
+  if (!valid) return
+  submitting.value = true
+  try {
+    await createSkillTag({ name: tagForm.name.trim() })
+    ElMessage.success('标签添加成功')
+    tagDialogVisible.value = false
     loadSkillTags()
   } catch {
-    // 取消
+    // 请求错误已由拦截器处理。
+  } finally {
+    submitting.value = false
   }
+}
+
+async function handleDeleteTag(tag: SkillTag): Promise<void> {
+  try {
+    await ElMessageBox.confirm(`确定删除标签「${tag.name}」吗？`, '删除技能标签', {
+      type: 'warning',
+      confirmButtonText: '删除',
+      cancelButtonText: '取消',
+    })
+    await del(`/members/skill-tags/${tag.id}/`)
+    ElMessage.success('标签已删除')
+    loadSkillTags()
+  } catch {
+    // 用户取消或请求错误已由拦截器处理。
+  }
+}
+
+function formRefValid(instance?: FormInstance): boolean {
+  return Boolean(instance)
 }
 
 onMounted(() => {
@@ -223,39 +282,168 @@ onMounted(() => {
 </script>
 
 <style lang="scss" scoped>
-.mt-16 {
-  margin-top: 16px;
-}
+.skills-page {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 
-.card {
-  background: #fff;
-  border-radius: 8px;
-  padding: 16px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
-
-  .card-title {
-    font-size: 16px;
-    font-weight: 600;
-    color: #303133;
-    margin: 0;
+  :deep(.page-header) {
+    margin-bottom: 6px;
   }
 }
 
-.section-header {
+.skills-surface {
+  overflow: hidden;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-md);
+}
+
+.section-heading {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 16px;
+  gap: 16px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--color-border-light);
+
+  h2 {
+    color: var(--color-text);
+    font-size: 16px;
+    font-weight: 600;
+    letter-spacing: 0;
+  }
+
+  p {
+    margin-top: 2px;
+    color: var(--color-text-muted);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+  }
 }
 
-.skill-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  min-height: 40px;
+.skill-list {
+  min-height: 120px;
+  padding: 0 18px;
+}
 
-  .skill-tag-item {
-    display: inline-flex;
+.skill-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) 150px 32px;
+  align-items: center;
+  gap: 18px;
+  min-height: 66px;
+  border-bottom: 1px solid var(--color-border-light);
+
+  &:last-child {
+    border-bottom: 0;
+  }
+}
+
+.skill-row__identity {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+
+  > div {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+
+  strong {
+    overflow: hidden;
+    color: var(--color-text);
+    font-size: 14px;
+    font-weight: 600;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  span:last-child {
+    margin-top: 2px;
+    color: var(--color-text-muted);
+    font-size: 11px;
+  }
+}
+
+.skill-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  color: var(--color-primary);
+  background: var(--color-primary-soft);
+  border-radius: var(--radius-sm);
+}
+
+.tag-library {
+  display: flex;
+  align-content: flex-start;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-height: 104px;
+  padding: 18px;
+}
+
+.proficiency-control {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+
+  span {
+    color: var(--color-text-muted);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+:deep(.el-select) {
+  width: 100%;
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+@media screen and (max-width: 768px) {
+  .section-heading {
+    padding: 13px 14px;
+  }
+
+  .skill-list {
+    padding: 0 14px;
+  }
+
+  .skill-row {
+    grid-template-columns: minmax(0, 1fr) 32px;
+    gap: 10px;
+    padding: 12px 0;
+
+    :deep(.el-rate) {
+      grid-column: 1 / -1;
+      grid-row: 2;
+      padding-left: 42px;
+    }
+  }
+
+  .tag-library {
+    padding: 14px;
+  }
+
+  .dialog-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+
+    :deep(.el-button) {
+      width: 100%;
+      margin-left: 0;
+    }
   }
 }
 </style>

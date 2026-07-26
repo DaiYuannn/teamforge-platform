@@ -1,10 +1,7 @@
 import { useNotificationStore } from '@/stores/notification'
 import { computed } from 'vue'
 
-/**
- * 通知 Composable（架构预留）
- * 封装通知 Store，未来对接 WebSocket 实现实时通知
- */
+/** 实时通知 Store 的轻量组合式封装。 */
 export function useNotification() {
   const notificationStore = useNotificationStore()
 
@@ -27,7 +24,7 @@ export function useNotification() {
 
   /** 清空通知 */
   function clearNotifications(): void {
-    notificationStore.clearNotifications()
+    notificationStore.clearState()
   }
 
   return {

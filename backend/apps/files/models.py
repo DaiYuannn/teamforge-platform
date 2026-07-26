@@ -79,11 +79,29 @@ class FileAsset(models.Model):
     def save(self, *args, **kwargs):
         """
         重写保存逻辑：
+        - 已关联敏感资料的附件不允许降级为公开/内部文件
         - 调用父类保存（文件会通过 pre_save 写入存储）
         - 保存后计算 SHA-256 哈希，若哈希有变化则单独更新
+        - 敏感文件自动撤销历史分享链接
         """
+        if self.pk:
+            from apps.sensitive.models import SensitiveData
+
+            if SensitiveData.objects.filter(file_attachment_id=self.pk).exists():
+                self.level = self.Level.SENSITIVE
+                update_fields = kwargs.get('update_fields')
+                if update_fields is not None:
+                    kwargs['update_fields'] = set(update_fields) | {'level'}
+
         super().save(*args, **kwargs)
         self._update_file_hash_if_needed()
+        if self.level == self.Level.SENSITIVE:
+            from .share_models import FileShareLink
+
+            FileShareLink.objects.filter(
+                file_id=self.pk,
+                is_active=True,
+            ).update(is_active=False)
 
     def _compute_sha256(self):
         """计算文件 SHA-256 哈希，文件不可读时返回 None"""

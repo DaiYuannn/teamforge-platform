@@ -1,33 +1,43 @@
 <template>
   <div class="pc-layout">
     <!-- 侧边栏 -->
-    <el-aside :width="sidebarCollapsed ? '64px' : '220px'" class="pc-sidebar">
+    <el-aside :width="sidebarCollapsed ? '72px' : '248px'" class="pc-sidebar" aria-label="主导航">
       <div class="logo">
         <div class="logo-icon-wrapper">
-          <el-icon size="24" color="#60e8ff"><Monitor /></el-icon>
+          <el-icon size="22"><Monitor /></el-icon>
         </div>
-        <span v-show="!sidebarCollapsed" class="logo-text">团队管理系统</span>
+        <span v-show="!sidebarCollapsed" class="logo-text">团队管理平台</span>
       </div>
       <el-menu
         :default-active="activeMenu"
+        :default-openeds="defaultOpeneds"
         :collapse="sidebarCollapsed"
         :collapse-transition="false"
-        background-color="transparent"
-        text-color="#8a9bb4"
-        active-text-color="#60e8ff"
+        :unique-opened="true"
         router
         class="sidebar-menu"
       >
-        <template v-for="item in menuList" :key="item.path">
-          <el-menu-item v-if="!item.roles || hasPermission(item.roles)" :index="item.path" class="sidebar-menu-item">
+        <el-sub-menu
+          v-for="group in navigationGroups"
+          :key="group.key"
+          :index="group.key"
+          class="navigation-group"
+        >
+          <template #title>
+            <el-icon><component :is="group.icon" /></el-icon>
+            <span>{{ group.title }}</span>
+          </template>
+          <el-menu-item
+            v-for="item in group.items"
+            :key="item.path"
+            :index="item.path"
+            class="sidebar-menu-item"
+          >
             <el-icon><component :is="item.icon" /></el-icon>
             <template #title>{{ item.title }}</template>
           </el-menu-item>
-        </template>
+        </el-sub-menu>
       </el-menu>
-      <div v-show="!sidebarCollapsed" class="sidebar-footer">
-        <div class="sidebar-version">v1.0.0</div>
-      </div>
     </el-aside>
 
     <!-- 右侧主体 -->
@@ -35,19 +45,24 @@
       <!-- 顶部栏 -->
       <el-header class="pc-header">
         <div class="header-left">
-          <el-icon
-            class="collapse-btn"
-            @click="toggleSidebar"
-            size="20"
-            role="button"
-            tabindex="0"
-            :aria-label="sidebarCollapsed ? '展开侧边栏' : '折叠侧边栏'"
-            @keydown.enter="toggleSidebar"
-          >
-            <Fold v-if="!sidebarCollapsed" />
-            <Expand v-else />
-          </el-icon>
-          <span class="page-title">{{ currentTitle }}</span>
+          <el-tooltip :content="sidebarCollapsed ? '展开侧边栏' : '折叠侧边栏'" placement="bottom">
+            <el-button
+              text
+              circle
+              class="collapse-btn"
+              :aria-label="sidebarCollapsed ? '展开侧边栏' : '折叠侧边栏'"
+              @click="toggleSidebar"
+            >
+              <el-icon size="19">
+                <Fold v-if="!sidebarCollapsed" />
+                <Expand v-else />
+              </el-icon>
+            </el-button>
+          </el-tooltip>
+          <el-breadcrumb separator="/" class="header-breadcrumb">
+            <el-breadcrumb-item>{{ currentGroupTitle }}</el-breadcrumb-item>
+            <el-breadcrumb-item>{{ currentTitle }}</el-breadcrumb-item>
+          </el-breadcrumb>
         </div>
         <div class="header-right">
           <!-- 全局搜索 -->
@@ -170,10 +185,14 @@ import { ElMessageBox } from 'element-plus'
 import { Search, Folder, Tickets, User, Document, Trophy, Monitor, Fold, Expand, ArrowDown } from '@element-plus/icons-vue'
 import { useAppStore } from '@/stores/app'
 import { useUserStore } from '@/stores/user'
-import type { UserRole } from '@/types'
 import NotificationBell from '@/components/NotificationBell.vue'
 import AvatarWithName from '@/components/AvatarWithName.vue'
 import { get } from '@/api/request'
+import {
+  findNavigationGroup,
+  findNavigationItem,
+  getVisibleNavigationGroups,
+} from '@/config/navigation'
 
 const route = useRoute()
 const router = useRouter()
@@ -189,42 +208,41 @@ function toggleSidebar(): void {
   appStore.toggleSidebar()
 }
 
-// 当前激活的菜单
-const activeMenu = computed(() => route.path)
+const navigationGroups = computed(() => {
+  const groups = getVisibleNavigationGroups(
+    userStore.role,
+    userStore.userInfo?.membership_status,
+  )
+  const configuredOrder = userStore.preferences?.sidebar_order || []
+  const ordered = [...groups].sort((left, right) => {
+    const leftIndex = configuredOrder.indexOf(left.key)
+    const rightIndex = configuredOrder.indexOf(right.key)
+    if (leftIndex < 0 && rightIndex < 0) return 0
+    if (leftIndex < 0) return 1
+    if (rightIndex < 0) return -1
+    return leftIndex - rightIndex
+  })
+  const favoritePaths = new Set(userStore.preferences?.favorite_routes || [])
+  const favoriteItems = ordered.flatMap((group) => group.items)
+    .filter((item, index, list) =>
+      favoritePaths.has(item.path) && list.findIndex((candidate) => candidate.path === item.path) === index
+    )
+  return favoriteItems.length
+    ? [{ key: 'favorites', title: '常用入口', icon: 'Star', items: favoriteItems }, ...ordered]
+    : ordered
+})
+const activeNavigationItem = computed(() => findNavigationItem(route.path, navigationGroups.value))
+const activeNavigationGroup = computed(() => findNavigationGroup(route.path, navigationGroups.value))
+
+// 详情页沿用所属一级入口的激活态，避免菜单高亮丢失
+const activeMenu = computed(() => activeNavigationItem.value?.path || route.path)
+const defaultOpeneds = computed(() => [activeNavigationGroup.value?.key || 'workspace'])
 
 // 当前页面标题
-const currentTitle = computed(() => (route.meta.title as string) || '团队管理系统')
-
-// 侧边栏菜单列表
-const menuList = computed(() => [
-  { path: '/dashboard', title: '首页', icon: 'Odometer' },
-  { path: '/projects', title: '项目', icon: 'Folder' },
-  { path: '/competitions', title: '比赛', icon: 'Trophy' },
-  { path: '/tasks', title: '任务', icon: 'List' },
-  { path: '/todo', title: '待办事项', icon: 'Checked' },
-  { path: '/members', title: '人员', icon: 'User' },
-  { path: '/finance', title: '经费', icon: 'Money' },
-  { path: '/files', title: '文件', icon: 'Document' },
-  { path: '/announcements', title: '公告', icon: 'Notification' },
-  { path: '/activities', title: '动态', icon: 'ChatLineSquare' },
-  { path: '/imports', title: '导入中心', icon: 'Upload' },
-  { path: '/intellectual-property', title: '成果与知识产权', icon: 'Medal' },
-  { path: '/intellectual-property/todo', title: '待我处理', icon: 'Bell' },
-  { path: '/audit/logs', title: '操作日志', icon: 'Document', roles: ['sys_admin', 'teacher'] as UserRole[] },
-  { path: '/notifications', title: '通知中心', icon: 'Bell' },
-  { path: '/contributions', title: '我的贡献', icon: 'Trophy' },
-  { path: '/sensitive', title: '敏感资料', icon: 'Lock' },
-  { path: '/members/schedule', title: '我的灵活工时', icon: 'Clock' },
-  { path: '/members/team-schedule', title: '团队灵活工时', icon: 'DataAnalysis' },
-  { path: '/members/skills', title: '技能标签', icon: 'Collection' },
-  { path: '/admin/integrations', title: '第三方集成', icon: 'Connection', roles: ['sys_admin'] as UserRole[] },
-  { path: '/admin/users', title: '用户管理', icon: 'Setting', roles: ['sys_admin'] as UserRole[] },
-])
-
-// 检查权限
-function hasPermission(roles: string[]): boolean {
-  return roles.includes(userStore.role)
-}
+const currentTitle = computed(() =>
+  (route.meta.title as string) || activeNavigationItem.value?.title || '团队管理平台',
+)
+const currentGroupTitle = computed(() => activeNavigationGroup.value?.title || '团队工作区')
 
 // 下拉菜单命令处理
 async function handleCommand(command: string): Promise<void> {
@@ -309,67 +327,53 @@ function goTo(url: string): void {
 
 /* ==================== 侧边栏 ==================== */
 .pc-sidebar {
-  background: linear-gradient(180deg, #1a2332 0%, #0f1925 100%);
+  background: var(--bg-card, #fff);
+  border-right: 1px solid var(--border-color, #dce3e0);
   transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   overflow: hidden;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  position: relative;
-
-  &::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background:
-      radial-gradient(ellipse at top, rgba(96, 232, 255, 0.04) 0%, transparent 50%),
-      linear-gradient(180deg, transparent 0%, rgba(96, 232, 255, 0.02) 100%);
-    pointer-events: none;
-  }
 
   .logo {
-    height: 60px;
+    height: 64px;
+    flex-shrink: 0;
     display: flex;
     align-items: center;
-    justify-content: center;
+    justify-content: flex-start;
     gap: 10px;
-    background: rgba(0, 0, 0, 0.3);
-    border-bottom: 1px solid rgba(96, 232, 255, 0.08);
-    position: relative;
-    z-index: 1;
+    padding: 0 14px;
+    border-bottom: 1px solid var(--border-color-light, #e7ecea);
 
     .logo-icon-wrapper {
       width: 36px;
       height: 36px;
+      flex: 0 0 36px;
       border-radius: 8px;
-      background: linear-gradient(135deg, rgba(96, 232, 255, 0.15), rgba(64, 158, 255, 0.1));
+      color: var(--primary-color, #176b73);
+      background: var(--primary-lighter, #edf7f6);
+      border: 1px solid rgba(var(--primary-rgb, 23, 107, 115), 0.12);
       display: flex;
       align-items: center;
       justify-content: center;
-      box-shadow: 0 0 12px rgba(96, 232, 255, 0.2);
     }
 
     .logo-text {
-      color: #e8f4ff;
+      color: var(--text-primary, #18221f);
       font-size: 15px;
       font-weight: 600;
       white-space: nowrap;
-      letter-spacing: 0.5px;
     }
   }
 
-  :deep(.el-menu) {
+  :deep(.sidebar-menu) {
     border-right: none;
+    background: transparent;
     font-size: 14px;
     flex: 1;
     overflow-y: auto;
     overflow-x: hidden;
     padding: 8px 0;
-    position: relative;
-    z-index: 1;
 
     &::-webkit-scrollbar {
       width: 4px;
@@ -378,55 +382,63 @@ function goTo(url: string): void {
       background: transparent;
     }
     &::-webkit-scrollbar-thumb {
-      background: rgba(96, 232, 255, 0.15);
+      background: rgba(24, 34, 31, 0.14);
       border-radius: 2px;
       &:hover {
-        background: rgba(96, 232, 255, 0.3);
+        background: rgba(24, 34, 31, 0.24);
       }
     }
-    * {
-      scrollbar-width: thin;
-      scrollbar-color: rgba(96, 232, 255, 0.15) transparent;
-    }
+    scrollbar-width: thin;
+    scrollbar-color: rgba(24, 34, 31, 0.14) transparent;
   }
 
-  :deep(.el-menu-item) {
+  :deep(.el-sub-menu__title) {
     height: 44px;
     line-height: 44px;
     margin: 2px 8px;
-    border-radius: 8px;
-    transition: all 0.2s ease;
-    position: relative;
+    border-radius: 6px;
+    color: var(--text-regular, #52605b);
+    font-weight: 600;
+    transition: color 0.16s ease, background-color 0.16s ease;
 
     &:hover {
-      background: rgba(96, 232, 255, 0.08) !important;
-      color: #b0d4f1 !important;
-    }
-
-    &.is-active {
-      background: linear-gradient(90deg, rgba(96, 232, 255, 0.15), rgba(96, 232, 255, 0.05)) !important;
-      color: #60e8ff !important;
-      box-shadow: inset 3px 0 0 #60e8ff;
-
-      .el-icon {
-        color: #60e8ff;
-        filter: drop-shadow(0 0 4px rgba(96, 232, 255, 0.4));
-      }
+      color: var(--text-primary, #18221f);
+      background: var(--el-fill-color-light, #f2f5f4);
     }
   }
 
-  .sidebar-footer {
-    padding: 8px 16px;
-    border-top: 1px solid rgba(96, 232, 255, 0.06);
-    position: relative;
-    z-index: 1;
+  :deep(.el-sub-menu.is-active > .el-sub-menu__title) {
+    color: var(--primary-color, #176b73);
+  }
 
-    .sidebar-version {
-      font-size: 11px;
-      color: rgba(138, 155, 180, 0.5);
-      text-align: center;
-      letter-spacing: 0.5px;
+  :deep(.el-menu--inline) {
+    background: transparent;
+  }
+
+  :deep(.el-menu-item) {
+    height: 40px;
+    line-height: 40px;
+    margin: 1px 8px 1px 18px;
+    border-radius: 6px;
+    color: var(--text-regular, #52605b);
+    transition: color 0.16s ease, background-color 0.16s ease;
+
+    &:hover {
+      color: var(--text-primary, #18221f);
+      background: var(--el-fill-color-light, #f2f5f4);
     }
+
+    &.is-active {
+      color: var(--primary-color, #176b73);
+      background: var(--primary-lighter, #edf7f6);
+      box-shadow: inset 3px 0 0 var(--primary-color, #176b73);
+      font-weight: 600;
+    }
+  }
+
+  :deep(.el-menu--collapse .el-sub-menu__title) {
+    margin-inline: 8px;
+    padding: 0 12px !important;
   }
 }
 
@@ -435,17 +447,17 @@ function goTo(url: string): void {
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
-  background: #f0f2f5;
+  background: var(--bg-color, #f4f6f5);
 }
 
 .pc-header {
-  height: 60px;
+  height: 64px;
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background: rgba(255, 255, 255, 0.85);
-  backdrop-filter: blur(12px);
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06), 0 0 0 1px rgba(0, 0, 0, 0.02);
+  background: var(--bg-card, #fff);
+  border-bottom: 1px solid var(--border-color, #dce3e0);
   padding: 0 20px;
   z-index: 10;
 
@@ -456,25 +468,31 @@ function goTo(url: string): void {
     min-width: 0;
 
     .collapse-btn {
-      cursor: pointer;
-      color: #606266;
-      padding: 6px;
+      width: 36px;
+      height: 36px;
+      color: var(--text-regular, #52605b);
       border-radius: 6px;
-      transition: all 0.2s;
       &:hover {
-        color: #409eff;
-        background: rgba(64, 158, 255, 0.08);
+        color: var(--primary-color, #176b73);
+        background: var(--primary-lighter, #edf7f6);
       }
     }
 
-    .page-title {
-      font-size: 16px;
-      font-weight: 600;
-      color: #1d2129;
-      max-width: 28em;
+    .header-breadcrumb {
+      max-width: 34em;
       overflow: hidden;
-      text-overflow: ellipsis;
       white-space: nowrap;
+
+      :deep(.el-breadcrumb__inner) {
+        color: var(--text-secondary, #7b8782);
+        font-size: 13px;
+        font-weight: 400;
+      }
+
+      :deep(.el-breadcrumb__item:last-child .el-breadcrumb__inner) {
+        color: var(--text-primary, #18221f);
+        font-weight: 600;
+      }
     }
   }
 
@@ -485,15 +503,17 @@ function goTo(url: string): void {
     flex-shrink: 0;
 
     .header-search {
-      width: 240px;
+      width: 252px;
       :deep(.el-input__wrapper) {
-        border-radius: 8px;
-        transition: all 0.2s;
+        border-radius: 6px;
+        background: var(--el-fill-color-extra-light, #f6f8f7);
+        box-shadow: 0 0 0 1px transparent inset;
         &:hover {
-          box-shadow: 0 0 0 1px #c0c4cc inset;
+          box-shadow: 0 0 0 1px var(--border-color, #dce3e0) inset;
         }
         &.is-focus {
-          box-shadow: 0 0 0 1px #409eff inset, 0 0 8px rgba(64, 158, 255, 0.15);
+          background: #fff;
+          box-shadow: 0 0 0 1px var(--primary-color, #176b73) inset;
         }
       }
     }
@@ -502,7 +522,7 @@ function goTo(url: string): void {
       cursor: pointer;
       color: #606266;
       &:hover {
-        color: #409eff;
+        color: var(--primary-color, #176b73);
       }
     }
 
@@ -512,15 +532,15 @@ function goTo(url: string): void {
       gap: 8px;
       cursor: pointer;
       padding: 4px 8px;
-      border-radius: 8px;
+      border-radius: 6px;
       transition: background 0.2s;
       &:hover {
-        background: rgba(64, 158, 255, 0.06);
+        background: var(--el-fill-color-light, #f2f5f4);
       }
 
       .user-name {
         font-size: 14px;
-        color: #1d2129;
+        color: var(--text-primary, #18221f);
         max-width: 120px;
         overflow: hidden;
         text-overflow: ellipsis;
@@ -531,12 +551,50 @@ function goTo(url: string): void {
 }
 
 .pc-content {
-  background: #f0f2f5;
+  background: var(--bg-color, #f4f6f5);
   overflow-y: auto;
   overflow-x: hidden;
   padding: 0;
   width: 100%;
   min-width: 0;
+}
+
+@supports (height: 100dvh) {
+  .pc-layout {
+    height: 100dvh;
+  }
+}
+
+@media screen and (max-width: 1100px) {
+  .pc-header {
+    .header-left .header-breadcrumb {
+      max-width: 22em;
+    }
+
+    .header-right {
+      gap: 10px;
+
+      .header-search {
+        width: 190px;
+      }
+
+      .user-info .user-name {
+        display: none;
+      }
+    }
+  }
+}
+
+@media screen and (max-width: 920px) {
+  .pc-header {
+    .header-left .header-breadcrumb {
+      max-width: 150px;
+    }
+
+    .header-right .header-search {
+      display: none;
+    }
+  }
 }
 
 // 路由切换动画

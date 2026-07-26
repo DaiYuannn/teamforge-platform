@@ -5,6 +5,7 @@ import type { User, UserFormData, PaginatedResponse, PaginationParams } from '@/
 export interface UserQueryParams extends PaginationParams {
   global_role?: string
   is_active?: boolean
+  membership_status?: string
 }
 
 /** 获取用户列表 */
@@ -40,11 +41,22 @@ export function getUser(id: number): Promise<User> {
 export interface UserPreferenceData {
   user_id?: number
   dashboard_layout: Record<string, unknown>
-  theme_color: string
+  primary_color: string
+  theme_color?: string
   default_landing: string
   sidebar_collapsed: boolean
   notification_sound: boolean
   items_per_page: number
+  default_scope?: 'mine' | 'team'
+  sidebar_order?: string[]
+  favorite_routes?: string[]
+  saved_filters?: Record<string, Record<string, unknown>>
+  notification_preferences?: {
+    categories?: Record<string, boolean>
+    channels?: Record<string, boolean>
+    quiet_hours?: { enabled?: boolean; start?: string; end?: string }
+    digest?: 'instant' | 'daily' | 'weekly'
+  }
 }
 
 /** 获取当前用户偏好设置 */
@@ -55,4 +67,20 @@ export function getUserPreference(): Promise<UserPreferenceData> {
 /** 更新当前用户偏好设置 */
 export function updateUserPreference(data: Partial<UserPreferenceData>): Promise<UserPreferenceData> {
   return put<UserPreferenceData>('/users/preference/', data)
+}
+
+export interface UserTransitionPayload {
+  status: 'active' | 'on_leave' | 'exited' | 'external'
+  reason?: string
+  handover_to?: number
+  handover_notes?: string
+}
+
+/** 变更成员状态，离队时保留其全部项目与贡献历史。 */
+export function transitionUser(id: number, data: UserTransitionPayload): Promise<User> {
+  return post<User>(`/users/${id}/transition/`, data)
+}
+
+export function getUserLifecycle(id: number): Promise<Array<Record<string, unknown>>> {
+  return get<Array<Record<string, unknown>>>(`/users/${id}/lifecycle/`)
 }

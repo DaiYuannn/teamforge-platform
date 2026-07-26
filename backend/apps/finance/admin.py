@@ -1,7 +1,7 @@
 """finance 应用的 Django Admin 配置"""
 from django.contrib import admin
 
-from .models import FinanceBudget, FinanceExpense, FinanceReceipt
+from .models import FinanceBudget, FinanceExpense, FinanceIncome, FinanceReceipt
 
 
 @admin.register(FinanceBudget)
@@ -21,11 +21,22 @@ class FinanceExpenseAdmin(admin.ModelAdmin):
     """经费明细管理后台"""
     list_display = (
         'id', 'project', 'title', 'amount', 'spender',
-        'expense_date', 'category', 'reviewer', 'created_at',
+        'expense_date', 'category', 'reimbursement_status', 'reviewer', 'created_at',
     )
-    list_filter = ('category', 'expense_date')
+    list_filter = ('category', 'reimbursement_status', 'expense_date')
     search_fields = ('title', 'purpose', 'project__name')
     raw_id_fields = ('project', 'spender', 'reviewer')
+
+
+@admin.register(FinanceIncome)
+class FinanceIncomeAdmin(admin.ModelAdmin):
+    list_display = (
+        'id', 'project', 'title', 'amount', 'income_type',
+        'income_date', 'recorded_by', 'created_at',
+    )
+    list_filter = ('income_type', 'income_date')
+    search_fields = ('title', 'source', 'reference_number', 'project__name')
+    raw_id_fields = ('project', 'recorded_by')
 
 
 @admin.register(FinanceReceipt)

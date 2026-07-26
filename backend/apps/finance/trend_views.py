@@ -5,9 +5,9 @@
 from decimal import Decimal
 
 from django.db.models import Sum
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
+from common.permissions import IsInternalTeamMember
 from common.response import success_response
 from .models import FinanceExpense
 
@@ -19,7 +19,7 @@ class FinanceTrendView(APIView):
     返回月度支出趋势和类别分布
     支持按 project 筛选
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsInternalTeamMember]
 
     def get(self, request):
         params = request.query_params

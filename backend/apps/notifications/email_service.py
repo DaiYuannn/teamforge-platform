@@ -27,14 +27,14 @@ def send_notification_email(to_email, title, content):
         return False
 
     try:
-        send_mail(
+        sent_count = send_mail(
             subject=title,
             message=content,
             from_email=settings.DEFAULT_FROM_EMAIL,
             recipient_list=[to_email],
-            fail_silently=True,
+            fail_silently=False,
         )
-        return True
+        return sent_count == 1
     except Exception as e:
         logger.exception('发送邮件失败: %s', e)
         return False

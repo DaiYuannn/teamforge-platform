@@ -1,343 +1,429 @@
 <template>
-  <div class="page-container">
-    <PageHeader title="成果与知识产权" subtitle="管理软件著作权、专利、论文等知识产权成果">
+  <div class="page-container ip-list-page">
+    <PageHeader title="成果与知识产权" subtitle="跟踪成果申请、责任分工和全流程状态">
       <template #actions>
-        <el-button :icon="Download" @click="handleExport">导出Excel</el-button>
-        <el-button
-          v-permission="['sys_admin', 'teacher']"
-          type="primary"
-          :icon="Plus"
-          @click="handleCreate"
-        >
+        <el-button :icon="Download" @click="handleExport">导出</el-button>
+        <el-button v-if="canCreateApplication" type="primary" :icon="Plus" @click="handleCreate">
           新建申请
         </el-button>
       </template>
     </PageHeader>
 
-    <!-- 筛选栏 -->
-    <div class="card search-bar">
-      <el-form :inline="true" :model="queryParams" @submit.prevent>
-        <el-form-item label="成果类型">
-          <el-select v-model="queryParams.ip_type" placeholder="全部" clearable style="width: 160px">
-            <el-option
-              v-for="(item, key) in IP_TYPE_MAP"
-              :key="key"
-              :label="item.label"
-              :value="key"
-            />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="状态">
-          <el-select v-model="queryParams.status" placeholder="全部" clearable style="width: 160px">
-            <el-option
-              v-for="(item, key) in IP_STATUS_MAP"
-              :key="key"
-              :label="item.label"
-              :value="key"
-            />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="搜索">
+    <div v-if="loadError" class="status-banner" role="alert">
+      <el-icon><WarningFilled /></el-icon>
+      <span>申请数据加载失败。</span>
+      <el-button link type="primary" @click="loadData">重新加载</el-button>
+    </div>
+
+    <section class="filter-toolbar" aria-label="知识产权筛选">
+      <el-form :inline="true" :model="queryParams" @submit.prevent="handleSearch">
+        <el-form-item>
           <el-input
             v-model="queryParams.search"
-            placeholder="成果名称/编号"
+            placeholder="搜索成果名称或编号"
             clearable
-            style="width: 200px"
+            :prefix-icon="Search"
+            class="search-input"
             @keyup.enter="handleSearch"
           />
         </el-form-item>
         <el-form-item>
-          <el-button type="primary" :icon="Search" @click="handleSearch">搜索</el-button>
+          <el-select v-model="queryParams.ip_type" placeholder="全部成果类型" clearable class="type-filter">
+            <el-option v-for="(item, key) in IP_TYPE_MAP" :key="key" :label="item.label" :value="key" />
+          </el-select>
+        </el-form-item>
+        <el-form-item>
+          <el-select v-model="queryParams.status" placeholder="全部流程状态" clearable filterable class="status-filter">
+            <el-option v-for="(item, key) in IP_STATUS_MAP" :key="key" :label="item.label" :value="key" />
+          </el-select>
+        </el-form-item>
+        <el-form-item class="filter-actions">
+          <el-button type="primary" :icon="Search" @click="handleSearch">查询</el-button>
           <el-button :icon="Refresh" @click="handleReset">重置</el-button>
         </el-form-item>
       </el-form>
-    </div>
+      <span class="result-count">共 {{ total }} 项成果</span>
+    </section>
 
-    <!-- PC端表格 -->
-    <div v-if="!isMobile" class="card mt-16">
-      <el-table
-        v-loading="loading"
-        :data="ipList"
-        border
-        stripe
-        @row-click="handleDetail"
-      >
-        <el-table-column prop="title" label="成果名称" min-width="180" show-overflow-tooltip />
-        <el-table-column prop="ip_type" label="类型" width="130">
+    <section v-if="!isMobile" class="data-workspace">
+      <el-table v-loading="loading" :data="ipList" row-class-name="clickable-row" @row-click="handleDetail">
+        <template #empty>
+          <EmptyState
+            text="暂无知识产权申请"
+            description="新建申请后可在这里跟踪材料、审核和授权进度。"
+            icon="Medal"
+            accent="#76559B"
+          />
+        </template>
+        <el-table-column label="成果" min-width="230">
+          <template #default="{ row }">
+            <div class="title-cell">
+              <strong>{{ row.title }}</strong>
+              <span>{{ row.application_code || '暂无内部编号' }}</span>
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column prop="ip_type" label="类型" width="122">
           <template #default="{ row }">
             <el-tag :type="getTypeColor(row.ip_type)" size="small">
               {{ IP_TYPE_MAP[row.ip_type]?.label || row.ip_type }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="related_project_name" label="关联项目" width="140" show-overflow-tooltip>
+        <el-table-column prop="related_project_name" label="关联项目" min-width="145" show-overflow-tooltip>
           <template #default="{ row }">{{ row.related_project_name || '-' }}</template>
         </el-table-column>
-        <el-table-column prop="status" label="当前状态" width="130">
+        <el-table-column prop="status" label="当前状态" width="132">
           <template #default="{ row }">
             <el-tag :type="getStatusColor(row.status)" size="small">
               {{ IP_STATUS_MAP[row.status]?.label || row.status }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="main_writer_name" label="主导撰写人" width="110">
-          <template #default="{ row }">{{ row.main_writer_name || '-' }}</template>
-        </el-table-column>
-        <el-table-column prop="applicant_executor_name" label="申请执行人" width="110">
-          <template #default="{ row }">{{ row.applicant_executor_name || '-' }}</template>
-        </el-table-column>
-        <el-table-column prop="return_count" label="退回次数" width="90" align="center">
+        <el-table-column label="当前责任" min-width="156">
           <template #default="{ row }">
-            <el-badge v-if="row.return_count > 0" :value="row.return_count" type="danger" />
-            <span v-else>0</span>
+            <div class="owner-cell">
+              <span>{{ row.main_writer_name || '未分配撰写人' }}</span>
+              <small>执行：{{ row.applicant_executor_name || '未分配' }}</small>
+            </div>
           </template>
         </el-table-column>
-        <el-table-column prop="updated_at" label="更新时间" width="120">
+        <el-table-column prop="return_count" label="退回" width="76" align="center">
+          <template #default="{ row }">
+            <span :class="['return-count', { 'return-count--danger': row.return_count > 0 }]">
+              {{ row.return_count || 0 }}
+            </span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="updated_at" label="最近更新" width="112">
           <template #default="{ row }">{{ formatDate(row.updated_at) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="100" fixed="right">
-          <template #default="{ row }">
-            <el-button type="primary" link @click.stop="handleDetail(row as IPApplicationListItem)">查看详情</el-button>
+        <el-table-column width="52" fixed="right" align="center">
+          <template #default>
+            <el-icon class="row-arrow"><ArrowRight /></el-icon>
           </template>
         </el-table-column>
       </el-table>
 
-      <!-- 分页 -->
-      <div class="pagination-wrapper">
-        <el-pagination
-          v-model:current-page="queryParams.page"
-          v-model:page-size="queryParams.page_size"
-          :total="total"
-          :page-sizes="[10, 20, 50]"
-          layout="total, sizes, prev, pager, next"
-          background
-          @size-change="loadData"
-          @current-change="loadData"
-        />
-      </div>
-    </div>
+      <el-pagination
+        v-model:current-page="queryParams.page"
+        v-model:page-size="queryParams.page_size"
+        :total="total"
+        :page-sizes="[10, 20, 50]"
+        layout="total, sizes, prev, pager, next"
+        background
+        @size-change="loadData"
+        @current-change="loadData"
+      />
+    </section>
 
-    <!-- 移动端卡片列表 -->
-    <div v-else v-loading="loading" class="mobile-list">
-      <el-empty v-if="ipList.length === 0" description="暂无数据" />
-      <el-card
+    <section v-else v-loading="loading" class="mobile-workspace">
+      <button
         v-for="item in ipList"
         :key="item.id"
-        class="mobile-card"
-        shadow="hover"
+        type="button"
+        class="application-card"
         @click="handleDetail(item)"
       >
-        <div class="mobile-card-header">
-          <span class="mobile-card-title">{{ item.title }}</span>
+        <span class="application-card__head">
+          <span class="application-card__title">{{ item.title }}</span>
           <el-tag :type="getStatusColor(item.status)" size="small">
             {{ IP_STATUS_MAP[item.status]?.label || item.status }}
           </el-tag>
-        </div>
-        <div class="mobile-card-body">
-          <div class="mobile-card-row">
-            <el-tag :type="getTypeColor(item.ip_type)" size="small">
-              {{ IP_TYPE_MAP[item.ip_type]?.label || item.ip_type }}
-            </el-tag>
-            <span v-if="item.return_count > 0" class="return-badge">
-              退回 {{ item.return_count }} 次
-            </span>
-          </div>
-          <div class="mobile-card-row">
-            <span class="label">撰写人：</span>
-            <span>{{ item.main_writer_name || '-' }}</span>
-          </div>
-          <div class="mobile-card-row">
-            <span class="label">执行人：</span>
-            <span>{{ item.applicant_executor_name || '-' }}</span>
-          </div>
-          <div class="mobile-card-row">
-            <span class="label">更新：</span>
-            <span>{{ formatDate(item.updated_at) }}</span>
-          </div>
-        </div>
-      </el-card>
+        </span>
+        <span class="application-card__meta">
+          <span>{{ IP_TYPE_MAP[item.ip_type]?.label || item.ip_type }}</span>
+          <span>{{ item.related_project_name || '未关联项目' }}</span>
+        </span>
+        <span class="application-card__owners">
+          <span><small>撰写</small>{{ item.main_writer_name || '未分配' }}</span>
+          <span><small>执行</small>{{ item.applicant_executor_name || '未分配' }}</span>
+          <span :class="{ danger: item.return_count > 0 }"><small>退回</small>{{ item.return_count || 0 }} 次</span>
+        </span>
+        <span class="application-card__footer">
+          更新于 {{ formatDate(item.updated_at) }}
+          <el-icon><ArrowRight /></el-icon>
+        </span>
+      </button>
 
-      <!-- 移动端分页 -->
-      <div class="mobile-pagination">
-        <el-pagination
-          v-model:current-page="queryParams.page"
-          :total="total"
-          :page-size="queryParams.page_size"
-          layout="prev, pager, next"
-          small
-          background
-          @current-change="loadData"
-        />
-      </div>
-    </div>
+      <EmptyState
+        v-if="!loading && !ipList.length"
+        text="暂无知识产权申请"
+        description="新建申请后可在这里跟踪完整流程。"
+        icon="Medal"
+        accent="#76559B"
+      />
+
+      <el-pagination
+        v-if="total > queryParams.page_size"
+        v-model:current-page="queryParams.page"
+        :total="total"
+        :page-size="queryParams.page_size"
+        layout="prev, pager, next"
+        size="small"
+        background
+        @current-change="loadData"
+      />
+    </section>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { Plus, Search, Refresh, Download } from '@element-plus/icons-vue'
-import { getIPApplications } from '@/api/intellectualProperty'
+import { ArrowRight, Download, Plus, Refresh, Search, WarningFilled } from '@element-plus/icons-vue'
 import { exportData } from '@/api/exports'
-import { formatDate } from '@/utils/format'
-import { IP_TYPE_MAP, IP_STATUS_MAP } from '@/utils/constants'
-import { useDevice } from '@/composables/useDevice'
-import type { IPApplicationListItem } from '@/types/intellectualProperty'
+import { getIPApplications } from '@/api/intellectualProperty'
+import { getProjects } from '@/api/projects'
+import EmptyState from '@/components/EmptyState.vue'
 import PageHeader from '@/components/PageHeader.vue'
+import { useDevice } from '@/composables/useDevice'
+import { useUserStore } from '@/stores/user'
+import type { IPApplicationListItem } from '@/types/intellectualProperty'
+import { downloadBlob, formatDate } from '@/utils/format'
+import { IP_STATUS_MAP, IP_TYPE_MAP } from '@/utils/constants'
+import { normalizeIPProjectFilter } from './ipWorkflow'
 
 const router = useRouter()
+const route = useRoute()
 const { isMobile } = useDevice()
-
+const userStore = useUserStore()
 const loading = ref(false)
+const loadError = ref(false)
+const leadsProject = ref(false)
 const ipList = ref<IPApplicationListItem[]>([])
 const total = ref(0)
+const canCreateApplication = computed(() =>
+  userStore.role === 'sys_admin' || userStore.role === 'teacher' || leadsProject.value,
+)
 
-// 查询参数
 const queryParams = reactive({
   page: 1,
-  page_size: 10,
+  page_size: userStore.itemsPerPage,
   search: '',
   ip_type: '',
   status: '',
+  related_project: normalizeIPProjectFilter(route.query.project_id),
 })
 
-// 加载数据
 async function loadData(): Promise<void> {
   loading.value = true
+  loadError.value = false
   try {
-    const res = await getIPApplications(queryParams) as any
-    ipList.value = res.results || []
-    total.value = res.count || 0
+    const response = await getIPApplications(queryParams)
+    ipList.value = response.results || []
+    total.value = response.count || 0
   } catch {
-    // 错误已由拦截器处理
+    loadError.value = true
   } finally {
     loading.value = false
   }
 }
 
-// 搜索
+async function loadCreatePermission(): Promise<void> {
+  if (userStore.role === 'sys_admin' || userStore.role === 'teacher') return
+  try {
+    const user = userStore.userInfo || await userStore.fetchProfile()
+    const response = await getProjects({ page: 1, page_size: 1, leader: user.id })
+    leadsProject.value = response.count > 0
+  } catch {
+    leadsProject.value = false
+  }
+}
+
 function handleSearch(): void {
   queryParams.page = 1
   loadData()
 }
 
-// 重置
 function handleReset(): void {
-  queryParams.search = ''
-  queryParams.ip_type = ''
-  queryParams.status = ''
-  queryParams.page = 1
+  Object.assign(queryParams, {
+    page: 1,
+    search: '',
+    ip_type: '',
+    status: '',
+    related_project: undefined,
+  })
+  if (route.query.project_id !== undefined) {
+    const query = { ...route.query }
+    delete query.project_id
+    router.replace({ query })
+    return
+  }
   loadData()
 }
 
-// 新建申请
 function handleCreate(): void {
   router.push('/intellectual-property/create')
 }
 
-// 查看详情
 function handleDetail(row: IPApplicationListItem): void {
   router.push(`/intellectual-property/${row.id}`)
 }
 
-// 获取类型Tag颜色
 function getTypeColor(type: string): any {
-  return (IP_TYPE_MAP[type]?.color || '') as any
+  return (IP_TYPE_MAP[type]?.color || 'info') as any
 }
 
-// 获取状态Tag颜色
 function getStatusColor(status: string): any {
-  return (IP_STATUS_MAP[status]?.color || '') as any
+  return (IP_STATUS_MAP[status]?.color || 'info') as any
 }
 
-// 导出知识产权列表
 async function handleExport(): Promise<void> {
   try {
-    const res: any = await exportData('intellectual_property', 'xlsx')
-    const blobData = res.data ? res.data : res
-    const url = window.URL.createObjectURL(new Blob([blobData]))
-    const link = document.createElement('a')
-    link.href = url
-    link.download = `intellectual_property_xlsx_${Date.now()}.xlsx`
-    link.click()
-    window.URL.revokeObjectURL(url)
+    const blob = await exportData('ip_applications', 'xlsx')
+    downloadBlob(blob, `intellectual_property_${Date.now()}.xlsx`)
     ElMessage.success('导出成功')
   } catch {
-    // 错误已由拦截器处理
+    // The request interceptor presents the backend error.
   }
 }
 
 onMounted(() => {
   loadData()
+  loadCreatePermission()
 })
+
+watch(
+  () => route.query.project_id,
+  (projectId) => {
+    queryParams.related_project = normalizeIPProjectFilter(projectId)
+    queryParams.page = 1
+    loadData()
+  },
+)
 </script>
 
 <style lang="scss" scoped>
-.mt-16 {
-  margin-top: 16px;
-}
-
-.search-bar {
-  padding: 16px;
-}
-
-.pagination-wrapper {
+.ip-list-page {
   display: flex;
-  justify-content: flex-end;
-  margin-top: 16px;
+  flex-direction: column;
+  gap: 16px;
 }
 
-/* 移动端样式 */
-.mobile-list {
-  .mobile-card {
-    margin-bottom: 12px;
-    cursor: pointer;
+.ip-list-page :deep(.page-header) { margin-bottom: 0; }
 
-    .mobile-card-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      margin-bottom: 8px;
+.status-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  color: #7f3030;
+  background: var(--danger-light);
+  border: 1px solid #efcfcd;
+  border-radius: var(--radius-sm);
+}
 
-      .mobile-card-title {
-        font-size: 15px;
-        font-weight: 600;
-        color: #303133;
-        flex: 1;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-        margin-right: 8px;
-      }
-    }
+.status-banner span { flex: 1; }
 
-    .mobile-card-body {
-      .mobile-card-row {
-        display: flex;
-        align-items: center;
-        gap: 4px;
-        font-size: 13px;
-        color: #606266;
-        margin-bottom: 4px;
+.filter-toolbar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-md);
+}
 
-        .label {
-          color: #909399;
-        }
+.filter-toolbar :deep(.el-form) { display: flex; flex: 1; flex-wrap: wrap; gap: 8px; }
+.filter-toolbar :deep(.el-form-item) { margin: 0; }
+.search-input { width: 240px; }
+.type-filter { width: 160px; }
+.status-filter { width: 180px; }
 
-        .return-badge {
-          color: #f56c6c;
-          font-size: 12px;
-          margin-left: 8px;
-        }
-      }
-    }
-  }
+.result-count {
+  flex: 0 0 auto;
+  padding-top: 7px;
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
 
-  .mobile-pagination {
-    display: flex;
-    justify-content: center;
-    margin-top: 16px;
-  }
+.data-workspace {
+  min-width: 0;
+  padding: 0 16px 16px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.data-workspace :deep(.clickable-row) { cursor: pointer; }
+
+.title-cell,
+.owner-cell {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.title-cell strong {
+  overflow: hidden;
+  color: var(--color-text);
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.title-cell span,
+.owner-cell small {
+  margin-top: 3px;
+  color: var(--color-text-muted);
+  font-size: 11px;
+}
+
+.owner-cell span { color: var(--color-text-regular); font-size: 12px; }
+.return-count { color: var(--color-text-muted); font-variant-numeric: tabular-nums; }
+.return-count--danger { color: var(--color-danger); font-weight: 650; }
+.row-arrow { color: var(--color-text-muted); }
+
+.mobile-workspace {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 160px;
+}
+
+.application-card {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  padding: 14px;
+  color: var(--color-text);
+  text-align: left;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.application-card__head,
+.application-card__meta,
+.application-card__owners,
+.application-card__footer {
+  display: flex;
+  align-items: center;
+}
+
+.application-card__head { justify-content: space-between; gap: 10px; }
+.application-card__title { min-width: 0; overflow: hidden; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.application-card__meta { gap: 12px; margin-top: 7px; color: var(--color-text-muted); font-size: 12px; }
+.application-card__owners { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 12px; padding: 10px 0; border-top: 1px solid var(--color-border-light); border-bottom: 1px solid var(--color-border-light); }
+.application-card__owners > span { display: flex; flex-direction: column; min-width: 0; overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.application-card__owners small { margin-bottom: 2px; color: var(--color-text-muted); font-size: 10px; }
+.application-card__owners .danger { color: var(--color-danger); }
+.application-card__footer { justify-content: space-between; margin-top: 9px; color: var(--color-text-muted); font-size: 11px; }
+
+@media screen and (max-width: 768px) {
+  .filter-toolbar { flex-direction: column; }
+  .filter-toolbar :deep(.el-form) { width: 100%; }
+  .search-input { width: 100%; }
+  .type-filter,
+  .status-filter { width: calc(50vw - 24px); }
+  .filter-actions { width: 100%; }
+  .result-count { padding-top: 0; }
 }
 </style>

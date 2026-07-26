@@ -12,6 +12,9 @@
 #app-root {
   width: 100%;
   height: 100vh;
+  height: 100dvh;
   overflow: hidden;
+  color: var(--color-text);
+  background: var(--color-canvas);
 }
 </style>

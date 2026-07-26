@@ -1,4 +1,4 @@
-import request from './request'
+import { download } from './request'
 
 // ============================================
 // 数据导出 API
@@ -11,10 +11,21 @@ import request from './request'
  * @param projectId 项目ID（可选）
  * @param ipId 知识产权ID（可选）
  */
-export const exportData = (type: string, format: string = 'xlsx', projectId?: number, ipId?: number) => {
-  return request.get('/exports/', {
-    params: { type, file_format: format, project_id: projectId, ip_id: ipId },
-    responseType: 'blob',
+export const exportData = (
+  type: string,
+  format: string = 'xlsx',
+  projectId?: number,
+  ipId?: number,
+  filters?: Record<string, string | number | undefined>,
+): Promise<Blob> => {
+  return download('/exports/', {
+    params: {
+      type,
+      file_format: format,
+      project_id: projectId,
+      ip_id: ipId,
+      ...filters,
+    },
   })
 }
 
@@ -23,6 +34,5 @@ export const exportData = (type: string, format: string = 'xlsx', projectId?: nu
  * 专用接口，返回包含项目基本信息、阶段历程、比赛记录、经费统计、成员列表、知识产权、贡献汇总的完整报告
  * @param projectId 项目ID
  */
-export const exportProjectReport = (projectId: number) => {
-  return request.get(`/exports/project-report/${projectId}/`, { responseType: 'blob' })
-}
+export const exportProjectReport = (projectId: number): Promise<Blob> =>
+  download(`/exports/project-report/${projectId}/`)

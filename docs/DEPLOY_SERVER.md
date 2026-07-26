@@ -214,7 +214,7 @@ docker compose -f docker-compose.prod.yml exec backend python manage.py collects
 
 ## 8. 启动全部服务
 
-### 8.1 启动核心服务（不含 Celery）
+### 8.1 启动全部服务
 
 ```bash
 cd /opt/team-management/deploy
@@ -233,14 +233,16 @@ docker compose -f docker-compose.prod.yml ps
 | PostgreSQL | team_postgres_prod | 内部 5432 | 数据库，不暴露到宿主机 |
 | Redis | team_redis_prod | 内部 6379 | 缓存/消息队列，不暴露 |
 | Backend (gunicorn) | team_backend_prod | 内部 8000 | Django 后端 |
+| Celery Worker | team_celery_worker | 无 | 异步任务、邮件与报表执行 |
+| Celery Beat | team_celery_beat | 无 | 定时提醒与定时报表调度 |
 | Frontend (builder) | team_frontend_builder | 无 | 构建前端 dist 后退出 |
 | Nginx | team_nginx_prod | 80, 443 | 反向代理 + SPA 托管 |
 
-### 8.2 启动 Celery（可选，用于定时通知）
+### 8.2 检查 Celery
 
 ```bash
-# 启动 Celery Worker + Beat
-docker compose -f docker-compose.prod.yml --profile celery up -d
+# Worker 与 Beat 已由生产编排默认启动
+docker compose -f docker-compose.prod.yml ps celery-worker celery-beat
 ```
 
 ### 8.3 验证服务健康
@@ -356,27 +358,28 @@ docker compose -f docker-compose.prod.yml up -d --build
 
 ## 12. 如何备份数据库
 
-详见 [备份恢复文档](./BACKUP_GUIDE.md)，以下为快速命令：
+生产备份必须同时包含数据库、媒体和 SHA-256 清单。详见
+[备份恢复文档](./BACKUP_GUIDE.md)，快速执行：
 
 ```bash
-# 备份数据库（在服务器上执行）
-docker exec team_postgres_prod pg_dump -U postgres team_management > /opt/backups/db_$(date +%Y%m%d_%H%M%S).sql
-
-# 查看备份文件
-ls -lh /opt/backups/
+cd /opt/team-management
+sudo scripts/backup.sh
+find /opt/backups/team-management -maxdepth 2 -type f -ls
 ```
 
 ---
 
 ## 13. 如何恢复数据库
 
-```bash
-# 恢复数据库
-docker exec -i team_postgres_prod psql -U postgres team_management < /opt/backups/db_20260701_120000.sql
+不要直接覆盖正在运行的生产数据库。先对完整备份集执行隔离恢复演练：
 
-# 恢复后重启后端
-docker compose -f docker-compose.prod.yml restart backend
+```bash
+/opt/team-management/scripts/verify_backup.sh \
+  /opt/backups/team-management/manifests/backup_20260726T030000Z.sha256
 ```
+
+真实灾难恢复采用新数据库实例和新媒体卷，经两人复核后再切换连接，具体步骤见
+[备份恢复文档](./BACKUP_GUIDE.md#8-灾难恢复原则)。
 
 ---
 
@@ -407,7 +410,7 @@ Nginx 默认限制已在配置中设为 100MB。如仍报错，检查 `deploy/ng
 
 ### Q4: Celery 定时通知不工作
 
-Celery 需要单独启动（使用 `--profile celery`）。未启动 Celery 时站内通知仍可正常生成，仅定时提醒任务不执行。
+生产编排默认启动 Celery Worker 与 Beat。先检查 `docker compose -f docker-compose.prod.yml ps celery-worker celery-beat`，再查看两项服务日志；任一服务未运行都会影响定时提醒或定时报表。
 
 ### Q5: 磁盘空间不足
 

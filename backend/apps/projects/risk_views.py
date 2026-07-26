@@ -10,6 +10,7 @@ from rest_framework.viewsets import ModelViewSet
 from common.response import success_response, error_response
 from common.mixins import MultiSerializerMixin, MultiPermissionMixin
 from common.permissions import IsProjectLeaderOrTeacherOrAdmin
+from common.project_access import scope_project_queryset, user_can_access_project
 from .risk_models import ProjectRisk
 from .risk_serializers import ProjectRiskSerializer
 
@@ -44,6 +45,19 @@ class ProjectRiskViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSe
     filterset_fields = ['project', 'level', 'status', 'identified_by']
     search_fields = ['title', 'description', 'project__name']
     ordering_fields = ['level', 'status', 'identified_at']
+
+    def get_queryset(self):
+        return scope_project_queryset(
+            super().get_queryset(),
+            self.request.user,
+            project_lookup='project',
+        )
+
+    def check_object_permissions(self, request, obj):
+        super().check_object_permissions(request, obj)
+        write = request.method not in ('GET', 'HEAD', 'OPTIONS')
+        if not user_can_access_project(request.user, obj.project, write=write):
+            self.permission_denied(request, message='无权访问该项目风险')
 
     def create(self, request, *args, **kwargs):
         """创建风险，自动设置识别人为当前用户"""

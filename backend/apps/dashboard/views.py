@@ -9,10 +9,9 @@ from django.conf import settings
 from django.utils import timezone
 from django.db.models import Sum, Count, Q
 from rest_framework.views import APIView
-from rest_framework.permissions import IsAuthenticated
 
 from common.response import success_response
-from common.permissions import IsTeacherOrAdmin
+from common.permissions import IsInternalTeamMember, IsTeacherOrAdmin
 from apps.projects.models import Project, ProjectMember
 from apps.tasks.models import Task
 from apps.finance.models import FinanceBudget, FinanceExpense
@@ -27,13 +26,13 @@ class DashboardView(APIView):
     GET /api/v1/dashboard/
     返回聚合数据：项目总览、经费总表、任务状态、人员状态、风险提醒、公告区
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsInternalTeamMember]
 
     def get(self, request):
         """获取驾驶舱聚合数据"""
         now = timezone.now()
-        # 7天前
-        week_ago = now - timedelta(days=7)
+        # 真实团队规则：项目超过 11 天未更新视为陈旧
+        stale_threshold = now - timedelta(days=11)
         # 30天前
         month_ago = now - timedelta(days=30)
 
@@ -157,19 +156,21 @@ class DashboardView(APIView):
         # ============ 5. 风险提醒 ============
         risks = []
 
-        # 未更新项目（超过7天未打卡）
+        # 未更新项目（超过 11 天未打卡）
         stale_projects = Project.objects.filter(
             status=Project.Status.ACTIVE,
         ).filter(
-            Q(last_leader_update__lt=week_ago) | Q(last_leader_update__isnull=True)
+            Q(last_leader_update__lte=stale_threshold)
+            | Q(last_leader_update__isnull=True, created_at__lte=stale_threshold)
         )
         for project in stale_projects:
+            update_baseline = project.last_leader_update or project.created_at
             risks.append({
                 'type': 'stale_project',
-                'message': f'项目"{project.name}"已超过7天未更新',
+                'message': f'项目"{project.name}"已超过11天未更新',
                 'project_id': project.id,
                 'project_name': project.name,
-                'last_update': project.last_leader_update.strftime('%Y-%m-%d %H:%M') if project.last_leader_update else '从未更新',
+                'last_update': update_baseline.strftime('%Y-%m-%d %H:%M'),
             })
 
         # 延期任务

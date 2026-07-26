@@ -12,6 +12,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
 from common.response import success_response
+from common.project_access import scope_project_queryset
 from .models import Competition
 
 
@@ -27,7 +28,11 @@ class CompetitionStatisticsView(APIView):
         params = request.query_params
         project_id = params.get('project')
 
-        queryset = Competition.objects.all()
+        queryset = scope_project_queryset(
+            Competition.objects.all(),
+            request.user,
+            project_lookup='project',
+        )
         if project_id:
             queryset = queryset.filter(project_id=project_id)
 

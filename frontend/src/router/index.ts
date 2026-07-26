@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import { useUserStore } from '@/stores/user'
+import { isExternalRouteAllowed } from '@/config/navigation'
 
 // ============================================
 // 路由定义
@@ -24,7 +25,7 @@ const authRoutes: RouteRecordRaw[] = [
     children: [
       {
         path: '',
-        redirect: '/dashboard',
+        redirect: '/public',
       },
       {
         path: 'dashboard',
@@ -79,6 +80,12 @@ const authRoutes: RouteRecordRaw[] = [
         name: 'MemberList',
         component: () => import('@/views/members/MemberListView.vue'),
         meta: { title: '人员管理', icon: 'User', requiresAuth: true },
+      },
+      {
+        path: 'team',
+        name: 'TeamManage',
+        component: () => import('@/views/members/TeamManageView.vue'),
+        meta: { title: '团队组织', icon: 'OfficeBuilding', requiresAuth: true },
       },
       {
         path: 'members/:id',
@@ -142,6 +149,12 @@ const authRoutes: RouteRecordRaw[] = [
         component: () => import('@/views/notifications/NotificationCenterView.vue'),
         meta: { title: '通知中心', icon: 'Bell', requiresAuth: true },
       },
+      {
+        path: 'reports',
+        name: 'ScheduledReports',
+        component: () => import('@/views/reports/ScheduledReportView.vue'),
+        meta: { title: '定时报表', icon: 'DataAnalysis', requiresAuth: true },
+      },
       // 贡献记录
       {
         path: 'contributions',
@@ -178,7 +191,11 @@ const authRoutes: RouteRecordRaw[] = [
         path: 'sensitive/pending',
         name: 'SensitivePending',
         component: () => import('@/views/sensitive/PendingApproveView.vue'),
-        meta: { title: '待我审批', requiresAuth: true },
+        meta: {
+          title: '待我审批',
+          requiresAuth: true,
+          roles: ['sys_admin', 'sens_approver', 'teacher'],
+        },
       },
       // 灵活工作时间
       {
@@ -215,6 +232,28 @@ const authRoutes: RouteRecordRaw[] = [
           icon: 'Setting',
           requiresAuth: true,
           roles: ['sys_admin'], // 仅系统管理员可访问
+        },
+      },
+      {
+        path: 'admin/backups',
+        name: 'BackupManage',
+        component: () => import('@/views/admin/BackupManageView.vue'),
+        meta: {
+          title: '演示数据备份',
+          icon: 'Box',
+          requiresAuth: true,
+          roles: ['sys_admin'],
+        },
+      },
+      {
+        path: 'admin/public-portal',
+        name: 'PublicPortalManage',
+        component: () => import('@/views/admin/PublicPortalManageView.vue'),
+        meta: {
+          title: '公开门户',
+          icon: 'View',
+          requiresAuth: true,
+          roles: ['sys_admin', 'teacher'],
         },
       },
       // 成果展示（内部访问入口）
@@ -306,24 +345,16 @@ const router = createRouter({
 
 router.beforeEach(async (to, _from, next) => {
   // 设置页面标题
-  document.title = to.meta.title ? `${to.meta.title} - 团队管理软件` : '团队管理软件'
-
-  // 根路径和旧登录页跳转到门户首页
-  if (to.path === '/' || to.path === '/login') {
-    next(false)
-    window.location.href = '/portal/index.html'
-    return
-  }
+  document.title = to.meta.title ? `${to.meta.title} - 团队管理平台` : '团队管理平台'
 
   const userStore = useUserStore()
   const requiresAuth = to.meta.requiresAuth !== false
 
   // 需要认证的路由
   if (requiresAuth) {
-    // 未登录跳转到门户首页
+    // 未登录进入独立登录页，并保留原目标地址。
     if (!userStore.isLoggedIn) {
-      next(false)
-      window.location.href = '/portal/index.html'
+      next({ path: '/login', query: { redirect: to.fullPath } })
       return
     }
 
@@ -333,10 +364,17 @@ router.beforeEach(async (to, _from, next) => {
         await userStore.fetchProfile()
       } catch {
         await userStore.logout()
-        next(false)
-        window.location.href = '/portal/index.html'
+        next({ path: '/login', query: { redirect: to.fullPath } })
         return
       }
+    }
+
+    if (
+      userStore.userInfo?.membership_status === 'external'
+      && !isExternalRouteAllowed(to.path)
+    ) {
+      next({ path: '/projects' })
+      return
     }
 
     // 检查角色权限

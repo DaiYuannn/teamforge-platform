@@ -4,7 +4,12 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 
-from .views import FinanceBudgetViewSet, FinanceExpenseViewSet, FinanceReceiptViewSet
+from .views import (
+    FinanceBudgetViewSet,
+    FinanceExpenseViewSet,
+    FinanceIncomeViewSet,
+    FinanceReceiptViewSet,
+)
 from .alert_views import FinanceAlertView
 from .trend_views import FinanceTrendView
 from .ocr_views import OCRReceiptView
@@ -13,6 +18,7 @@ from .ocr_views import OCRReceiptView
 router = DefaultRouter()
 router.register(r'budgets', FinanceBudgetViewSet, basename='finance-budget')
 router.register(r'expenses', FinanceExpenseViewSet, basename='finance-expense')
+router.register(r'incomes', FinanceIncomeViewSet, basename='finance-income')
 router.register(r'receipts', FinanceReceiptViewSet, basename='finance-receipt')
 
 urlpatterns = [

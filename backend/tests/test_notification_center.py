@@ -245,3 +245,42 @@ class TestNotificationCenterIntegration:
         assert Notification.objects.filter(recipient=user).count() == 0
         # 引用避免未使用告警
         assert n1.id and n2.id
+
+
+@pytest.mark.django_db(transaction=True)
+class TestNotificationReadStateBroadcast:
+    def test_mark_as_read_publishes_account_state(
+        self, make_user, make_notification, monkeypatch
+    ):
+        user = make_user(email='read-state@test.com')
+        notification = make_notification(recipient=user, is_read=False)
+        calls = []
+        monkeypatch.setattr(
+            'apps.notifications.streaming.publish_notification_state',
+            lambda user_id, **payload: calls.append((user_id, payload)),
+        )
+
+        success, _ = NotificationService.mark_as_read(notification.pk, user)
+
+        assert success is True
+        assert calls == [(user.pk, {
+            'notification_id': notification.pk,
+            'unread_count': 0,
+        })]
+
+    def test_mark_all_as_read_publishes_zero_unread_count(
+        self, make_user, make_notification, monkeypatch
+    ):
+        user = make_user(email='all-read-state@test.com')
+        make_notification(recipient=user, is_read=False)
+        make_notification(recipient=user, is_read=False)
+        calls = []
+        monkeypatch.setattr(
+            'apps.notifications.streaming.publish_notification_state',
+            lambda user_id, **payload: calls.append((user_id, payload)),
+        )
+
+        count = NotificationService.mark_all_as_read(user)
+
+        assert count == 2
+        assert calls == [(user.pk, {'all_read': True, 'unread_count': 0})]

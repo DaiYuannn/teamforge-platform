@@ -133,6 +133,13 @@ class SensitiveAccessRequestSerializer(serializers.ModelSerializer):
     )
     project_name = serializers.CharField(source='project.name', read_only=True, default='')
     is_accessible = serializers.BooleanField(read_only=True)
+    has_attachment = serializers.SerializerMethodField()
+    attachment_name = serializers.CharField(
+        source='sensitive_data.file_attachment.name',
+        read_only=True,
+        default='',
+    )
+    can_download_attachment = serializers.BooleanField(read_only=True)
 
     class Meta:
         model = SensitiveAccessRequest
@@ -143,6 +150,7 @@ class SensitiveAccessRequestSerializer(serializers.ModelSerializer):
             'project', 'project_name', 'expected_use_time',
             'request_note', 'is_download',
             'status', 'status_display', 'is_accessible',
+            'has_attachment', 'attachment_name', 'can_download_attachment',
             'approver', 'approver_name', 'approval_opinion',
             'approved_at', 'access_expires_at', 'viewed_at',
             'created_at',
@@ -151,6 +159,9 @@ class SensitiveAccessRequestSerializer(serializers.ModelSerializer):
             'id', 'applicant', 'status', 'approver', 'approval_opinion',
             'approved_at', 'access_expires_at', 'viewed_at', 'created_at',
         )
+
+    def get_has_attachment(self, obj):
+        return obj.sensitive_data.file_attachment_id is not None
 
 
 class SensitiveAccessRequestCreateSerializer(serializers.ModelSerializer):

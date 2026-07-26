@@ -11,6 +11,16 @@
       :rules="rules"
       label-width="100px"
     >
+      <el-form-item label="退回时间" prop="return_time">
+        <el-date-picker
+          v-model="form.return_time"
+          type="datetime"
+          value-format="YYYY-MM-DDTHH:mm:ss"
+          placeholder="选择实际退回时间"
+          style="width: 100%"
+        />
+      </el-form-item>
+
       <el-form-item label="退回来源" prop="return_source">
         <el-select v-model="form.return_source" placeholder="请选择退回来源" style="width: 100%">
           <el-option
@@ -51,7 +61,7 @@
           style="width: 100%"
         >
           <el-option
-            v-for="user in userList"
+            v-for="user in props.users"
             :key="user.id"
             :label="user.name || user.username || user.email"
             :value="user.id"
@@ -81,9 +91,8 @@
 import { ref, reactive, computed, watch } from 'vue'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
 import { createIPReturn } from '@/api/intellectualProperty'
-import { getUsers } from '@/api/users'
 import { IP_RETURN_SOURCE_MAP, IP_RESPONSIBILITY_TYPE_MAP } from '@/utils/constants'
-import type { User } from '@/types'
+import type { IPParticipantOption } from '@/types/intellectualProperty'
 
 /**
  * 创建退回记录弹窗
@@ -93,6 +102,8 @@ const props = defineProps<{
   visible: boolean
   /** 申请ID */
   applicationId: number
+  /** 关联项目可选成员 */
+  users: readonly IPParticipantOption[]
 }>()
 
 const emit = defineEmits<{
@@ -104,7 +115,6 @@ const emit = defineEmits<{
 
 const formRef = ref<FormInstance>()
 const submitting = ref(false)
-const userList = ref<User[]>([])
 
 // 弹窗可见性（双向绑定）
 const dialogVisible = computed({
@@ -112,30 +122,28 @@ const dialogVisible = computed({
   set: (val) => emit('update:visible', val),
 })
 
+function currentLocalDateTime(): string {
+  const date = new Date()
+  const localDate = new Date(date.getTime() - date.getTimezoneOffset() * 60_000)
+  return localDate.toISOString().slice(0, 19)
+}
+
 // 表单数据
 const form = reactive({
+  return_time: currentLocalDateTime(),
   return_source: '',
   return_reason: '',
   responsibility_type: '',
   responsible_user: null as number | null,
-  modify_deadline: '',
+  modify_deadline: null as string | null,
 })
 
 // 验证规则
 const rules: FormRules = {
+  return_time: [{ required: true, message: '请选择退回时间', trigger: 'change' }],
   return_source: [{ required: true, message: '请选择退回来源', trigger: 'change' }],
   return_reason: [{ required: true, message: '请输入退回原因', trigger: 'blur' }],
   responsibility_type: [{ required: true, message: '请选择责任类型', trigger: 'change' }],
-}
-
-// 加载用户列表
-async function loadUsers(): Promise<void> {
-  try {
-    const res = await getUsers({ page: 1, page_size: 999 }) as any
-    userList.value = res.results || []
-  } catch {
-    // 忽略
-  }
 }
 
 // 提交表单
@@ -145,7 +153,10 @@ async function handleSubmit(): Promise<void> {
     if (!valid) return
     submitting.value = true
     try {
-      await createIPReturn(props.applicationId, { ...form })
+      await createIPReturn(props.applicationId, {
+        ...form,
+        modify_deadline: form.modify_deadline || null,
+      })
       ElMessage.success('退回记录创建成功')
       emit('success')
       dialogVisible.value = false
@@ -161,11 +172,12 @@ async function handleSubmit(): Promise<void> {
 function handleClose(): void {
   formRef.value?.resetFields()
   Object.assign(form, {
+    return_time: currentLocalDateTime(),
     return_source: '',
     return_reason: '',
     responsibility_type: '',
     responsible_user: null,
-    modify_deadline: '',
+    modify_deadline: null,
   })
 }
 
@@ -174,7 +186,7 @@ watch(
   () => props.visible,
   (val) => {
     if (val) {
-      loadUsers()
+      form.return_time = currentLocalDateTime()
     }
   }
 )

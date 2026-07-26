@@ -8,10 +8,10 @@ from decimal import Decimal
 
 from django.db.models import Count, Q
 from django.utils import timezone
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
 from common.response import success_response, error_response
+from common.permissions import IsInternalTeamMember
 from apps.projects.models import Project, ProjectMember
 from apps.tasks.models import Task
 from apps.finance.models import FinanceBudget
@@ -31,7 +31,8 @@ class ProjectHealthScoreView(APIView):
     返回：overall_score(0-100)、category_scores、grade(A/B/C/D)
     """
 
-    permission_classes = [IsAuthenticated]
+    # 评分包含经费状态，外部协作者和已离队账号不得通过聚合结果旁路读取。
+    permission_classes = [IsInternalTeamMember]
 
     def get(self, request):
         project_id = request.query_params.get('project_id')
@@ -86,7 +87,9 @@ def _compute_health_score(project):
     }
 
     # ---------- 4. 团队参与（15%）----------
-    member_count = ProjectMember.objects.filter(project=project).count()
+    member_count = ProjectMember.objects.filter(
+        project=project, status=ProjectMember.Status.ACTIVE
+    ).count()
     week_ago = now - timedelta(days=7)
     recent_tasks = tasks.filter(created_at__gte=week_ago).count()
     # 团队规模与近期活跃度

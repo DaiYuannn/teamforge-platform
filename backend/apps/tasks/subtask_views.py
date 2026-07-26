@@ -10,6 +10,7 @@ from rest_framework.viewsets import ModelViewSet
 from common.response import success_response, error_response
 from common.mixins import MultiSerializerMixin, MultiPermissionMixin
 from common.permissions import IsProjectLeaderOrTeacherOrAdmin
+from common.project_access import scope_project_queryset, user_can_access_project
 from .subtask_models import SubTask
 from .subtask_serializers import SubTaskSerializer
 
@@ -44,6 +45,19 @@ class SubTaskViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet):
     filterset_fields = ['parent', 'assignee', 'is_completed']
     search_fields = ['title']
     ordering_fields = ['sort_order', 'created_at']
+
+    def get_queryset(self):
+        return scope_project_queryset(
+            super().get_queryset(),
+            self.request.user,
+            project_lookup='parent__project',
+        )
+
+    def check_object_permissions(self, request, obj):
+        super().check_object_permissions(request, obj)
+        write = request.method not in ('GET', 'HEAD', 'OPTIONS')
+        if not user_can_access_project(request.user, obj.parent.project, write=write):
+            self.permission_denied(request, message='无权访问该项目子任务')
 
     def create(self, request, *args, **kwargs):
         """创建子任务"""

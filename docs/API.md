@@ -4,6 +4,27 @@
 > 版本：v1
 > Base URL：`/api/v1`
 
+> v2.0 说明：本文保留基础模块的详细契约；以下“当前扩展端点”是新功能的权威入口。OpenAPI 仍以运行中的 `/api/v1/common/openapi/` 输出为准。系统不提供 2FA；OAuth 端点仅在服务端提供商被实际配置后可用。
+
+---
+
+## 当前扩展端点
+
+| 功能 | 方法与路径 | 说明 |
+|------|------------|------|
+| 账户偏好 | `GET/PATCH /users/preference/` | 主色、默认页、分页、范围、布局、收藏和通知偏好 |
+| 统一时间线 | `GET /dashboard/timeline/` | 支持逗号分隔的精确 `event_type` 多选过滤 |
+| 项目日历 | `GET /dashboard/calendar/` | 项目、任务、比赛和经费日期聚合 |
+| 票据 OCR | `POST /finance/ocr/recognize/` | 上传票据并返回需人工复核的结构化字段 |
+| 演示备份列表 | `GET /common/backup/` | 仅管理员，仅管理完整演示种子拥有的数据 |
+| 创建演示备份 | `POST /common/backup/create/` | 生成快照、附件与校验清单 |
+| 下载演示备份 | `GET /common/backup/{backup_id}/download/` | 下载 ZIP 包 |
+| 恢复演示备份 | `POST /common/backup/{backup_id}/restore/` | 需要显式确认，先生成回滚包 |
+| 定时报表 | `/exports/scheduled-reports/` | CRUD、启停、立即运行、执行记录与下载 |
+| 自定义报表 | `/exports/custom-reports/` | 报表模板 CRUD 与生成 |
+| 实时通知 | `GET /notifications/sse/` | JWT 鉴权的 SSE，支持游标补发 |
+| 通知筛选 | `GET /notifications/?category=report` | 支持任务、项目、比赛、经费、报表等分类 |
+
 ---
 
 ## 目录
@@ -2504,7 +2525,7 @@ Authorization: Bearer <access_token>
 
 **返回**：PDF 文件流。
 
-- **备注**：PDF 导出依赖 GTK 环境，若未安装返回 `code: 1005`。另提供 `GET /api/v1/exports/template/?type=<类型>` 下载空白导入模板。
+- **备注**：PDF 由 ReportLab 与 CID 中文字体生成，不依赖 GTK。另提供 `GET /api/v1/exports/template/?type=<类型>` 下载空白导入模板。
 
 ---
 

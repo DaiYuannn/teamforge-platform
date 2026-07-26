@@ -98,3 +98,36 @@ class TestFileVersionAPI:
         f = make_file()
         resp = api_client.get(f'/api/v1/files/{f.id}/versions/')
         assert resp.status_code == 401
+
+    def test_restore_version_creates_new_current_version(
+        self, teacher_client, make_project, tmp_path
+    ):
+        """恢复历史版本不会倒退版本号，而是形成新的当前版本。"""
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from apps.files.models import FileAsset, FileVersion
+
+        project = make_project(leader=teacher_client.user)
+        asset = FileAsset.objects.create(
+            project=project,
+            name='方案.txt',
+            file=SimpleUploadedFile('current.txt', b'current'),
+            level='internal',
+            uploader=teacher_client.user,
+            version=2,
+        )
+        historical = FileVersion.objects.create(
+            file_asset=asset,
+            file=SimpleUploadedFile('old.txt', b'old-content'),
+            version=1,
+            uploader=teacher_client.user,
+        )
+
+        response = teacher_client.post(
+            f'/api/v1/files/{asset.id}/versions/{historical.id}/restore/'
+        )
+        assert response.status_code == 200, response.json()
+        asset.refresh_from_db()
+        assert asset.version == 3
+        with asset.file.open('rb') as restored:
+            assert restored.read() == b'old-content'
+        assert FileVersion.objects.filter(file_asset=asset, version=2).exists()

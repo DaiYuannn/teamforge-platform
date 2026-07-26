@@ -2,187 +2,273 @@
   <el-dialog
     v-model="dialogVisible"
     title="审核贡献"
-    width="600px"
+    :width="dialogWidth"
+    :close-on-click-modal="false"
     @close="handleClose"
   >
-    <!-- 贡献信息展示 -->
-    <el-descriptions v-if="contribution" :column="1" border class="contribution-info">
-      <el-descriptions-item label="项目">
-        <span class="contribution-summary">{{ contribution.project_name }}</span>
-      </el-descriptions-item>
-      <el-descriptions-item label="成员">{{ contribution.user_name }}</el-descriptions-item>
-      <el-descriptions-item label="贡献类型">
-        {{ CONTRIBUTION_TYPE_MAP[contribution.contribution_type]?.label || contribution.contribution_type }}
-        <el-tag
-          v-if="contribution.weight != null"
-          class="weight-tag"
-          size="small"
-          effect="dark"
-        >
-          权重 {{ contribution.weight }}
+    <section v-if="contribution" class="contribution-summary" aria-label="待审核贡献信息">
+      <header>
+        <div>
+          <span>所属项目</span>
+          <strong>{{ contribution.project_name || '-' }}</strong>
+        </div>
+        <el-tag :type="contributionTypeTag as any" size="small">
+          {{ contributionTypeLabel }}
         </el-tag>
-      </el-descriptions-item>
-      <el-descriptions-item label="贡献内容">
-        <span class="contribution-detail">{{ contribution.content }}</span>
-      </el-descriptions-item>
-    </el-descriptions>
+      </header>
+      <dl>
+        <div>
+          <dt>提交成员</dt>
+          <dd>{{ contribution.user_name || '-' }}</dd>
+        </div>
+        <div>
+          <dt>提交时间</dt>
+          <dd>{{ displayDate(contribution.created_at) }}</dd>
+        </div>
+      </dl>
+      <div class="contribution-content">
+        <span>贡献内容</span>
+        <p>{{ contribution.content }}</p>
+      </div>
+    </section>
 
-    <el-divider />
-
-    <el-form
-      ref="formRef"
-      :model="form"
-      :rules="rules"
-      label-width="100px"
-    >
+    <el-form ref="formRef" class="review-form" :model="form" :rules="rules" label-position="top">
       <el-form-item label="审核结果" prop="status">
-        <el-radio-group v-model="form.status">
-          <el-radio value="approved">通过</el-radio>
-          <el-radio value="rejected">驳回</el-radio>
+        <el-radio-group v-model="form.status" class="review-segment">
+          <el-radio-button value="approved">通过</el-radio-button>
+          <el-radio-button value="rejected">驳回</el-radio-button>
         </el-radio-group>
       </el-form-item>
-      <el-form-item v-if="form.status === 'approved'" label="权重" prop="weight">
+      <el-form-item v-if="form.status === 'approved'" label="贡献权重" prop="weight">
         <el-input-number v-model="form.weight" :min="0" :max="100" :precision="1" />
-        <span class="form-help">贡献权重（0-100）</span>
       </el-form-item>
-      <el-form-item label="审核意见" prop="review_comment">
+      <el-form-item label="审核意见" prop="review_opinion">
         <el-input
-          v-model="form.review_comment"
+          v-model="form.review_opinion"
           type="textarea"
-          :rows="3"
-          placeholder="请输入审核意见"
+          :rows="4"
+          maxlength="1000"
+          show-word-limit
+          :placeholder="form.status === 'approved' ? '填写通过意见' : '说明驳回原因'"
         />
       </el-form-item>
     </el-form>
 
     <template #footer>
-      <el-button @click="dialogVisible = false">取消</el-button>
-      <el-button type="primary" :loading="submitting" @click="handleSubmit">确认审核</el-button>
+      <div class="dialog-actions">
+        <el-button @click="dialogVisible = false">取消</el-button>
+        <el-button
+          :type="form.status === 'rejected' ? 'danger' : 'primary'"
+          :loading="submitting"
+          @click="handleSubmit"
+        >
+          确认{{ form.status === 'approved' ? '通过' : '驳回' }}
+        </el-button>
+      </div>
     </template>
   </el-dialog>
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, watch } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
 import { reviewContribution } from '@/api/contributions'
 import { CONTRIBUTION_TYPE_MAP } from '@/utils/constants'
+import { formatDate } from '@/utils/format'
+import { useDevice } from '@/composables/useDevice'
 import type { Contribution } from '@/types'
 
-/**
- * 贡献审核弹窗
- */
 const props = defineProps<{
-  /** 是否显示 */
   visible: boolean
-  /** 贡献数据 */
   contribution?: Contribution | null
 }>()
 
 const emit = defineEmits<{
-  (e: 'update:visible', val: boolean): void
-  (e: 'success'): void
+  (event: 'update:visible', value: boolean): void
+  (event: 'success'): void
 }>()
 
+const { isMobile } = useDevice()
 const formRef = ref<FormInstance>()
 const submitting = ref(false)
-
-// 弹窗可见性
+const dialogWidth = computed(() => (isMobile.value ? 'calc(100vw - 24px)' : '620px'))
 const dialogVisible = computed({
   get: () => props.visible,
-  set: (val) => emit('update:visible', val),
+  set: (value) => emit('update:visible', value),
 })
-
-// 表单数据
-const form = reactive({
+const contributionTypeLabel = computed(() => {
+  const type = props.contribution?.contribution_type || ''
+  return CONTRIBUTION_TYPE_MAP[type]?.label || type || '-'
+})
+const contributionTypeTag = computed(() => {
+  const type = props.contribution?.contribution_type || ''
+  return CONTRIBUTION_TYPE_MAP[type]?.tagType || 'info'
+})
+const defaultForm = {
   status: 'approved' as 'approved' | 'rejected',
   weight: 50,
-  review_comment: '',
-})
-
-// 验证规则
+  review_opinion: '',
+}
+const form = reactive({ ...defaultForm })
 const rules: FormRules = {
   status: [{ required: true, message: '请选择审核结果', trigger: 'change' }],
-  review_comment: [{ required: true, message: '请输入审核意见', trigger: 'blur' }],
+  review_opinion: [{ required: true, message: '请输入审核意见', trigger: 'blur' }],
 }
 
-// 提交审核
+function displayDate(value?: string | null): string {
+  return value ? formatDate(value) : '-'
+}
+
+function resetForm(): void {
+  formRef.value?.clearValidate()
+  Object.assign(form, defaultForm)
+}
+
 async function handleSubmit(): Promise<void> {
-  if (!formRef.value) return
-  await formRef.value.validate(async (valid) => {
-    if (!valid) return
-    submitting.value = true
-    try {
-      const data: any = {
-        status: form.status,
-        review_comment: form.review_comment,
-      }
-      if (form.status === 'approved') {
-        data.weight = form.weight
-      }
-      await reviewContribution(props.contribution!.id, data)
-      ElMessage.success('审核成功')
-      emit('success')
-      dialogVisible.value = false
-    } catch {
-      // 错误已由拦截器处理
-    } finally {
-      submitting.value = false
-    }
-  })
+  if (!formRef.value || !props.contribution) return
+  const valid = await formRef.value.validate().catch(() => false)
+  if (!valid) return
+
+  const payload: { status: string; review_opinion: string; weight?: number } = {
+    status: form.status,
+    review_opinion: form.review_opinion.trim(),
+  }
+  if (form.status === 'approved') payload.weight = form.weight
+
+  submitting.value = true
+  try {
+    await reviewContribution(props.contribution.id, payload)
+    ElMessage.success(form.status === 'approved' ? '贡献已通过' : '贡献已驳回')
+    emit('success')
+    dialogVisible.value = false
+  } catch {
+    // 请求错误已由拦截器处理。
+  } finally {
+    submitting.value = false
+  }
 }
 
-// 关闭弹窗
 function handleClose(): void {
-  formRef.value?.resetFields()
-  Object.assign(form, {
-    status: 'approved',
-    weight: 50,
-    review_comment: '',
-  })
+  resetForm()
 }
 
-// 弹窗打开时重置
 watch(
   () => props.visible,
-  (val) => {
-    if (val) {
-      Object.assign(form, {
-        status: 'approved',
-        weight: 50,
-        review_comment: '',
-      })
-    }
-  }
+  (visible) => {
+    if (visible) resetForm()
+  },
 )
 </script>
 
 <style lang="scss" scoped>
-.contribution-info {
-  margin-bottom: 16px;
-}
-
-/* 需求F：贡献记录 - 概括蓝色、详细绿色、权重紫色 */
 .contribution-summary {
-  color: #409eff;
-  font-weight: 600;
+  overflow: hidden;
+  margin-bottom: 20px;
+  background: var(--color-surface-subtle);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-md);
+
+  > header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--color-border-light);
+
+    > div {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+    }
+
+    span {
+      color: var(--color-text-muted);
+      font-size: 11px;
+    }
+
+    strong {
+      margin-top: 2px;
+      overflow-wrap: anywhere;
+      color: var(--color-text);
+      font-size: 14px;
+      font-weight: 600;
+    }
+  }
+
+  dl {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--color-border-light);
+
+    > div + div {
+      padding-left: 16px;
+      border-left: 1px solid var(--color-border-light);
+    }
+  }
+
+  dt,
+  .contribution-content > span {
+    color: var(--color-text-muted);
+    font-size: 11px;
+  }
+
+  dd {
+    margin-top: 2px;
+    color: var(--color-text-regular);
+    font-size: 13px;
+  }
 }
 
-.contribution-detail {
-  color: #67c23a;
+.contribution-content {
+  padding: 12px 16px 14px;
+
+  p {
+    margin-top: 4px;
+    overflow-wrap: anywhere;
+    color: var(--color-text-regular);
+    font-size: 13px;
+    line-height: 1.55;
+  }
 }
 
-.weight-tag {
-  background-color: #9b59b6 !important;
-  border-color: #9b59b6 !important;
-  color: #fff !important;
-  font-weight: 600;
-  margin-left: 8px;
+.review-form {
+  :deep(.el-input-number) {
+    width: 180px;
+  }
 }
 
-.form-help {
-  margin-left: 8px;
-  font-size: 12px;
-  color: #909399;
+.review-segment {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  width: 260px;
+
+  :deep(.el-radio-button__inner) {
+    width: 100%;
+  }
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+@media screen and (max-width: 768px) {
+  .review-segment,
+  .review-form :deep(.el-input-number) {
+    width: 100%;
+  }
+
+  .dialog-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+
+    :deep(.el-button) {
+      width: 100%;
+      margin-left: 0;
+    }
+  }
 }
 </style>

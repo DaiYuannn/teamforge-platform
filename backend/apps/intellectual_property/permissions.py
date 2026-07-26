@@ -2,7 +2,13 @@
 知识产权管理权限
 所有权限必须后端真实校验
 """
+from django.db.models import Q
 from rest_framework.permissions import BasePermission, SAFE_METHODS
+
+from common.project_access import is_exited_member, is_external_collaborator
+
+
+PRIVILEGED_IP_ROLES = ('sys_admin', 'teacher')
 
 
 def _get_application(obj):
@@ -23,17 +29,102 @@ def _is_project_member(user, application):
     - 管理员/老师直接通过
     - 无关联项目则返回 False
     """
-    if user.global_role in ['sys_admin', 'teacher']:
+    if (
+        not user
+        or not user.is_authenticated
+        or not getattr(user, 'is_active', False)
+        or is_exited_member(user)
+    ):
+        return False
+    if user.global_role in PRIVILEGED_IP_ROLES:
         return True
     project = getattr(application, 'related_project', None)
     if project is None:
         return False
-    # 项目负责人
+    from apps.projects.models import ProjectMember
+    active_membership = ProjectMember.objects.filter(
+        project=project,
+        user=user,
+        status=ProjectMember.Status.ACTIVE,
+    ).exists()
+    if is_external_collaborator(user):
+        return active_membership
+    # 内部项目负责人或仍在项目中的成员可访问。
     if project.leader_id == user.id:
         return True
-    # 项目成员
+    return active_membership
+
+
+def _can_access_application(user, application):
+    """Return whether a user may see the application's non-public records."""
+    return _is_project_member(user, application)
+
+
+def accessible_ip_applications(user):
+    """Applications whose private related records are visible to ``user``."""
+    from .models import IntellectualPropertyApplication
+
+    queryset = IntellectualPropertyApplication.objects.all()
+    if (
+        not user
+        or not user.is_authenticated
+        or not getattr(user, 'is_active', False)
+        or is_exited_member(user)
+    ):
+        return queryset.none()
+    if user.global_role in PRIVILEGED_IP_ROLES:
+        return queryset
+
     from apps.projects.models import ProjectMember
-    return ProjectMember.objects.filter(project=project, user=user).exists()
+
+    if is_external_collaborator(user):
+        return queryset.filter(
+            related_project__members__user=user,
+            related_project__members__status=ProjectMember.Status.ACTIVE,
+        ).distinct()
+
+    return queryset.filter(
+        Q(related_project__leader=user)
+        | Q(
+            related_project__members__user=user,
+            related_project__members__status=ProjectMember.Status.ACTIVE,
+        )
+    ).distinct()
+
+
+def _request_application(request):
+    """Resolve an application referenced by a create request."""
+    from .models import IntellectualPropertyApplication
+
+    application_id = request.data.get('application')
+    if not application_id:
+        return None
+    try:
+        return IntellectualPropertyApplication.objects.select_related(
+            'related_project'
+        ).get(pk=application_id)
+    except (IntellectualPropertyApplication.DoesNotExist, TypeError, ValueError):
+        return None
+
+
+def _request_project(request):
+    """Resolve a project referenced by an application create request."""
+    from apps.projects.models import Project
+
+    project_id = request.data.get('related_project')
+    if not project_id:
+        return None
+    try:
+        return Project.objects.get(pk=project_id)
+    except (Project.DoesNotExist, TypeError, ValueError):
+        return None
+
+
+def _is_application_leader_or_privileged(user, application):
+    if user.global_role in PRIVILEGED_IP_ROLES:
+        return True
+    project = getattr(application, 'related_project', None)
+    return project is not None and project.leader_id == user.id
 
 
 class IsIPProjectMember(BasePermission):
@@ -46,18 +137,23 @@ class IsIPProjectMember(BasePermission):
     def has_permission(self, request, view):
         if not request.user or not request.user.is_authenticated:
             return False
+        if getattr(view, 'action', None) == 'create':
+            application = _request_application(request)
+            return application is not None and _can_access_application(
+                request.user, application
+            )
         return True
 
     def has_object_permission(self, request, view, obj):
         if not request.user or not request.user.is_authenticated:
             return False
         # 系统管理员/老师可访问所有
-        if request.user.global_role in ['sys_admin', 'teacher']:
+        if request.user.global_role in PRIVILEGED_IP_ROLES:
             return True
         application = _get_application(obj)
         if application is None:
             return False
-        return _is_project_member(request.user, application)
+        return _can_access_application(request.user, application)
 
 
 class IsProjectLeaderOrTeacherOrAdminForIP(BasePermission):
@@ -70,11 +166,22 @@ class IsProjectLeaderOrTeacherOrAdminForIP(BasePermission):
     def has_permission(self, request, view):
         if not request.user or not request.user.is_authenticated:
             return False
-        # 安全方法对所有认证用户开放
+        # 安全方法的对象范围由各 ViewSet 的 queryset 隔离。
         if request.method in SAFE_METHODS:
             return True
-        # 写操作需老师或管理员（对象级权限进一步校验项目负责人）
-        return request.user.global_role in ['teacher', 'sys_admin']
+        if request.user.global_role in PRIVILEGED_IP_ROLES:
+            return True
+
+        # 创建申请时校验请求中的项目；创建关联记录时校验请求中的申请。
+        if getattr(view, 'action', None) == 'create':
+            application = _request_application(request)
+            if application is not None:
+                return _is_application_leader_or_privileged(request.user, application)
+            project = _request_project(request)
+            return project is not None and project.leader_id == request.user.id
+
+        # 非创建写操作继续执行到对象级权限，避免把项目负责人挡在入口处。
+        return True
 
     def has_object_permission(self, request, view, obj):
         if not request.user or not request.user.is_authenticated:
@@ -83,24 +190,15 @@ class IsProjectLeaderOrTeacherOrAdminForIP(BasePermission):
         if request.method in SAFE_METHODS:
             return True
         # 系统管理员
-        if request.user.global_role == 'sys_admin':
-            return True
-        # 老师
-        if request.user.global_role == 'teacher':
-            return True
-        # 申请关联项目的负责人
         application = _get_application(obj)
         if application is None:
             return False
-        project = getattr(application, 'related_project', None)
-        if project is not None and project.leader_id == request.user.id:
-            return True
-        return False
+        return _is_application_leader_or_privileged(request.user, application)
 
 
 class IsMainWriterOrExecutor(BasePermission):
     """
-    主导撰写人 / 申请执行人权限
+    主导撰写人 / 申请执行人 / 材料上传人权限
     用于申请材料的维护操作
     """
 
@@ -113,7 +211,10 @@ class IsMainWriterOrExecutor(BasePermission):
         if not request.user or not request.user.is_authenticated:
             return False
         # 系统管理员/老师可操作
-        if request.user.global_role in ['sys_admin', 'teacher']:
+        if request.user.global_role in PRIVILEGED_IP_ROLES:
+            return True
+        from .models import IPMaterialVersion
+        if isinstance(obj, IPMaterialVersion) and obj.uploaded_by_id == request.user.id:
             return True
         application = _get_application(obj)
         if application is None:
@@ -146,7 +247,7 @@ class IsReturnModifier(BasePermission):
         if not request.user or not request.user.is_authenticated:
             return False
         # 系统管理员/老师可操作
-        if request.user.global_role in ['sys_admin', 'teacher']:
+        if request.user.global_role in PRIVILEGED_IP_ROLES:
             return True
         # 退回记录对象
         from .models import IPReturnRecord
@@ -172,4 +273,4 @@ class IsReturnModifier(BasePermission):
         application = _get_application(obj)
         if application is None:
             return False
-        return _is_project_member(request.user, application)
+        return _can_access_application(request.user, application)

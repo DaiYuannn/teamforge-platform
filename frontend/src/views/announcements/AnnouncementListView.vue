@@ -1,23 +1,43 @@
 <template>
-  <div class="announcement-list">
-    <PageHeader title="公告管理" />
+  <div class="announcement-list page-container">
+    <PageHeader title="公告管理" subtitle="发布与维护团队公告">
+      <template #actions>
+        <el-button v-if="canCreate" type="primary" :icon="Plus" @click="showDialog = true">
+          发布公告
+        </el-button>
+      </template>
+    </PageHeader>
 
-    <el-card shadow="never">
-      <div class="toolbar">
-        <el-select v-model="filterCategory" placeholder="全部分类" clearable style="width: 160px">
+    <div class="surface-panel filter-panel">
+      <div class="filter-control">
+        <span class="filter-label">公告分类</span>
+        <el-select
+          v-model="filterCategory"
+          placeholder="全部分类"
+          clearable
+          class="category-filter"
+          @change="handleCategoryChange"
+        >
           <el-option label="系统公告" value="system" />
           <el-option label="项目公告" value="project" />
           <el-option label="活动公告" value="activity" />
           <el-option label="其他" value="other" />
         </el-select>
-        <el-button v-if="canCreate" type="primary" @click="showDialog = true">发布公告</el-button>
       </div>
+      <span class="result-count">共 {{ total }} 条公告</span>
+    </div>
 
-      <el-table v-loading="loading" :data="announcements" style="width: 100%">
+    <section class="surface-panel content-panel">
+      <el-table v-if="!isMobile" v-loading="loading" :data="announcements" style="width: 100%">
+        <template #empty>
+          <el-empty description="暂无公告" />
+        </template>
         <el-table-column prop="title" label="标题" min-width="200">
           <template #default="{ row }">
-            <el-icon v-if="row.is_pinned" color="#E6A23C"><Top /></el-icon>
-            {{ row.title }}
+            <div class="announcement-title">
+              <el-icon v-if="row.is_pinned" class="pin-icon"><Top /></el-icon>
+              <span>{{ row.title }}</span>
+            </div>
           </template>
         </el-table-column>
         <el-table-column prop="category_display" label="分类" width="120" />
@@ -32,28 +52,78 @@
         <el-table-column prop="published_at" label="发布时间" width="180">
           <template #default="{ row }">{{ formatDate(row.published_at) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="150" v-if="canCreate">
+        <el-table-column v-if="canCreate" label="操作" width="104" align="right" fixed="right">
           <template #default="{ row }">
-            <el-button size="small" text @click="handlePin(row)">{{ row.is_pinned ? '取消置顶' : '置顶' }}</el-button>
-            <el-button size="small" text type="danger" @click="handleDelete(row)">删除</el-button>
+            <el-tooltip :content="row.is_pinned ? '取消置顶' : '置顶'" placement="top">
+              <el-button
+                text
+                :icon="row.is_pinned ? Bottom : Top"
+                :aria-label="row.is_pinned ? '取消置顶' : '置顶'"
+                @click="handlePin(row)"
+              />
+            </el-tooltip>
+            <el-tooltip content="删除公告" placement="top">
+              <el-button text type="danger" :icon="Delete" aria-label="删除公告" @click="handleDelete(row)" />
+            </el-tooltip>
           </template>
         </el-table-column>
       </el-table>
+
+      <div v-else v-loading="loading" class="mobile-list">
+        <el-empty v-if="announcements.length === 0 && !loading" description="暂无公告" />
+        <article v-for="row in announcements" :key="row.id" class="mobile-announcement">
+          <div class="mobile-title-row">
+            <h2 class="mobile-title">
+              <el-icon v-if="row.is_pinned" class="pin-icon"><Top /></el-icon>
+              <span>{{ row.title }}</span>
+            </h2>
+            <el-tag
+              :type="row.status === 'published' ? 'success' : row.status === 'archived' ? 'info' : 'warning'"
+              size="small"
+            >
+              {{ row.status_display }}
+            </el-tag>
+          </div>
+          <div class="mobile-meta">
+            <span>{{ row.category_display }}</span>
+            <span>{{ row.author_name || '-' }}</span>
+            <time>{{ formatDate(row.published_at) }}</time>
+          </div>
+          <div v-if="canCreate" class="mobile-actions">
+            <el-button text :icon="row.is_pinned ? Bottom : Top" @click="handlePin(row)">
+              {{ row.is_pinned ? '取消置顶' : '置顶' }}
+            </el-button>
+            <el-button text type="danger" :icon="Delete" @click="handleDelete(row)">删除</el-button>
+          </div>
+        </article>
+      </div>
 
       <div class="pagination-wrapper">
         <el-pagination
           v-model:current-page="page"
           :page-size="pageSize"
           :total="total"
-          layout="total, prev, pager, next"
+          :layout="isMobile ? 'prev, pager, next' : 'total, prev, pager, next'"
           @current-change="loadData"
         />
       </div>
-    </el-card>
+    </section>
 
     <!-- 发布公告对话框 -->
-    <el-dialog v-model="showDialog" title="发布公告" width="600px">
-      <el-form ref="formRef" :model="form" :rules="rules" label-width="80px">
+    <el-dialog
+      v-model="showDialog"
+      title="发布公告"
+      width="620px"
+      :fullscreen="isMobile"
+      append-to-body
+    >
+      <el-form
+        ref="formRef"
+        :model="form"
+        :rules="rules"
+        :label-width="isMobile ? 'auto' : '80px'"
+        :label-position="isMobile ? 'top' : 'right'"
+      >
         <el-form-item label="标题" prop="title">
           <el-input v-model="form.title" placeholder="请输入公告标题" />
         </el-form-item>
@@ -90,19 +160,21 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
-import { Top } from '@element-plus/icons-vue'
+import { Bottom, Delete, Plus, Top } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { useUserStore } from '@/stores/user'
-import { get, post, patch, del } from '@/api/request'
+import { get, post, del } from '@/api/request'
 import { formatDate } from '@/utils/format'
+import { useDevice } from '@/composables/useDevice'
 
 const userStore = useUserStore()
 const canCreate = computed(() => userStore.isAdmin || userStore.isTeacher)
+const { isMobile } = useDevice()
 
 const loading = ref(false)
 const announcements = ref<any[]>([])
 const page = ref(1)
-const pageSize = 10
+const pageSize = userStore.itemsPerPage
 const total = ref(0)
 const filterCategory = ref('')
 
@@ -134,6 +206,11 @@ async function loadData(): Promise<void> {
   } finally {
     loading.value = false
   }
+}
+
+function handleCategoryChange(): void {
+  page.value = 1
+  loadData()
 }
 
 async function handleSubmit(): Promise<void> {
@@ -185,21 +262,139 @@ onMounted(() => {
 
 <style scoped>
 .announcement-list {
-  padding: 0;
-}
-.toolbar {
   display: flex;
-  justify-content: space-between;
-  margin-bottom: 16px;
+  flex-direction: column;
 }
+
+.filter-panel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: 12px 14px;
+}
+
+.filter-control {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.filter-label,
+.result-count {
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.category-filter {
+  width: 168px;
+}
+
+.content-panel {
+  padding: 0;
+  margin-top: var(--space-4);
+  overflow: hidden;
+}
+
+.announcement-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-weight: 500;
+  color: var(--color-text);
+}
+
+.pin-icon {
+  flex: 0 0 auto;
+  color: var(--color-warning);
+}
+
 .pagination-wrapper {
-  margin-top: 16px;
   display: flex;
   justify-content: flex-end;
+  padding: 0 14px 14px;
 }
+
 .form-tip {
   margin-left: 8px;
   font-size: 12px;
-  color: var(--el-text-color-secondary);
+  color: var(--color-text-muted);
+}
+
+.mobile-list {
+  min-height: 160px;
+  padding: 0 12px;
+}
+
+.mobile-announcement {
+  padding: 14px 0;
+  border-bottom: 1px solid var(--color-border-light);
+}
+
+.mobile-announcement:last-child {
+  border-bottom: 0;
+}
+
+.mobile-title-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.mobile-title {
+  display: flex;
+  align-items: flex-start;
+  gap: 5px;
+  min-width: 0;
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.45;
+  color: var(--color-text);
+}
+
+.mobile-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 12px;
+  margin-top: 7px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.mobile-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 6px;
+}
+
+@media screen and (max-width: 768px) {
+  .filter-panel {
+    align-items: flex-end;
+    padding: 10px 12px;
+  }
+
+  .filter-control {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .category-filter {
+    width: min(200px, 58vw);
+  }
+
+  .pagination-wrapper {
+    justify-content: center;
+    padding: 0 6px 12px;
+  }
+
+  .form-tip {
+    display: block;
+    margin: 6px 0 0;
+    line-height: 1.5;
+  }
 }
 </style>

@@ -14,7 +14,7 @@ from django.urls import URLPattern, URLResolver, get_resolver
 from rest_framework.permissions import IsAuthenticated, BasePermission
 from rest_framework.views import APIView
 
-from common.permissions import RolePermission
+from common.permissions import IsTeacherOrAdmin, RolePermission
 from common.response import success_response
 
 
@@ -69,7 +69,7 @@ class AccessibilityReportView(APIView):
     GET /api/v1/common/accessibility/report/
     """
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsTeacherOrAdmin]
 
     def get(self, request):
         checks = []

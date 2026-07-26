@@ -6,8 +6,10 @@ import logging
 from datetime import timedelta
 
 from celery import shared_task
+from django.db.models import Q
 from django.utils import timezone
 
+from .models import Notification
 from .services import NotificationService
 
 logger = logging.getLogger('apps.notifications')
@@ -25,16 +27,23 @@ def check_task_overdue():
     try:
         now = timezone.now()
         threshold = now - timedelta(hours=36)
-        # 查找逾期超过 36 小时、状态为待办/进行中、未提醒过的任务
-        # threshold = now - 36h，deadline < threshold 即表示逾期超过 36 小时
+        # 查找达到 36 小时逾期阈值、仍需处理且尚未成功登记提醒的任务。
         overdue_tasks = Task.objects.filter(
-            status__in=['todo', 'doing'],
-            deadline__lt=threshold,
+            status__in=[
+                Task.Status.TODO,
+                Task.Status.DOING,
+                Task.Status.PENDING_REVIEW,
+                Task.Status.NEED_HELP,
+                Task.Status.OVERDUE,
+            ],
+            deadline__lte=threshold,
             overdue_reminded=False,
         ).select_related('assignee', 'project', 'project__leader')
 
         count = 0
+        first_notified_task = None
         for task in overdue_tasks:
+            notification_created = False
             title = f'任务延期提醒：{task.title}'
             content = (
                 f'您的任务「{task.title}」已逾期超过 36 小时。\n'
@@ -45,7 +54,7 @@ def check_task_overdue():
 
             # 通知任务负责人
             if task.assignee:
-                NotificationService.create_and_send_email(
+                notification, _ = NotificationService.create_and_send_email(
                     recipient=task.assignee,
                     title=title,
                     content=content,
@@ -54,7 +63,7 @@ def check_task_overdue():
                     ref_id=task.id,
                     priority='high',
                 )
-                count += 1
+                notification_created = notification_created or notification is not None
 
             # 通知项目负责人
             if task.project and task.project.leader and task.project.leader != task.assignee:
@@ -65,7 +74,7 @@ def check_task_overdue():
                     f'截止时间：{task.deadline.strftime("%Y-%m-%d %H:%M")}\n'
                     f'请关注任务进度。'
                 )
-                NotificationService.create_and_send_email(
+                notification, _ = NotificationService.create_and_send_email(
                     recipient=task.project.leader,
                     title=leader_title,
                     content=leader_content,
@@ -74,20 +83,34 @@ def check_task_overdue():
                     ref_id=task.id,
                     priority='high',
                 )
+                notification_created = notification_created or notification is not None
 
-            # 标记已提醒
-            task.overdue_reminded = True
-            task.save(update_fields=['overdue_reminded'])
+            # 只有至少一个渠道实际留下了通知记录，才停止后续重试。
+            if notification_created:
+                task.overdue_reminded = True
+                task.save(update_fields=['overdue_reminded'])
+                count += 1
+                if first_notified_task is None:
+                    first_notified_task = task
 
         # 群机器人推送（高优先级）
-        if count > 0:
+        if first_notified_task is not None:
             try:
                 from apps.integrations.services import BotPushService
                 BotPushService.push_task_reminder(
-                    task_title=overdue_tasks.first().title if overdue_tasks else '',
-                    assignee_name=overdue_tasks.first().assignee.name if overdue_tasks.first() and overdue_tasks.first().assignee else '',
-                    project_name=overdue_tasks.first().project.name if overdue_tasks.first() and overdue_tasks.first().project else '',
-                    deadline=overdue_tasks.first().deadline.strftime('%Y-%m-%d %H:%M') if overdue_tasks.first() and overdue_tasks.first().deadline else '',
+                    task_title=first_notified_task.title,
+                    assignee_name=(
+                        first_notified_task.assignee.name
+                        if first_notified_task.assignee else ''
+                    ),
+                    project_name=(
+                        first_notified_task.project.name
+                        if first_notified_task.project else ''
+                    ),
+                    deadline=(
+                        first_notified_task.deadline.strftime('%Y-%m-%d %H:%M')
+                        if first_notified_task.deadline else ''
+                    ),
                 )
             except Exception as e:
                 logger.warning('群机器人推送失败: %s', e)
@@ -112,7 +135,9 @@ def check_leader_update():
         # 查找进行中且超过 11 天未更新的项目
         projects = Project.objects.filter(
             status='active',
-            last_leader_update__lt=threshold,
+        ).filter(
+            Q(last_leader_update__lte=threshold)
+            | Q(last_leader_update__isnull=True, created_at__lte=threshold)
         ).select_related('leader')
 
         count = 0
@@ -121,7 +146,8 @@ def check_leader_update():
                 continue
 
             title = f'项目更新提醒：{project.name}'
-            update_time = project.last_leader_update.strftime('%Y-%m-%d %H:%M') if project.last_leader_update else '从未'
+            update_baseline = project.last_leader_update or project.created_at
+            update_time = update_baseline.strftime('%Y-%m-%d %H:%M')
             content = (
                 f'您负责的项目「{project.name}」已超过 11 天未更新进度。\n'
                 f'上次更新时间：{update_time}\n'
@@ -147,6 +173,93 @@ def check_leader_update():
 
 
 @shared_task
+def check_competition_deadlines():
+    """
+    比赛关键节点提醒。
+
+    每天执行一次，在报名、材料提交、答辩和结果公布前 7/3/1 天及当天，
+    通知项目负责人和项目成员；同一天重复执行不会重复创建通知。
+    """
+    from apps.competitions.models import Competition
+    from apps.projects.models import ProjectMember
+    from apps.users.models import User
+
+    today = timezone.localdate()
+    deadline_fields = {
+        'register_date': '报名',
+        'material_deadline': '材料提交',
+        'defense_date': '比赛答辩',
+        'result_date': '结果公布',
+    }
+    try:
+        competitions = Competition.objects.filter(
+            status__in=[
+                Competition.Status.PREPARING,
+                Competition.Status.ONGOING,
+            ]
+        ).select_related('project', 'project__leader')
+        notification_count = 0
+        for competition in competitions:
+            recipient_ids = set(
+                ProjectMember.objects.filter(
+                    project=competition.project,
+                    user__is_active=True,
+                ).values_list('user_id', flat=True)
+            )
+            if competition.project.leader_id:
+                recipient_ids.add(competition.project.leader_id)
+            recipients = list(User.objects.filter(id__in=recipient_ids, is_active=True))
+            if not recipients:
+                continue
+
+            for field_name, label in deadline_fields.items():
+                deadline = getattr(competition, field_name)
+                if deadline is None:
+                    continue
+                days_until = (deadline - today).days
+                if days_until not in {7, 3, 1, 0}:
+                    continue
+                relative_text = '今天截止' if days_until == 0 else f'还有 {days_until} 天'
+                title = f'比赛{label}提醒：{competition.name}'
+                content = (
+                    f'项目「{competition.project.name}」参加的「{competition.name}」'
+                    f'{label}节点{relative_text}（{deadline:%Y-%m-%d}）。'
+                    f'请及时核对任务与材料。'
+                )
+                ref_type = f'competition_{field_name}'
+                already_notified_ids = set(
+                    Notification.objects.filter(
+                        recipient_id__in=recipient_ids,
+                        related_object_type=ref_type,
+                        related_object_id=competition.id,
+                        created_at__date=today,
+                    ).values_list('recipient_id', flat=True)
+                )
+                pending_recipients = [
+                    user for user in recipients if user.id not in already_notified_ids
+                ]
+                notification_count += NotificationService.bulk_create_and_send_email(
+                    recipients=pending_recipients,
+                    title=title,
+                    content=content,
+                    category=Notification.NotificationType.COMPETITION,
+                    ref_type=ref_type,
+                    ref_id=competition.id,
+                    priority=(
+                        Notification.Priority.HIGH
+                        if days_until <= 1
+                        else Notification.Priority.NORMAL
+                    ),
+                )
+
+        logger.info('比赛关键节点提醒完成，共创建 %d 条通知', notification_count)
+        return f'已完成 {notification_count} 条比赛关键节点提醒'
+    except Exception as e:
+        logger.exception('比赛关键节点提醒执行失败: %s', e)
+        return f'执行失败: {e}'
+
+
+@shared_task
 def remind_flexible_schedule():
     """
     灵活工作时间 15 天填写提醒
@@ -154,15 +267,11 @@ def remind_flexible_schedule():
     """
     from apps.users.models import User
     from apps.members.models import FlexibleWorkSchedule
+    from apps.members.periods import get_half_month_period
 
     try:
         today = timezone.now().date()
-        # 计算当前半月周期
-        if today.day <= 15:
-            period_start = today.replace(day=1)
-        else:
-            period_start = today.replace(day=16)
-        period_end = period_start + timedelta(days=15)
+        period_start, period_end = get_half_month_period(today)
 
         # 已填写当前周期的成员
         filled_user_ids = FlexibleWorkSchedule.objects.filter(
@@ -186,11 +295,11 @@ def remind_flexible_schedule():
                 f'以便项目任务合理分配。'
             )
 
-            NotificationService.create_notification(
+            NotificationService.create_and_send_email(
                 recipient=user,
                 title=title,
                 content=content,
-                category='system',
+                category=Notification.NotificationType.SCHEDULE,
                 ref_type='flexible_work_schedule',
                 ref_id=None,
                 priority='normal',
@@ -202,6 +311,18 @@ def remind_flexible_schedule():
     except Exception as e:
         logger.exception('灵活工作时间提醒执行失败: %s', e)
         return f'执行失败: {e}'
+
+
+@shared_task
+def send_daily_notification_digest():
+    """每天发送选择“每日摘要”的账户级合并邮件。"""
+    return NotificationService.send_queued_digest('daily')
+
+
+@shared_task
+def send_weekly_notification_digest():
+    """每周一发送选择“每周摘要”的账户级合并邮件。"""
+    return NotificationService.send_queued_digest('weekly')
 
 
 @shared_task
@@ -248,7 +369,7 @@ def check_ip_returns():
                     recipient=user,
                     title=title,
                     content=content,
-                    category='system',
+                    category=Notification.NotificationType.IP,
                     ref_type='ip_return',
                     ref_id=record.id,
                     priority='high',
@@ -310,7 +431,7 @@ def check_ip_objections():
                     recipient=user,
                     title=title,
                     content=content,
-                    category='system',
+                    category=Notification.NotificationType.IP,
                     ref_type='ip_objection',
                     ref_id=obj.id,
                     priority='high',
@@ -369,7 +490,7 @@ def check_pending_contributions():
                 recipient=project.leader,
                 title=title,
                 content=content,
-                category='system',
+                category=Notification.NotificationType.CONTRIBUTION,
                 ref_type='contribution',
                 ref_id=project.id,
                 priority='normal',
@@ -426,7 +547,7 @@ def check_sensitive_requests():
                 recipient=approver,
                 title=title,
                 content=content,
-                category='system',
+                category=Notification.NotificationType.SENSITIVE,
                 ref_type='sensitive_request',
                 ref_id=None,
                 priority='high',

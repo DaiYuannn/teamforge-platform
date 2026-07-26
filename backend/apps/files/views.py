@@ -4,8 +4,9 @@
 三级权限: public / internal / sensitive
 """
 import os
-from django.http import FileResponse, Http404
-from django.conf import settings
+
+from django.core.files import File
+from django.http import Http404
 from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
@@ -13,13 +14,24 @@ from rest_framework.viewsets import ModelViewSet
 
 from common.response import success_response, error_response
 from common.mixins import MultiSerializerMixin, MultiPermissionMixin
+from common.storage import protected_media_response
+from common.project_access import (
+    is_external_collaborator,
+    scope_project_queryset,
+    user_can_access_project,
+)
 from .models import FileAsset, FileVersion
 from .tag_models import FileTag, FileTagRelation
 from .serializers import (
     FileAssetSerializer, FileAssetListSerializer, FileVersionSerializer,
     FileTagSerializer, FileTagRelationSerializer, AssignTagsSerializer,
 )
-from .permissions import FileUploadPermission, FileDownloadPermission
+from .permissions import (
+    FileUploadPermission,
+    FileDownloadPermission,
+    user_can_access_file,
+)
+from .audit import record_download_audit
 
 
 class FileAssetViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet):
@@ -50,6 +62,10 @@ class FileAssetViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet)
         'download': [IsAuthenticated],
         'check_duplicate': [IsAuthenticated],
         'download_watermarked': [IsAuthenticated],
+        'versions': [IsAuthenticated],
+        'upload_version': [FileUploadPermission],
+        'download_version': [IsAuthenticated],
+        'restore_version': [FileUploadPermission],
     }
 
     filterset_fields = ['project', 'level', 'uploader']
@@ -71,10 +87,18 @@ class FileAssetViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet)
         # 管理员和老师可查看所有文件
         if user.global_role in ['sys_admin', 'teacher']:
             return queryset
+        if is_external_collaborator(user):
+            return scope_project_queryset(
+                queryset.exclude(level=FileAsset.Level.SENSITIVE),
+                user,
+                project_lookup='project',
+            )
 
         # 普通成员：获取用户参与的项目ID列表 + 负责的项目ID列表
         member_project_ids = list(
-            ProjectMember.objects.filter(user=user).values_list('project_id', flat=True)
+            ProjectMember.objects.filter(
+                user=user, status=ProjectMember.Status.ACTIVE
+            ).values_list('project_id', flat=True)
         )
         led_project_ids = list(
             Project.objects.filter(leader=user).values_list('id', flat=True)
@@ -86,6 +110,14 @@ class FileAssetViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet)
             Q(level='public') |
             (Q(level='internal') & Q(project_id__in=all_project_ids))
         )
+
+    def check_object_permissions(self, request, obj):
+        super().check_object_permissions(request, obj)
+        if is_external_collaborator(request.user) and not user_can_access_file(
+            request.user,
+            obj,
+        ):
+            self.permission_denied(request, message='无权访问该文件')
 
     def create(self, request, *args, **kwargs):
         """上传文件"""
@@ -148,9 +180,18 @@ class FileAssetViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet)
         # 校验下载权限
         permission = FileDownloadPermission()
         if not permission.has_object_permission(request, self, file_asset):
+            record_download_audit(
+                request,
+                module='files',
+                object_type='FileAsset',
+                object_id=file_asset.id,
+                channel='direct',
+                is_success=False,
+                response_status=status.HTTP_403_FORBIDDEN,
+            )
             if file_asset.level == 'sensitive':
                 return error_response(
-                    message='敏感文件需通过审批流程才能下载，请提交访问申请',
+                    message='敏感文件只能通过已批准申请或审计下载入口获取',
                     code=1003,
                     http_status=status.HTTP_403_FORBIDDEN,
                 )
@@ -162,14 +203,42 @@ class FileAssetViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet)
 
         # 返回文件
         if not file_asset.file:
+            record_download_audit(
+                request,
+                module='files',
+                object_type='FileAsset',
+                object_id=file_asset.id,
+                channel='direct',
+                is_success=False,
+                response_status=status.HTTP_404_NOT_FOUND,
+            )
             raise Http404('文件不存在')
 
         try:
-            file_handle = open(file_asset.file.path, 'rb')
-            response = FileResponse(file_handle, as_attachment=True, filename=file_asset.name)
-            return response
-        except FileNotFoundError:
-            raise Http404('文件未找到')
+            response = protected_media_response(
+                file_asset.file.name,
+                as_attachment=True,
+                download_name=file_asset.name,
+            )
+        except Http404:
+            record_download_audit(
+                request,
+                module='files',
+                object_type='FileAsset',
+                object_id=file_asset.id,
+                channel='direct',
+                is_success=False,
+                response_status=status.HTTP_404_NOT_FOUND,
+            )
+            raise
+        record_download_audit(
+            request,
+            module='files',
+            object_type='FileAsset',
+            object_id=file_asset.id,
+            channel='direct',
+        )
+        return response
 
     @action(detail=True, methods=['get'])
     def versions(self, request, pk=None):
@@ -233,6 +302,15 @@ class FileAssetViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet)
         # 校验下载权限
         permission = FileDownloadPermission()
         if not permission.has_object_permission(request, self, file_asset):
+            record_download_audit(
+                request,
+                module='files',
+                object_type='FileVersion',
+                object_id=version.id,
+                channel='version',
+                is_success=False,
+                response_status=status.HTTP_403_FORBIDDEN,
+            )
             return error_response(
                 message='权限不足，无法下载此文件版本',
                 code=1003,
@@ -240,15 +318,93 @@ class FileAssetViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet)
             )
 
         if not version.file:
+            record_download_audit(
+                request,
+                module='files',
+                object_type='FileVersion',
+                object_id=version.id,
+                channel='version',
+                is_success=False,
+                response_status=status.HTTP_404_NOT_FOUND,
+            )
             raise Http404('版本文件不存在')
 
         try:
-            file_handle = open(version.file.path, 'rb')
-            response = FileResponse(file_handle, as_attachment=True,
-                                    filename=f'{file_asset.name}_v{version.version}')
-            return response
+            response = protected_media_response(
+                version.file.name,
+                as_attachment=True,
+                download_name=f'{file_asset.name}_v{version.version}',
+            )
+        except Http404:
+            record_download_audit(
+                request,
+                module='files',
+                object_type='FileVersion',
+                object_id=version.id,
+                channel='version',
+                is_success=False,
+                response_status=status.HTTP_404_NOT_FOUND,
+            )
+            raise
+        record_download_audit(
+            request,
+            module='files',
+            object_type='FileVersion',
+            object_id=version.id,
+            channel='version',
+        )
+        return response
+
+    @action(detail=True, methods=['post'], url_path=r'versions/(?P<version_id>\d+)/restore')
+    def restore_version(self, request, pk=None, version_id=None):
+        """恢复历史版本，并将恢复结果保存为新的当前版本。"""
+        file_asset = self.get_object()
+        self.check_object_permissions(request, file_asset)
+        try:
+            selected_version = FileVersion.objects.get(
+                id=version_id, file_asset=file_asset
+            )
+        except FileVersion.DoesNotExist:
+            raise Http404('版本不存在')
+        if not selected_version.file:
+            raise Http404('版本文件不存在')
+
+        current_version = file_asset.version or 1
+        if file_asset.file:
+            FileVersion.objects.create(
+                file_asset=file_asset,
+                file=file_asset.file,
+                version=current_version,
+                uploader=file_asset.uploader,
+            )
+
+        try:
+            selected_version.file.open('rb')
+            restored_name = os.path.basename(
+                file_asset.name or selected_version.file.name
+            )
+            file_asset.file.save(
+                restored_name, File(selected_version.file), save=False
+            )
         except FileNotFoundError:
             raise Http404('版本文件未找到')
+        finally:
+            try:
+                selected_version.file.close()
+            except Exception:
+                pass
+
+        file_asset.version = current_version + 1
+        file_asset.size = file_asset.file.size
+        file_asset.content_type = ''
+        file_asset.uploader = request.user
+        file_asset.save(update_fields=[
+            'file', 'version', 'size', 'content_type', 'uploader', 'updated_at',
+        ])
+        return success_response(
+            FileAssetSerializer(file_asset, context={'request': request}).data,
+            message=f'已将 v{selected_version.version} 恢复为新的 v{file_asset.version}',
+        )
 
     @action(detail=True, methods=['get'], url_path='check-duplicate')
     def check_duplicate(self, request, pk=None):
@@ -264,7 +420,7 @@ class FileAssetViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet)
                 'duplicates': [],
                 'message': '该文件尚未计算哈希，无法查重',
             })
-        duplicates = FileAsset.objects.filter(
+        duplicates = self.get_queryset().filter(
             file_hash=file_asset.file_hash
         ).exclude(pk=file_asset.pk).values('id', 'name', 'project_id', 'uploader_id', 'created_at')
         dup_list = list(duplicates)
@@ -290,6 +446,15 @@ class FileAssetViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet)
         # 校验下载权限
         permission = FileDownloadPermission()
         if not permission.has_object_permission(request, self, file_asset):
+            record_download_audit(
+                request,
+                module='files',
+                object_type='FileAsset',
+                object_id=file_asset.id,
+                channel='watermarked',
+                is_success=False,
+                response_status=status.HTTP_403_FORBIDDEN,
+            )
             return error_response(
                 message='权限不足，无法下载此文件',
                 code=1003,
@@ -297,6 +462,15 @@ class FileAssetViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet)
             )
 
         if not file_asset.file:
+            record_download_audit(
+                request,
+                module='files',
+                object_type='FileAsset',
+                object_id=file_asset.id,
+                channel='watermarked',
+                is_success=False,
+                response_status=status.HTTP_404_NOT_FOUND,
+            )
             raise Http404('文件不存在')
 
         # 水印文字：优先查询参数，其次文件自身字段
@@ -305,6 +479,15 @@ class FileAssetViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet)
             or (file_asset.watermark_text or '').strip()
         )
         if not watermark_text:
+            record_download_audit(
+                request,
+                module='files',
+                object_type='FileAsset',
+                object_id=file_asset.id,
+                channel='watermarked',
+                is_success=False,
+                response_status=status.HTTP_400_BAD_REQUEST,
+            )
             return error_response(
                 message='请提供水印文字（通过 text 参数或设置文件 watermark_text 字段）',
                 code=1005,
@@ -312,6 +495,15 @@ class FileAssetViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet)
 
         # 非图片文件无法加水印
         if not is_image_file(file_asset.name, file_asset.content_type):
+            record_download_audit(
+                request,
+                module='files',
+                object_type='FileAsset',
+                object_id=file_asset.id,
+                channel='watermarked',
+                is_success=False,
+                response_status=status.HTTP_400_BAD_REQUEST,
+            )
             return error_response(
                 message='仅支持对图片文件添加水印',
                 code=1006,
@@ -320,6 +512,15 @@ class FileAssetViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet)
 
         watermarked_io = add_text_watermark(file_asset.file, watermark_text)
         if watermarked_io is None:
+            record_download_audit(
+                request,
+                module='files',
+                object_type='FileAsset',
+                object_id=file_asset.id,
+                channel='watermarked',
+                is_success=False,
+                response_status=status.HTTP_400_BAD_REQUEST,
+            )
             return error_response(
                 message='无法为该文件添加水印（可能缺少 Pillow 或文件损坏）',
                 code=1007,
@@ -330,6 +531,13 @@ class FileAssetViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet)
         from django.http import HttpResponse
         response = HttpResponse(watermarked_io, content_type='image/png')
         response['Content-Disposition'] = f'attachment; filename="watermarked_{file_asset.name}.png"'
+        record_download_audit(
+            request,
+            module='files',
+            object_type='FileAsset',
+            object_id=file_asset.id,
+            channel='watermarked',
+        )
         return response
 
 
@@ -349,8 +557,12 @@ class FileTagViewSet(ModelViewSet):
     ordering_fields = ['created_at', 'name']
 
     def get_queryset(self):
-        """支持按 project 过滤；未指定时返回全部标签"""
-        queryset = super().get_queryset()
+        """内部成员透明读取；外部协作者仅可见获授权项目标签。"""
+        queryset = scope_project_queryset(
+            super().get_queryset(),
+            self.request.user,
+            project_lookup='project',
+        )
         project = self.request.query_params.get('project')
         if project:
             if project in ('null', ''):
@@ -359,6 +571,12 @@ class FileTagViewSet(ModelViewSet):
                 queryset = queryset.filter(project_id=project)
         return queryset
 
+    def check_object_permissions(self, request, obj):
+        super().check_object_permissions(request, obj)
+        write = request.method not in ('GET', 'HEAD', 'OPTIONS')
+        if not user_can_access_project(request.user, obj.project, write=write):
+            self.permission_denied(request, message='无权访问该项目标签')
+
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user)
 
@@ -366,6 +584,13 @@ class FileTagViewSet(ModelViewSet):
         """创建标签"""
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        project = serializer.validated_data.get('project')
+        if not user_can_access_project(request.user, project, write=True):
+            return error_response(
+                message='无权在该项目创建标签',
+                code=1003,
+                http_status=status.HTTP_403_FORBIDDEN,
+            )
         tag = serializer.save(created_by=request.user)
         return success_response(
             FileTagSerializer(tag, context={'request': request}).data,
@@ -378,6 +603,17 @@ class FileTagViewSet(ModelViewSet):
         instance = self.get_object()
         serializer = self.get_serializer(instance, data=request.data, partial=partial)
         serializer.is_valid(raise_exception=True)
+        target_project = serializer.validated_data.get('project', instance.project)
+        if not user_can_access_project(
+            request.user,
+            target_project,
+            write=True,
+        ):
+            return error_response(
+                message='无权将标签移动到该项目',
+                code=1003,
+                http_status=status.HTTP_403_FORBIDDEN,
+            )
         tag = serializer.save()
         return success_response(
             FileTagSerializer(tag, context={'request': request}).data,
@@ -399,8 +635,22 @@ class FileTagViewSet(ModelViewSet):
         file_id = request.query_params.get('file')
         if not file_id:
             return error_response(message='请提供 file 参数')
+        try:
+            file_asset = FileAsset.objects.select_related('project').get(id=file_id)
+        except FileAsset.DoesNotExist:
+            return error_response(
+                message='文件不存在',
+                code=1004,
+                http_status=status.HTTP_404_NOT_FOUND,
+            )
+        if not user_can_access_file(request.user, file_asset):
+            return error_response(
+                message='无权访问该文件',
+                code=1003,
+                http_status=status.HTTP_403_FORBIDDEN,
+            )
         relations = FileTagRelation.objects.filter(
-            file_id=file_id
+            file=file_asset
         ).select_related('tag', 'file')
         serializer = FileTagRelationSerializer(relations, many=True, context={'request': request})
         return success_response(serializer.data)
@@ -418,19 +668,52 @@ class FileTagViewSet(ModelViewSet):
         tag_ids = serializer.validated_data['tags']
 
         try:
-            file_asset = FileAsset.objects.get(id=file_id)
+            file_asset = FileAsset.objects.select_related('project').get(id=file_id)
         except FileAsset.DoesNotExist:
             return error_response(
                 message='文件不存在', code=1004,
                 http_status=status.HTTP_404_NOT_FOUND,
             )
+        if (
+            not user_can_access_file(request.user, file_asset)
+            or not user_can_access_project(
+                request.user,
+                file_asset.project,
+                write=True,
+            )
+        ):
+            return error_response(
+                message='无权修改该文件的标签',
+                code=1003,
+                http_status=status.HTTP_403_FORBIDDEN,
+            )
+
+        tags = list(self.get_queryset().filter(id__in=tag_ids))
+        if len(tags) != len(set(tag_ids)):
+            return error_response(
+                message='包含不存在或无权使用的标签',
+                code=1003,
+                http_status=status.HTTP_403_FORBIDDEN,
+            )
+        if any(
+            tag.project_id not in (None, file_asset.project_id)
+            or not user_can_access_project(
+                request.user,
+                tag.project,
+                write=True,
+            )
+            for tag in tags
+        ):
+            return error_response(
+                message='标签必须属于同一项目且当前用户有权使用',
+                code=1003,
+                http_status=status.HTTP_403_FORBIDDEN,
+            )
 
         created_count = 0
-        for tag_id in tag_ids:
-            if not FileTag.objects.filter(id=tag_id).exists():
-                continue
+        for tag in tags:
             _, created = FileTagRelation.objects.get_or_create(
-                file=file_asset, tag_id=tag_id,
+                file=file_asset, tag=tag,
             )
             if created:
                 created_count += 1
@@ -452,8 +735,30 @@ class FileTagViewSet(ModelViewSet):
         file_id = serializer.validated_data['file']
         tag_ids = serializer.validated_data['tags']
 
+        try:
+            file_asset = FileAsset.objects.select_related('project').get(id=file_id)
+        except FileAsset.DoesNotExist:
+            return error_response(
+                message='文件不存在',
+                code=1004,
+                http_status=status.HTTP_404_NOT_FOUND,
+            )
+        if (
+            not user_can_access_file(request.user, file_asset)
+            or not user_can_access_project(
+                request.user,
+                file_asset.project,
+                write=True,
+            )
+        ):
+            return error_response(
+                message='无权修改该文件的标签',
+                code=1003,
+                http_status=status.HTTP_403_FORBIDDEN,
+            )
+
         deleted_count, _ = FileTagRelation.objects.filter(
-            file_id=file_id, tag_id__in=tag_ids,
+            file=file_asset, tag_id__in=tag_ids,
         ).delete()
 
         return success_response(

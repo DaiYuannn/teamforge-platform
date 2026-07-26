@@ -37,7 +37,7 @@ export default defineConfig({
     proxy: {
       // 代理 /api 请求到后端服务
       '/api': {
-        target: 'http://localhost:8000',
+        target: 'http://127.0.0.1:8000',
         changeOrigin: true,
       },
     },

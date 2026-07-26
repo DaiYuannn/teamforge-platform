@@ -1,5 +1,11 @@
 import { get, post, del, upload, download } from './request'
-import type { FileAsset, FileUploadParams, FileQueryParams, PaginatedResponse } from '@/types'
+import type {
+  FileAsset,
+  FileVersion,
+  FileUploadParams,
+  FileQueryParams,
+  PaginatedResponse,
+} from '@/types'
 
 export type { FileQueryParams }
 
@@ -10,7 +16,11 @@ export function getFiles(params: FileQueryParams): Promise<PaginatedResponse<Fil
 
 /** 按项目获取文件列表 */
 export function getFilesByProject(projectId: number): Promise<FileAsset[]> {
-  return get<FileAsset[]>('/files/', { project: projectId, page_size: 999 })
+  return get<PaginatedResponse<FileAsset> | FileAsset[]>('/files/', {
+    project: projectId,
+    page: 1,
+    page_size: 100,
+  }).then((response) => (Array.isArray(response) ? response : response.results))
 }
 
 /** 上传文件（支持三级权限选择） */
@@ -33,4 +43,22 @@ export function downloadFile(id: number): Promise<Blob> {
 /** 删除文件 */
 export function deleteFile(id: number): Promise<void> {
   return del<void>(`/files/${id}/`)
+}
+
+export function getFileVersions(id: number): Promise<FileVersion[]> {
+  return get<FileVersion[]>(`/files/${id}/versions/`)
+}
+
+export function uploadFileVersion(id: number, file: File): Promise<FileAsset> {
+  const formData = new FormData()
+  formData.append('file', file)
+  return upload<FileAsset>(`/files/${id}/upload-version/`, formData)
+}
+
+export function downloadFileVersion(id: number, versionId: number): Promise<Blob> {
+  return download(`/files/${id}/versions/${versionId}/download/`)
+}
+
+export function restoreFileVersion(id: number, versionId: number): Promise<FileAsset> {
+  return post<FileAsset>(`/files/${id}/versions/${versionId}/restore/`)
 }

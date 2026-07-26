@@ -8,13 +8,16 @@ from rest_framework.decorators import action
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.permissions import IsAuthenticated
 from django.shortcuts import get_object_or_404
+from django.db.models import Count, Q
 
 from common.response import success_response, error_response
 from common.mixins import MultiSerializerMixin, MultiPermissionMixin
-from .models import Project, ProjectMember, ProjectStageLog
+from common.permissions import IsInternalTeamMember
+from common.project_access import is_external_collaborator, scope_project_queryset
+from .models import Project, ProjectMember, ProjectMembershipEvent, ProjectStageLog
 from .serializers import (
     ProjectSerializer, ProjectListSerializer, ProjectCreateSerializer,
-    ProjectMemberSerializer, ProjectStageLogSerializer,
+    ProjectMemberSerializer, ProjectMembershipEventSerializer, ProjectStageLogSerializer,
 )
 from .permissions import IsProjectLeaderOrTeacherOrAdmin, IsProjectLeader
 from .services import project_service
@@ -50,6 +53,7 @@ class ProjectViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet):
         'stage': [IsProjectLeader],
         'leader_update': [IsProjectLeader],
         'members': [IsAuthenticated],
+        'membership_history': [IsInternalTeamMember],
         'stage_logs': [IsAuthenticated],
     }
 
@@ -59,6 +63,39 @@ class ProjectViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet):
         'created_at', 'updated_at', 'name', 'status', 'priority',
         'start_date', 'planned_end_date', 'archived_at',
     ]
+
+    def get_queryset(self):
+        queryset = (
+            super()
+            .get_queryset()
+            .select_related('leader')
+            .annotate(
+                active_member_count=Count(
+                    'members',
+                    filter=Q(members__status=ProjectMember.Status.ACTIVE),
+                    distinct=True,
+                ),
+                task_count=Count('tasks', distinct=True),
+                competition_count=Count('competitions', distinct=True),
+            )
+        )
+        user = self.request.user
+        if getattr(user, 'membership_status', '') == User.MembershipStatus.EXTERNAL:
+            queryset = queryset.filter(
+                members__user=user,
+                members__status=ProjectMember.Status.ACTIVE,
+            )
+        else:
+            queryset = queryset.prefetch_related('budgets')
+        if self.request.query_params.get('scope') == 'mine':
+            queryset = queryset.filter(
+                Q(leader=user)
+                | Q(
+                    members__user=user,
+                    members__status=ProjectMember.Status.ACTIVE,
+                )
+            )
+        return queryset.distinct()
 
     def create(self, request, *args, **kwargs):
         """创建项目"""
@@ -155,7 +192,7 @@ class ProjectViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet):
             message='打卡更新成功',
         )
 
-    @action(detail=True, methods=['get', 'post', 'delete'])
+    @action(detail=True, methods=['get', 'post', 'patch', 'delete'])
     def members(self, request, pk=None):
         """
         项目成员管理
@@ -166,8 +203,17 @@ class ProjectViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet):
         project = self.get_object()
 
         if request.method == 'GET':
-            members = project.members.all()
-            serializer = ProjectMemberSerializer(members, many=True)
+            members = project.members.select_related('user', 'handover_to__user').all()
+            if is_external_collaborator(request.user):
+                members = members.filter(status=ProjectMember.Status.ACTIVE)
+            member_status = request.query_params.get('status')
+            if member_status:
+                members = members.filter(status=member_status)
+            serializer = ProjectMemberSerializer(
+                members,
+                many=True,
+                context={'request': request},
+            )
             return success_response(serializer.data)
 
         elif request.method == 'POST':
@@ -188,14 +234,72 @@ class ProjectViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet):
             except User.DoesNotExist:
                 return error_response(message='用户不存在', code=1004)
 
-            success, result = project_service.add_member(project, user, role_in_project)
+            if role_in_project not in ProjectMember.RoleInProject.values:
+                return error_response(message='项目角色不合法', code=1001)
+
+            success, result = project_service.add_member(
+                project, user, role_in_project, operator=request.user
+            )
             if not success:
                 return error_response(message=result)
 
             return success_response(
-                ProjectMemberSerializer(result).data,
+                ProjectMemberSerializer(
+                    result,
+                    context={'request': request},
+                ).data,
                 message='成员添加成功',
                 http_status=status.HTTP_201_CREATED,
+            )
+
+        elif request.method == 'PATCH':
+            if not (project.leader_id == request.user.id or
+                    request.user.global_role in ['sys_admin', 'teacher']):
+                return error_response(message='权限不足', code=1003,
+                                      http_status=status.HTTP_403_FORBIDDEN)
+            member_id = request.data.get('member_id')
+            user_id = request.data.get('user_id')
+            member = project.members.filter(
+                id=member_id
+            ).first() if member_id else project.members.filter(user_id=user_id).first()
+            if member is None:
+                return error_response(message='项目成员不存在', code=1004)
+            role_value = request.data.get('role_in_project')
+            status_value = request.data.get('status')
+            if role_value and role_value not in ProjectMember.RoleInProject.values:
+                return error_response(message='项目角色不合法', code=1001)
+            if status_value and status_value not in ProjectMember.Status.values:
+                return error_response(message='成员状态不合法', code=1001)
+            handover = None
+            if request.data.get('handover_to'):
+                handover = project.members.filter(
+                    pk=request.data.get('handover_to'),
+                    status=ProjectMember.Status.ACTIVE,
+                ).first()
+                if handover is None:
+                    return error_response(message='交接人必须是同项目的活动成员', code=1001)
+            if member.user_id == project.leader_id and status_value == ProjectMember.Status.EXITED:
+                if not handover:
+                    return error_response(message='项目负责人退出前必须指定交接成员', code=1001)
+                project.leader = handover.user
+                project.save(update_fields=['leader', 'updated_at'])
+                handover.role_in_project = ProjectMember.RoleInProject.LEADER
+                handover.save(update_fields=['role_in_project'])
+            success, result = project_service.update_member(
+                member,
+                operator=request.user,
+                role_in_project=role_value,
+                status=status_value,
+                reason=request.data.get('reason', ''),
+                handover_to=handover,
+                handover_notes=request.data.get('handover_notes', ''),
+            )
+            return success_response(
+                ProjectMemberSerializer(
+                    result,
+                    context={'request': request},
+                ).data,
+                message='项目成员已更新',
             )
 
         elif request.method == 'DELETE':
@@ -214,11 +318,39 @@ class ProjectViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet):
             except User.DoesNotExist:
                 return error_response(message='用户不存在', code=1004)
 
-            success, message = project_service.remove_member(project, user)
+            handover = None
+            handover_id = request.data.get('handover_to') or request.query_params.get('handover_to')
+            if handover_id:
+                handover = project.members.filter(
+                    pk=handover_id,
+                    status=ProjectMember.Status.ACTIVE,
+                ).first()
+            success, message = project_service.remove_member(
+                project,
+                user,
+                operator=request.user,
+                reason=request.data.get('reason', '') or request.query_params.get('reason', ''),
+                handover_to=handover,
+                handover_notes=(
+                    request.data.get('handover_notes', '')
+                    or request.query_params.get('handover_notes', '')
+                ),
+            )
             if not success:
                 return error_response(message=message)
 
             return success_response(message=message)
+
+    @action(detail=True, methods=['get'], url_path='membership-history')
+    def membership_history(self, request, pk=None):
+        project = self.get_object()
+        events = ProjectMembershipEvent.objects.filter(
+            membership__project=project
+        ).select_related('membership__user', 'operator', 'handover_to__user')
+        user_id = request.query_params.get('user_id')
+        if user_id:
+            events = events.filter(membership__user_id=user_id)
+        return success_response(ProjectMembershipEventSerializer(events, many=True).data)
 
     @action(detail=True, methods=['get'])
     def stage_logs(self, request, pk=None):
@@ -240,7 +372,57 @@ class ProjectMemberViewSet(ModelViewSet):
     """
     queryset = ProjectMember.objects.all().order_by('-joined_at')
     serializer_class = ProjectMemberSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsProjectLeaderOrTeacherOrAdmin]
 
-    filterset_fields = ['project', 'user', 'role_in_project']
+    filterset_fields = ['project', 'user', 'role_in_project', 'status']
     search_fields = ['project__name', 'user__name', 'user__email']
+
+    def get_queryset(self):
+        queryset = super().get_queryset().select_related('project', 'user')
+        queryset = scope_project_queryset(
+            queryset,
+            self.request.user,
+            project_lookup='project',
+        )
+        if is_external_collaborator(self.request.user):
+            queryset = queryset.filter(status=ProjectMember.Status.ACTIVE)
+        return queryset
+
+    def update(self, request, *args, **kwargs):
+        partial = kwargs.pop('partial', False)
+        instance = self.get_object()
+        self.check_object_permissions(request, instance)
+        serializer = self.get_serializer(instance, data=request.data, partial=partial)
+        serializer.is_valid(raise_exception=True)
+        handover = serializer.validated_data.get('handover_to')
+        success, member = project_service.update_member(
+            instance,
+            operator=request.user,
+            role_in_project=serializer.validated_data.get('role_in_project'),
+            status=serializer.validated_data.get('status'),
+            reason=serializer.validated_data.get('exit_reason', ''),
+            handover_to=handover,
+            handover_notes=serializer.validated_data.get('handover_notes', ''),
+        )
+        return success_response(
+            ProjectMemberSerializer(
+                member,
+                context={'request': request},
+            ).data,
+            message='项目成员已更新',
+        )
+
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        self.check_object_permissions(request, instance)
+        success, message = project_service.remove_member(
+            instance.project,
+            instance.user,
+            operator=request.user,
+            reason=request.data.get('reason', ''),
+            handover_to=instance.handover_to,
+            handover_notes=request.data.get('handover_notes', ''),
+        )
+        if not success:
+            return error_response(message=message)
+        return success_response(message=message)

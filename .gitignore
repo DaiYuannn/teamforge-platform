@@ -24,9 +24,11 @@ db.sqlite3
 db.sqlite3-journal
 backend/*.dump
 backend/media.before_v2_seed/
+backend/demo_backups/
 
 # User uploads and generated media
 backend/media/
+backend/test_media/
 media/
 .uploads/
 
@@ -42,6 +44,8 @@ node_modules/
 frontend/node_modules/
 frontend/dist/
 frontend/.vite/
+frontend/playwright-report/
+frontend/test-results/
 
 # IDE and local tooling
 .vscode/
@@ -68,6 +72,7 @@ deploy/release/*.zip
 *.tmp
 *.bak
 *.cache
+tmp/
 
 # Local reference backups
 references/backups/

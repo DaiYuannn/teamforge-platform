@@ -5,9 +5,9 @@ Open API 文档视图
 接口：
 - GET /api/v1/common/api-docs/
 """
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
+from common.permissions import IsTeacherOrAdmin
 from common.response import success_response
 
 # 文档元信息
@@ -27,7 +27,7 @@ class APIDocsView(APIView):
     GET /api/v1/common/api-docs/
     """
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsTeacherOrAdmin]
 
     def get(self, request):
         # 统计已注册的 URL 端点数量（API 路径）

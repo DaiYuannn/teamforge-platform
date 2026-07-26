@@ -7,6 +7,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
 from common.response import success_response, error_response
+from common.project_access import scope_project_queryset, user_can_access_project
 from .models import Competition
 
 
@@ -36,9 +37,16 @@ class CompetitionTimelineView(APIView):
         if not competition_id:
             return error_response(message='请提供 competition 参数')
 
+        queryset = scope_project_queryset(
+            Competition.objects.select_related('project'),
+            request.user,
+            project_lookup='project',
+        )
         try:
-            competition = Competition.objects.select_related('project').get(id=competition_id)
+            competition = queryset.get(id=competition_id)
         except Competition.DoesNotExist:
+            return error_response(message='比赛不存在', code=1004)
+        if not user_can_access_project(request.user, competition.project):
             return error_response(message='比赛不存在', code=1004)
 
         events = []

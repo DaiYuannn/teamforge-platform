@@ -3,8 +3,12 @@
     <PageHeader title="导入中心" subtitle="批量导入数据" />
 
     <!-- 导入步骤 -->
-    <div class="card">
-      <el-steps :active="currentStep" align-center finish-status="success">
+    <section class="surface-panel import-workspace">
+      <div v-if="isMobile" class="mobile-step-indicator">
+        <span>步骤 {{ currentStep + 1 }} / {{ stepTitles.length }}</span>
+        <strong>{{ stepTitles[currentStep] }}</strong>
+      </div>
+      <el-steps v-else :active="currentStep" align-center finish-status="success" class="import-steps">
         <el-step title="选择模块" />
         <el-step title="上传文件" />
         <el-step title="字段映射" />
@@ -30,18 +34,25 @@
 
       <!-- 步骤2：上传文件 -->
       <div v-if="currentStep === 1" class="step-content">
+        <div class="template-guide">
+          <div>
+            <strong>{{ IMPORT_MODULE_MAP[selectedModule] }}导入模板</strong>
+            <span>跨表关联请使用项目编号和成员邮箱，避免数据库 ID 变化造成错位。</span>
+          </div>
+          <el-button :loading="templateDownloading" @click="handleDownloadTemplate">下载模板</el-button>
+        </div>
         <el-upload
           ref="uploadRef"
           :auto-upload="false"
           :on-change="handleFileChange"
           :limit="1"
-          accept=".xlsx,.xls,.csv"
+          accept=".xlsx,.xlsm,.csv"
           drag
         >
           <el-icon class="el-icon--upload"><UploadFilled /></el-icon>
           <div class="el-upload__text">将文件拖到此处，或<em>点击上传</em></div>
           <template #tip>
-            <div class="el-upload__tip">支持 Excel (.xlsx, .xls) 和 CSV 文件</div>
+            <div class="el-upload__tip">支持 Excel (.xlsx、.xlsm) 和 CSV 文件</div>
           </template>
         </el-upload>
         <div class="step-actions">
@@ -55,21 +66,23 @@
       <!-- 步骤3：字段映射 -->
       <div v-if="currentStep === 2" class="step-content">
         <p class="step-hint">请确认源文件字段与系统字段的映射关系：</p>
-        <el-table :data="mappingRows" border size="small">
+        <div class="table-scroll">
+        <el-table :data="mappingRows" size="small" class="mapping-table">
           <el-table-column prop="sourceField" label="源文件字段" width="200" />
           <el-table-column label="系统字段" width="200">
             <template #default="{ row }">
               <el-select v-model="row.targetField" placeholder="选择字段" clearable>
                 <el-option
                   v-for="field in systemFields"
-                  :key="field"
-                  :label="field"
-                  :value="field"
+                  :key="field.value"
+                  :label="`${field.label}${field.required ? '（必填）' : ''}`"
+                  :value="field.value"
                 />
               </el-select>
             </template>
           </el-table-column>
         </el-table>
+        </div>
         <div class="step-actions">
           <el-button @click="currentStep = 1">上一步</el-button>
           <el-button type="primary" @click="handleConfirmMapping">确认映射</el-button>
@@ -85,7 +98,8 @@
           :closable="false"
           class="mb-16"
         />
-        <el-table :data="previewRows" border size="small" max-height="400">
+        <div class="table-scroll">
+        <el-table :data="previewRows" size="small" max-height="400" class="preview-table">
           <el-table-column prop="row_index" label="行号" width="60" />
           <el-table-column label="数据">
             <template #default="{ row }">
@@ -101,6 +115,7 @@
           </el-table-column>
           <el-table-column prop="error" label="错误信息" width="200" show-overflow-tooltip />
         </el-table>
+        </div>
         <div class="step-actions">
           <el-button @click="currentStep = 2">上一步</el-button>
           <el-button type="primary" :loading="importing" @click="handleConfirmImport">确认导入</el-button>
@@ -115,12 +130,18 @@
           </template>
         </el-result>
       </div>
-    </div>
+    </section>
 
     <!-- 导入历史 -->
-    <div class="card mt-16">
-      <h3 class="card-title">导入历史</h3>
-      <el-table :data="importTasks" border size="small">
+    <section class="surface-panel history-panel">
+      <div class="section-bar">
+        <h2>导入历史</h2>
+        <span>共 {{ importTasks.length }} 条</span>
+      </div>
+      <el-table v-if="!isMobile" v-loading="historyLoading" :data="importTasks" size="small">
+        <template #empty>
+          <EmptyState text="暂无导入记录" :compact="true" />
+        </template>
         <el-table-column prop="module" label="模块" width="100">
           <template #default="{ row }">{{ IMPORT_MODULE_MAP[row.module] || row.module }}</template>
         </el-table-column>
@@ -128,21 +149,21 @@
         <el-table-column prop="status" label="状态" width="100">
           <template #default="{ row }">
             <el-tag :type="IMPORT_TASK_STATUS_MAP[row.status]?.tagType as any" size="small">
-              {{ IMPORT_TASK_STATUS_MAP[row.status]?.label }}
+              {{ IMPORT_TASK_STATUS_MAP[row.status]?.label || row.status }}
             </el-tag>
           </template>
         </el-table-column>
         <el-table-column prop="total_rows" label="总行数" width="80" align="center" />
-        <el-table-column prop="success_rows" label="成功" width="80" align="center" />
-        <el-table-column prop="failed_rows" label="失败" width="80" align="center" />
-        <el-table-column prop="operator_name" label="操作人" width="100" />
+        <el-table-column prop="valid_rows" label="成功" width="80" align="center" />
+        <el-table-column prop="error_rows" label="失败" width="80" align="center" />
+        <el-table-column prop="created_by_name" label="操作人" width="100" />
         <el-table-column prop="created_at" label="导入时间" width="160">
           <template #default="{ row }">{{ formatDateTime(row.created_at) }}</template>
         </el-table-column>
         <el-table-column label="操作" width="80" fixed="right">
           <template #default="{ row }">
             <el-button
-              v-if="row.can_rollback && row.status === 'completed'"
+              v-if="row.can_rollback && row.status === 'confirmed'"
               type="danger"
               link
               @click="handleRollback(row as ImportTask)"
@@ -152,27 +173,66 @@
           </template>
         </el-table-column>
       </el-table>
-    </div>
+
+      <div v-else v-loading="historyLoading" class="mobile-history">
+        <EmptyState v-if="importTasks.length === 0 && !historyLoading" text="暂无导入记录" :compact="true" />
+        <article v-for="row in importTasks" :key="row.id" class="history-item">
+          <div class="history-heading">
+            <h3>{{ row.file_name }}</h3>
+            <el-tag :type="IMPORT_TASK_STATUS_MAP[row.status]?.tagType as any" size="small">
+              {{ IMPORT_TASK_STATUS_MAP[row.status]?.label || row.status }}
+            </el-tag>
+          </div>
+          <div class="history-meta">
+            <span>{{ IMPORT_MODULE_MAP[row.module] || row.module }}</span>
+            <span>{{ row.created_by_name }}</span>
+            <time>{{ formatDateTime(row.created_at) }}</time>
+          </div>
+          <div class="history-stats">
+            <span>总计 <strong>{{ row.total_rows }}</strong></span>
+            <span>成功 <strong class="success-number">{{ row.valid_rows }}</strong></span>
+            <span>失败 <strong class="danger-number">{{ row.error_rows }}</strong></span>
+          </div>
+          <div v-if="row.can_rollback && row.status === 'confirmed'" class="history-actions">
+            <el-button text type="danger" @click="handleRollback(row as ImportTask)">回滚</el-button>
+          </div>
+        </article>
+      </div>
+    </section>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { UploadFile } from 'element-plus'
-import { previewImport, confirmImport, rollbackImport, getImportTasks } from '@/api/imports'
+import {
+  previewImport,
+  confirmImport,
+  rollbackImport,
+  getImportTasks,
+  downloadImportTemplate,
+} from '@/api/imports'
 import { IMPORT_MODULE_MAP, IMPORT_TASK_STATUS_MAP } from '@/utils/constants'
-import { formatDateTime } from '@/utils/format'
+import { downloadBlob, formatDateTime } from '@/utils/format'
 import type { ImportModule, ImportPreviewResult, ImportTask, FieldMapping } from '@/types'
 import PageHeader from '@/components/PageHeader.vue'
+import EmptyState from '@/components/EmptyState.vue'
+import { useDevice } from '@/composables/useDevice'
+
+const { isMobile } = useDevice()
+
+const stepTitles = ['选择模块', '上传文件', '字段映射', '预览数据', '确认导入']
 
 const currentStep = ref(0)
-const selectedModule = ref<ImportModule>('users')
+const selectedModule = ref<ImportModule>('members')
 const selectedFile = ref<File | null>(null)
 const previewing = ref(false)
 const importing = ref(false)
+const templateDownloading = ref(false)
+const historyLoading = ref(false)
 const previewData = ref<ImportPreviewResult>({
-  task_id: '',
+  task_id: 0,
   headers: [],
   field_mapping: {},
   preview_rows: [],
@@ -180,10 +240,11 @@ const previewData = ref<ImportPreviewResult>({
   valid_rows: 0,
   error_rows: 0,
   error_details: {},
+  field_options: [],
 })
 
 // 系统可用字段（根据模块不同动态获取，这里用 headers + field_mapping 的 value 做候选）
-const systemFields = ref<string[]>([])
+const systemFields = ref<Array<{ value: string; label: string; required: boolean }>>([])
 
 // 字段映射
 const mappingRows = ref<{ sourceField: string; targetField: string }[]>([])
@@ -208,12 +269,11 @@ async function handlePreview(): Promise<void> {
     previewData.value = result
     // 初始化映射行（后端返回 field_mapping: { sourceField: targetField }）
     const mapping = result.field_mapping || {}
-    mappingRows.value = Object.entries(mapping).map(([sourceField, targetField]) => ({
+    mappingRows.value = result.headers.map((sourceField) => ({
       sourceField,
-      targetField: targetField as string,
+      targetField: mapping[sourceField] || '',
     }))
-    // 系统字段候选列表：从 field_mapping 的 value 值中取
-    systemFields.value = Array.from(new Set(Object.values(mapping))) as string[]
+    systemFields.value = result.field_options || []
     // 构建预览数据行
     const rawRows = result.preview_rows || []
     const errorDetails = result.error_details || {}
@@ -237,6 +297,16 @@ async function handlePreview(): Promise<void> {
 
 // 确认字段映射
 function handleConfirmMapping(): void {
+  const selectedTargets = new Set(
+    mappingRows.value.map((row) => row.targetField).filter(Boolean),
+  )
+  const missing = systemFields.value
+    .filter((field) => field.required && !selectedTargets.has(field.value))
+    .map((field) => field.label)
+  if (missing.length) {
+    ElMessage.warning(`请先映射必填字段：${missing.join('、')}`)
+    return
+  }
   currentStep.value = 3
 }
 
@@ -252,9 +322,13 @@ async function handleConfirmImport(): Promise<void> {
       }
     })
 
-    await confirmImport(previewData.value.task_id, fieldMapping)
+    const result = await confirmImport(previewData.value.task_id, fieldMapping)
     currentStep.value = 4
-    ElMessage.success('导入成功')
+    ElMessage.success(
+      result.error_count
+        ? `导入完成：成功 ${result.created_count} 条，失败 ${result.error_count} 条`
+        : `成功导入 ${result.created_count} 条数据`,
+    )
     loadImportTasks()
   } catch {
     // 已处理
@@ -269,7 +343,7 @@ async function handleRollback(task: ImportTask): Promise<void> {
     await ElMessageBox.confirm('确定要回滚此导入操作吗？回滚后相关数据将被删除。', '提示', {
       type: 'warning',
     })
-    await rollbackImport(String(task.id))
+    await rollbackImport(task.id)
     ElMessage.success('回滚成功')
     loadImportTasks()
   } catch {
@@ -281,9 +355,9 @@ async function handleRollback(task: ImportTask): Promise<void> {
 function handleReset(): void {
   currentStep.value = 0
   selectedFile.value = null
-  selectedModule.value = 'users'
+  selectedModule.value = 'members'
   previewData.value = {
-    task_id: '',
+    task_id: 0,
     headers: [],
     field_mapping: {},
     preview_rows: [],
@@ -291,19 +365,35 @@ function handleReset(): void {
     valid_rows: 0,
     error_rows: 0,
     error_details: {},
+    field_options: [],
   }
   mappingRows.value = []
   previewRows.value = []
   systemFields.value = []
 }
 
+async function handleDownloadTemplate(): Promise<void> {
+  templateDownloading.value = true
+  try {
+    const blob = await downloadImportTemplate(selectedModule.value)
+    downloadBlob(blob, `${IMPORT_MODULE_MAP[selectedModule.value]}导入模板.xlsx`)
+  } catch {
+    // 请求层统一处理错误。
+  } finally {
+    templateDownloading.value = false
+  }
+}
+
 // 加载导入历史
 async function loadImportTasks(): Promise<void> {
+  historyLoading.value = true
   try {
     const res = await getImportTasks()
     importTasks.value = res.results
   } catch {
     // 忽略
+  } finally {
+    historyLoading.value = false
   }
 }
 
@@ -313,26 +403,40 @@ onMounted(() => {
 </script>
 
 <style lang="scss" scoped>
-.card {
-  background: #fff;
-  border-radius: 8px;
-  padding: 20px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+.import-workspace {
+  padding: 18px;
+}
 
-  .card-title {
-    font-size: 16px;
+.mb-16 { margin-bottom: 16px; }
+
+.import-steps {
+  padding: 2px 8px 16px;
+  border-bottom: 1px solid var(--color-border-light);
+}
+
+.mobile-step-indicator {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--color-border-light);
+
+  span {
+    color: var(--color-text-muted);
+    font-size: 12px;
+  }
+
+  strong {
+    color: var(--color-text);
+    font-size: 14px;
     font-weight: 600;
-    color: #303133;
-    margin-bottom: 16px;
   }
 }
 
-.mt-16 { margin-top: 16px; }
-.mb-16 { margin-bottom: 16px; }
-
 .step-content {
-  margin-top: 24px;
-  min-height: 200px;
+  min-height: 220px;
+  padding-top: 20px;
 
   .module-group {
     display: flex;
@@ -342,22 +446,190 @@ onMounted(() => {
 
   .step-hint {
     font-size: 14px;
-    color: #606266;
+    color: var(--color-text-regular);
     margin-bottom: 16px;
   }
 
   .step-actions {
-    margin-top: 24px;
+    margin-top: 20px;
     display: flex;
-    justify-content: center;
+    justify-content: flex-end;
     gap: 12px;
   }
 }
 
+.template-guide {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 12px 14px;
+  margin-bottom: 14px;
+  background: var(--color-primary-soft);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-sm);
+
+  > div {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  strong {
+    color: var(--color-text);
+    font-size: 13px;
+  }
+
+  span {
+    color: var(--color-text-muted);
+    font-size: 12px;
+    line-height: 1.5;
+  }
+}
+
+.table-scroll {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.mapping-table { min-width: 440px; }
+.preview-table { min-width: 620px; }
+
 pre {
   margin: 0;
+  color: var(--color-text-regular);
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
   font-size: 12px;
   white-space: pre-wrap;
   word-break: break-all;
+}
+
+.history-panel {
+  padding: 0;
+  margin-top: var(--space-4);
+  overflow: hidden;
+}
+
+.section-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 52px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--color-border-light);
+
+  h2 {
+    margin: 0;
+    color: var(--color-text);
+    font-size: 14px;
+    font-weight: 600;
+  }
+
+  span {
+    color: var(--color-text-muted);
+    font-size: 12px;
+  }
+}
+
+.mobile-history {
+  min-height: 160px;
+  padding: 0 12px;
+}
+
+.history-item {
+  padding: 13px 0 8px;
+  border-bottom: 1px solid var(--color-border-light);
+
+  &:last-child { border-bottom: 0; }
+}
+
+.history-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+
+  h3 {
+    min-width: 0;
+    margin: 0;
+    overflow: hidden;
+    color: var(--color-text);
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 1.45;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+.history-meta,
+.history-stats {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin-top: 7px;
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
+.history-stats {
+  padding: 7px 9px;
+  background: var(--color-surface-subtle);
+  border-radius: var(--radius-xs);
+
+  strong {
+    color: var(--color-text);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .success-number { color: var(--color-success); }
+  .danger-number { color: var(--color-danger); }
+}
+
+.history-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+@media screen and (max-width: 768px) {
+  .import-workspace {
+    padding: 14px 12px;
+  }
+
+  .step-content {
+    min-height: 180px;
+    padding-top: 16px;
+
+    .module-group {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      width: 100%;
+
+      :deep(.el-radio-button__inner) {
+        width: 100%;
+      }
+    }
+
+    .step-actions {
+      position: sticky;
+      bottom: 0;
+      z-index: 3;
+      padding: 10px 0 max(0px, env(safe-area-inset-bottom));
+      margin-top: 14px;
+      background: var(--color-surface);
+    }
+  }
+
+  .template-guide {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  :deep(.el-upload),
+  :deep(.el-upload-dragger) {
+    width: 100%;
+  }
 }
 </style>

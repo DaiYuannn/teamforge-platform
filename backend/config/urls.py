@@ -3,6 +3,8 @@
 所有 API 路径前缀 /api/v1/
 包含 SimpleJWT 的 token 路由
 """
+from pathlib import Path
+
 from django.contrib import admin
 from django.urls import path, include
 from django.conf import settings
@@ -10,13 +12,20 @@ from django.conf.urls.static import static
 from rest_framework_simplejwt.views import TokenRefreshView
 
 from apps.users.views import LoginView
+from common.authentication import ActiveMemberTokenRefreshSerializer
 
 urlpatterns = [
     path('admin/', admin.site.urls),
 
     # SimpleJWT token 路由
     path('api/v1/auth/login/', LoginView.as_view(), name='token_obtain_pair'),
-    path('api/v1/auth/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
+    path(
+        'api/v1/auth/refresh/',
+        TokenRefreshView.as_view(
+            serializer_class=ActiveMemberTokenRefreshSerializer,
+        ),
+        name='token_refresh',
+    ),
 
     # 各业务模块路由
     path('api/v1/users/', include('apps.users.urls')),
@@ -76,9 +85,13 @@ urlpatterns = [
     path('api/v1/common/i18n/', include('apps.common.i18n_urls')),
 ]
 
-# 开发环境提供媒体文件访问
+# 开发环境只直接提供明确公开的 public/ 媒体。其余媒体与生产环境一样，
+# 必须通过 /api/v1/common/media/ 的限时签名访问。
 if settings.DEBUG:
-    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+    urlpatterns += static(
+        f'{settings.MEDIA_URL.rstrip("/")}/public/',
+        document_root=str(Path(settings.MEDIA_ROOT) / 'public'),
+    )
 
     # 注册 django-debug-toolbar 路由（修复 'djdt' is not a registered namespace）
     if 'debug_toolbar' in settings.INSTALLED_APPS:

@@ -157,7 +157,7 @@ class OperationLogViewSet(MultiSerializerMixin, MultiPermissionMixin, ReadOnlyMo
         """
         导出操作日志为 Excel（应用与 list 相同的筛选条件）
         GET /api/v1/audit/operation-logs/export/
-        查询参数: module, operator, operation_type, start_date, end_date
+        查询参数: search, module, operator, operation_type, start_date, end_date
         返回: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
         """
         from openpyxl import Workbook

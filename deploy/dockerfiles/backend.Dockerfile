@@ -19,6 +19,8 @@ RUN sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debia
             libgdk-pixbuf2.0-0 \
             shared-mime-info \
             fonts-noto-cjk \
+            tesseract-ocr \
+            tesseract-ocr-chi-sim \
         && break; \
         if [ "$attempt" = "5" ]; then exit 1; fi; \
         sleep 5; \
@@ -37,4 +39,4 @@ RUN mkdir -p /app/media /app/staticfiles
 
 EXPOSE 8000
 
-CMD ["gunicorn", "config.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "4", "--threads", "2", "--timeout", "120"]
+CMD ["gunicorn", "config.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "2", "--worker-class", "gevent", "--worker-connections", "256", "--timeout", "0", "--graceful-timeout", "30"]

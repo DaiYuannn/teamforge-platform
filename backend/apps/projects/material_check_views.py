@@ -4,10 +4,10 @@
 - 返回检查清单及状态(complete/incomplete/missing)
 """
 from django.db.models import Count
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
 from common.response import success_response, error_response
+from common.permissions import IsInternalTeamMember
 from apps.projects.models import Project, ProjectMember
 from apps.tasks.models import Task
 from apps.finance.models import FinanceBudget
@@ -34,7 +34,8 @@ class MaterialCheckView(APIView):
     返回：checklist（含状态 complete/incomplete/missing）、overall_status
     """
 
-    permission_classes = [IsAuthenticated]
+    # 检查项会暴露预算计划是否存在，外部协作者不得访问。
+    permission_classes = [IsInternalTeamMember]
 
     def get(self, request):
         project_id = request.query_params.get('project_id')
@@ -125,7 +126,9 @@ class MaterialChecker:
 
     def check_members(self):
         """团队成员：检查项目成员数量"""
-        member_count = ProjectMember.objects.filter(project=self.project).count()
+        member_count = ProjectMember.objects.filter(
+            project=self.project, status=ProjectMember.Status.ACTIVE
+        ).count()
         if member_count >= 2:
             return 'complete', f'团队共 {member_count} 人'
         elif member_count == 1:

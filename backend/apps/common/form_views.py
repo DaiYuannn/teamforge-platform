@@ -10,6 +10,7 @@ from rest_framework.viewsets import ModelViewSet
 
 from common.response import success_response, error_response
 from common.mixins import MultiSerializerMixin
+from common.permissions import IsTeacherOrAdminOrReadOnly
 from .form_models import CustomForm, FormSubmission
 
 
@@ -61,10 +62,16 @@ class CustomFormViewSet(MultiSerializerMixin, ModelViewSet):
         'update': CustomFormCreateSerializer,
         'partial_update': CustomFormCreateSerializer,
     }
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsTeacherOrAdminOrReadOnly]
     filterset_fields = ['is_active']
     search_fields = ['name', 'description']
     ordering_fields = ['created_at', 'updated_at']
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        if self.request.user.global_role in ('teacher', 'sys_admin'):
+            return queryset
+        return queryset.filter(is_active=True)
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
@@ -95,6 +102,13 @@ class FormSubmissionViewSet(ModelViewSet):
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        form = serializer.validated_data['form']
+        if not form.is_active and request.user.global_role not in ('teacher', 'sys_admin'):
+            return error_response(
+                message='表单已停用，无法提交',
+                code=2601,
+                http_status=status.HTTP_400_BAD_REQUEST,
+            )
         submission = serializer.save(user=request.user)
         return success_response(
             FormSubmissionSerializer(submission).data,

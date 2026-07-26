@@ -1,102 +1,164 @@
 <template>
-  <div class="page-container">
-    <PageHeader title="我的贡献" subtitle="填写和管理项目贡献记录">
+  <div class="page-container contributions-page">
+    <PageHeader title="我的贡献" subtitle="记录项目产出并跟踪审核结果">
       <template #actions>
+        <el-dropdown
+          :disabled="contributionProjects.length === 0"
+          @command="handleExport"
+        >
+          <el-button :icon="Download">
+            导出项目贡献
+            <el-icon class="el-icon--right"><ArrowDown /></el-icon>
+          </el-button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item
+                v-for="project in contributionProjects"
+                :key="project.id"
+                :command="project.id"
+              >
+                {{ project.name }}
+              </el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
         <el-button type="primary" :icon="Plus" @click="handleCreate">填写贡献</el-button>
-        <el-button :icon="Download" @click="handleExport">导出Excel</el-button>
       </template>
     </PageHeader>
 
-    <!-- PC端表格 -->
-    <div v-if="!isMobile" class="card mt-16">
-      <el-table v-loading="loading" :data="contributionList" border stripe>
+    <el-alert
+      v-if="projectFilter"
+      :title="`当前仅显示项目 #${projectFilter} 的贡献记录`"
+      type="info"
+      :closable="true"
+      show-icon
+      @close="clearProjectFilter"
+    />
+
+    <section class="contribution-summary" aria-label="贡献状态摘要">
+      <div class="contribution-summary__intro">
+        <span>贡献记录</span>
+        <strong>共 {{ contributionList.length }} 条</strong>
+      </div>
+      <dl>
+        <div>
+          <dt>待审核</dt>
+          <dd :class="{ 'is-warning': pendingCount > 0 }">{{ pendingCount }}</dd>
+        </div>
+        <div>
+          <dt>已通过</dt>
+          <dd class="is-success">{{ approvedCount }}</dd>
+        </div>
+        <div>
+          <dt>已驳回</dt>
+          <dd :class="{ 'is-danger': rejectedCount > 0 }">{{ rejectedCount }}</dd>
+        </div>
+      </dl>
+    </section>
+
+    <el-alert
+      v-if="loadFailed"
+      class="load-alert"
+      title="贡献记录暂时无法加载"
+      type="error"
+      :closable="false"
+      show-icon
+    >
+      <template #default>
+        <el-button link type="primary" @click="loadData">重新加载</el-button>
+      </template>
+    </el-alert>
+
+    <section v-loading="loading" class="contribution-surface" aria-label="我的贡献列表">
+      <el-table v-if="!isMobile" :data="contributionList" table-layout="fixed">
         <template #empty>
-          <EmptyState text="暂无贡献记录" description="点击「填写贡献」记录你的项目贡献" accent="#36CFC9" />
+          <EmptyState
+            v-if="!loading"
+            text="暂无贡献记录"
+            description="填写贡献后，审核状态会显示在这里"
+          >
+            <template #action>
+              <el-button type="primary" :icon="Plus" @click="handleCreate">填写贡献</el-button>
+            </template>
+          </EmptyState>
         </template>
-        <el-table-column prop="project_name" label="项目" min-width="150" show-overflow-tooltip>
+        <el-table-column label="状态" width="94">
           <template #default="{ row }">
-            <span class="contribution-summary">{{ row.project_name }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column prop="contribution_type" label="贡献类型" width="120">
-          <template #default="{ row }">
-            <el-tag :type="CONTRIBUTION_TYPE_MAP[row.contribution_type]?.tagType as any" size="small">
-              {{ CONTRIBUTION_TYPE_MAP[row.contribution_type]?.label || row.contribution_type }}
+            <el-tag :type="statusTagType(row.status) as any" size="small">
+              {{ statusLabel(row.status) }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="content" label="贡献内容" min-width="200" show-overflow-tooltip>
-          <template #default="{ row }">
-            <span class="contribution-detail">{{ row.content }}</span>
-          </template>
+        <el-table-column label="项目" min-width="170" show-overflow-tooltip>
+          <template #default="{ row }"><strong class="project-name">{{ row.project_name || '-' }}</strong></template>
         </el-table-column>
-        <el-table-column label="权重" width="90" align="center">
+        <el-table-column label="类型" width="112">
           <template #default="{ row }">
-            <el-tag
-              v-if="row.weight != null"
-              class="weight-tag"
-              size="small"
-              effect="dark"
-            >
-              {{ row.weight }}
-            </el-tag>
-            <span v-else class="text-muted">-</span>
-          </template>
-        </el-table-column>
-        <el-table-column prop="status" label="状态" width="100">
-          <template #default="{ row }">
-            <el-tag :type="CONTRIBUTION_STATUS_MAP[row.status]?.tagType as any" size="small">
-              {{ CONTRIBUTION_STATUS_MAP[row.status]?.label || row.status }}
+            <el-tag :type="typeTagType(row.contribution_type) as any" size="small" effect="plain">
+              {{ typeLabel(row.contribution_type) }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="reviewer_name" label="审核人" width="100">
-          <template #default="{ row }">{{ row.reviewer_name || '-' }}</template>
-        </el-table-column>
-        <el-table-column prop="reviewed_at" label="审核时间" width="120">
-          <template #default="{ row }">{{ formatDate(row.reviewed_at) }}</template>
-        </el-table-column>
-        <el-table-column label="操作" width="130" fixed="right">
+        <el-table-column prop="content" label="贡献内容" min-width="240" show-overflow-tooltip />
+        <el-table-column label="权重" width="76" align="right">
           <template #default="{ row }">
-            <el-button v-if="row.status === 'pending'" type="warning" link @click="handleEdit(row as any)">编辑</el-button>
-            <el-button v-if="row.status === 'pending'" type="danger" link @click="handleDelete(row as any)">删除</el-button>
+            <span class="weight-value">{{ row.weight ?? '-' }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="审核时间" width="118">
+          <template #default="{ row }">{{ displayDate(row.reviewed_at) }}</template>
+        </el-table-column>
+        <el-table-column label="操作" width="124" fixed="right" align="right">
+          <template #default="{ row }">
+            <template v-if="row.status === 'pending'">
+              <el-button type="primary" link :icon="Edit" @click="handleEdit(row as Contribution)">
+                编辑
+              </el-button>
+              <el-button type="danger" link :icon="Delete" @click="handleDelete(row as Contribution)">
+                删除
+              </el-button>
+            </template>
+            <span v-else class="no-action">-</span>
           </template>
         </el-table-column>
       </el-table>
-    </div>
 
-    <!-- 移动端卡片列表 -->
-    <div v-else v-loading="loading" class="mobile-list">
-      <EmptyState v-if="contributionList.length === 0" text="暂无贡献记录" description="点击「填写贡献」记录你的项目贡献" accent="#36CFC9" :compact="true" />
-      <el-card v-for="item in contributionList" :key="item.id" class="mobile-card" shadow="hover">
-        <div class="mobile-card-header">
-          <span class="mobile-card-title contribution-summary">{{ item.project_name }}</span>
-          <el-tag :type="CONTRIBUTION_STATUS_MAP[item.status]?.tagType as any" size="small">
-            {{ CONTRIBUTION_STATUS_MAP[item.status]?.label || item.status }}
-          </el-tag>
-        </div>
-        <div class="mobile-card-body">
-          <div class="mobile-card-row">
-            <el-tag :type="CONTRIBUTION_TYPE_MAP[item.contribution_type]?.tagType as any" size="small">
-              {{ CONTRIBUTION_TYPE_MAP[item.contribution_type]?.label || item.contribution_type }}
+      <div v-else class="mobile-contribution-list">
+        <EmptyState
+          v-if="!loading && contributionList.length === 0"
+          text="暂无贡献记录"
+          description="填写贡献后，审核状态会显示在这里"
+          compact
+        />
+        <article v-for="item in contributionList" :key="item.id" class="contribution-card">
+          <header>
+            <div>
+              <strong>{{ item.project_name || '-' }}</strong>
+              <span>{{ typeLabel(item.contribution_type) }}</span>
+            </div>
+            <el-tag :type="statusTagType(item.status) as any" size="small">
+              {{ statusLabel(item.status) }}
             </el-tag>
-            <el-tag v-if="item.weight != null" class="weight-tag" size="small" effect="dark">
-              权重 {{ item.weight }}
-            </el-tag>
-          </div>
-          <div class="mobile-card-row"><span class="contribution-detail">{{ item.content }}</span></div>
-          <div class="mobile-card-row" v-if="item.reviewer_name">
-            <span class="label">审核人：</span><span>{{ item.reviewer_name }}</span>
-          </div>
-        </div>
-        <div v-if="item.status === 'pending'" class="mobile-card-actions">
-          <el-button type="warning" link size="small" @click="handleEdit(item as any)">编辑</el-button>
-          <el-button type="danger" link size="small" @click="handleDelete(item as any)">删除</el-button>
-        </div>
-      </el-card>
-    </div>
+          </header>
+          <p>{{ item.content }}</p>
+          <dl>
+            <div>
+              <dt>权重</dt>
+              <dd>{{ item.weight ?? '-' }}</dd>
+            </div>
+            <div>
+              <dt>审核时间</dt>
+              <dd>{{ displayDate(item.reviewed_at) }}</dd>
+            </div>
+          </dl>
+          <footer v-if="item.status === 'pending'">
+            <el-button type="primary" link :icon="Edit" @click="handleEdit(item)">编辑</el-button>
+            <el-button type="danger" link :icon="Delete" @click="handleDelete(item)">删除</el-button>
+          </footer>
+        </article>
+      </div>
+    </section>
 
-    <!-- 填写贡献弹窗 -->
     <ContributionFormDialog
       v-model:visible="formDialogVisible"
       :contribution="editingContribution"
@@ -106,148 +168,330 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { computed, onMounted, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Download } from '@element-plus/icons-vue'
-import { getMyContributions, deleteContribution } from '@/api/contributions'
+import { ArrowDown, Delete, Download, Edit, Plus } from '@element-plus/icons-vue'
+import { deleteContribution, getMyContributions } from '@/api/contributions'
 import { exportData } from '@/api/exports'
-import { formatDate } from '@/utils/format'
-import { CONTRIBUTION_TYPE_MAP, CONTRIBUTION_STATUS_MAP } from '@/utils/constants'
+import { downloadBlob, formatDate } from '@/utils/format'
+import { CONTRIBUTION_STATUS_MAP, CONTRIBUTION_TYPE_MAP } from '@/utils/constants'
 import { useDevice } from '@/composables/useDevice'
-import PageHeader from '@/components/PageHeader.vue'
-import EmptyState from '@/components/EmptyState.vue'
-import ContributionFormDialog from './ContributionFormDialog.vue'
 import type { Contribution } from '@/types'
+import EmptyState from '@/components/EmptyState.vue'
+import PageHeader from '@/components/PageHeader.vue'
+import ContributionFormDialog from './ContributionFormDialog.vue'
 
 const { isMobile } = useDevice()
-
+const route = useRoute()
+const router = useRouter()
+const projectFilter = computed(() => {
+  const value = Number(route.query.project_id)
+  return Number.isInteger(value) && value > 0 ? value : undefined
+})
 const loading = ref(false)
+const loadFailed = ref(false)
 const contributionList = ref<Contribution[]>([])
 const formDialogVisible = ref(false)
 const editingContribution = ref<Contribution | null>(null)
+const pendingCount = computed(() => contributionList.value.filter((item) => item.status === 'pending').length)
+const approvedCount = computed(() => contributionList.value.filter((item) => item.status === 'approved').length)
+const rejectedCount = computed(() => contributionList.value.filter((item) => item.status === 'rejected').length)
+const contributionProjects = computed(() => {
+  const projects = new Map<number, string>()
+  contributionList.value.forEach((item) => {
+    if (item.project) projects.set(item.project, item.project_name || `项目 ${item.project}`)
+  })
+  return Array.from(projects, ([id, name]) => ({ id, name }))
+})
 
-// 加载数据
+function typeLabel(type: string): string {
+  return CONTRIBUTION_TYPE_MAP[type]?.label || type
+}
+
+function typeTagType(type: string): string {
+  return CONTRIBUTION_TYPE_MAP[type]?.tagType || 'info'
+}
+
+function statusLabel(status: string): string {
+  return CONTRIBUTION_STATUS_MAP[status]?.label || status
+}
+
+function statusTagType(status: string): string {
+  return CONTRIBUTION_STATUS_MAP[status]?.tagType || 'info'
+}
+
+function displayDate(value?: string | null): string {
+  return value ? formatDate(value) : '-'
+}
+
 async function loadData(): Promise<void> {
   loading.value = true
+  loadFailed.value = false
   try {
-    const res: any = await getMyContributions()
-    contributionList.value = Array.isArray(res) ? res : (res.results || [])
+    contributionList.value = await getMyContributions(
+      projectFilter.value ? { project: projectFilter.value } : {},
+    )
   } catch {
-    // 错误已由拦截器处理
+    loadFailed.value = true
   } finally {
     loading.value = false
   }
 }
 
-// 填写贡献
 function handleCreate(): void {
   editingContribution.value = null
   formDialogVisible.value = true
 }
 
-// 编辑
-function handleEdit(row: any): void {
-  editingContribution.value = row as Contribution
+async function clearProjectFilter(): Promise<void> {
+  await router.replace({ path: '/contributions' })
+  await loadData()
+}
+
+function handleEdit(contribution: Contribution): void {
+  editingContribution.value = contribution
   formDialogVisible.value = true
 }
 
-// 删除
-async function handleDelete(row: any): Promise<void> {
+async function handleDelete(contribution: Contribution): Promise<void> {
   try {
-    await ElMessageBox.confirm('确定要删除该贡献记录吗？', '提示', { type: 'warning' })
-    await deleteContribution(row.id)
-    ElMessage.success('删除成功')
+    await ElMessageBox.confirm('确定删除这条待审核贡献吗？', '删除贡献', {
+      type: 'warning',
+      confirmButtonText: '删除',
+      cancelButtonText: '取消',
+    })
+    await deleteContribution(contribution.id)
+    ElMessage.success('贡献已删除')
     loadData()
   } catch {
-    // 取消
+    // 用户取消或请求错误已由拦截器处理。
   }
 }
 
-// 导出Excel
-async function handleExport(): Promise<void> {
+async function handleExport(projectId: number): Promise<void> {
   try {
-    const res: any = await exportData('contributions', 'xlsx')
-    const blobData = res.data ? res.data : res
-    const url = window.URL.createObjectURL(new Blob([blobData]))
-    const link = document.createElement('a')
-    link.href = url
-    link.download = `contributions_xlsx_${Date.now()}.xlsx`
-    link.click()
-    window.URL.revokeObjectURL(url)
+    const blob = await exportData('contributions', 'xlsx', projectId)
+    const projectName = contributionProjects.value.find((item) => item.id === projectId)?.name
+    downloadBlob(blob, `项目贡献_${projectName || projectId}_${Date.now()}.xlsx`)
     ElMessage.success('导出成功')
   } catch {
-    // 错误已由拦截器处理
+    // 请求错误已由拦截器处理。
   }
 }
 
-onMounted(() => {
-  loadData()
-})
+onMounted(loadData)
 </script>
 
 <style lang="scss" scoped>
-.mt-16 {
-  margin-top: 16px;
+.contributions-page {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+
+  :deep(.page-header) {
+    margin-bottom: 6px;
+  }
 }
 
-/* 需求F：贡献记录 - 概括蓝色、详细绿色、权重紫色 */
 .contribution-summary {
-  color: #409eff;
+  display: flex;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 14px 18px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-md);
+}
+
+.contribution-summary__intro {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+
+  span {
+    color: var(--color-text-muted);
+    font-size: 11px;
+  }
+
+  strong {
+    margin-top: 2px;
+    color: var(--color-text);
+    font-size: 14px;
+    font-weight: 600;
+  }
+}
+
+.contribution-summary dl {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(78px, 1fr));
+  min-width: 280px;
+
+  > div {
+    padding: 1px 18px;
+    text-align: right;
+    border-left: 1px solid var(--color-border-light);
+  }
+
+  dt {
+    color: var(--color-text-muted);
+    font-size: 11px;
+  }
+
+  dd {
+    margin-top: 2px;
+    color: var(--color-text);
+    font-size: 20px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+
+    &.is-warning {
+      color: var(--color-warning);
+    }
+
+    &.is-success {
+      color: var(--color-success);
+    }
+
+    &.is-danger {
+      color: var(--color-danger);
+    }
+  }
+}
+
+.load-alert {
+  margin-bottom: 0;
+}
+
+.contribution-surface {
+  min-height: 220px;
+  overflow: hidden;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-md);
+
+  :deep(.el-table::before) {
+    display: none;
+  }
+}
+
+.project-name {
+  color: var(--color-text);
   font-weight: 600;
 }
 
-.contribution-detail {
-  color: #67c23a;
-}
-
-.weight-tag {
-  background-color: #9b59b6 !important;
-  border-color: #9b59b6 !important;
-  color: #fff !important;
+.weight-value {
+  color: var(--color-text-regular);
   font-weight: 600;
+  font-variant-numeric: tabular-nums;
 }
 
-.text-muted {
-  color: #c0c4cc;
+.no-action {
+  color: var(--text-placeholder);
 }
 
-/* 移动端样式 */
-.mobile-list {
-  .mobile-card {
-    margin-bottom: 12px;
+.mobile-contribution-list {
+  display: grid;
+  gap: 10px;
+}
 
-    .mobile-card-header {
+.contribution-card {
+  padding: 14px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-md);
+
+  > header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+
+    > div {
       display: flex;
-      align-items: center;
-      justify-content: space-between;
-      margin-bottom: 8px;
+      flex-direction: column;
+      min-width: 0;
+    }
 
-      .mobile-card-title {
-        font-size: 15px;
-        font-weight: 600;
-        color: #303133;
+    strong {
+      overflow-wrap: anywhere;
+      color: var(--color-text);
+      font-size: 14px;
+      font-weight: 600;
+    }
+
+    span {
+      margin-top: 2px;
+      color: var(--color-text-muted);
+      font-size: 11px;
+    }
+  }
+
+  > p {
+    margin-top: 14px;
+    overflow-wrap: anywhere;
+    color: var(--color-text-regular);
+    font-size: 13px;
+    line-height: 1.55;
+  }
+
+  dl {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    padding-top: 12px;
+    margin-top: 14px;
+    border-top: 1px solid var(--color-border-light);
+  }
+
+  dt {
+    color: var(--color-text-muted);
+    font-size: 11px;
+  }
+
+  dd {
+    margin-top: 2px;
+    color: var(--color-text-regular);
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  > footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 4px;
+    padding-top: 10px;
+    margin-top: 12px;
+    border-top: 1px solid var(--color-border-light);
+  }
+}
+
+@media screen and (max-width: 768px) {
+  .contribution-summary {
+    flex-direction: column;
+    gap: 12px;
+    padding: 14px;
+  }
+
+  .contribution-summary dl {
+    width: 100%;
+    min-width: 0;
+
+    > div {
+      padding: 1px 12px;
+
+      &:first-child {
+        padding-left: 0;
+        border-left: 0;
       }
     }
+  }
 
-    .mobile-card-body {
-      .mobile-card-row {
-        font-size: 13px;
-        color: #606266;
-        margin-bottom: 4px;
-        display: flex;
-        align-items: center;
-        gap: 8px;
-
-        .label {
-          color: #909399;
-        }
-      }
-    }
-
-    .mobile-card-actions {
-      margin-top: 8px;
-      text-align: right;
-    }
+  .contribution-surface {
+    overflow: visible;
+    background: transparent;
+    border: 0;
   }
 }
 </style>

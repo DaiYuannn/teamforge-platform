@@ -11,6 +11,7 @@ from django.db.models import Q, Count
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
 
+from common.permissions import IsInternalTeamMember
 from common.response import success_response
 from apps.projects.models import Project, ProjectStageLog
 from apps.tasks.models import Task
@@ -48,18 +49,21 @@ class TimelineEventView(APIView):
       - project_id: 按项目过滤(可选)
       - start_date: 开始日期(可选, YYYY-MM-DD)
       - end_date: 结束日期(可选, YYYY-MM-DD)
-      - event_type: 事件类型过滤(可选)
+      - event_type: 精确事件类型过滤(可选，多个类型用逗号分隔)
       - limit: 返回条数(默认 200)
     返回: 统一格式的事件列表, 按时间倒序排列
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsInternalTeamMember]
 
     def get(self, request):
         project_id = request.query_params.get('project_id')
         start_date = request.query_params.get('start_date')
         end_date = request.query_params.get('end_date')
         event_type = request.query_params.get('event_type')
-        limit = int(request.query_params.get('limit', 200))
+        try:
+            limit = min(max(int(request.query_params.get('limit', 200)), 1), 500)
+        except (TypeError, ValueError):
+            limit = 200
 
         events = []
 
@@ -341,9 +345,28 @@ class TimelineEventView(APIView):
                 },
             })
 
+        # 比赛和知识产权事件使用业务日期而不是 created_at；统一在聚合后按
+        # event.date 再过滤一次，确保时间线的日期筛选对所有事件类型一致生效。
+        if start_date:
+            events = [
+                event for event in events
+                if event.get('date') and event['date'] >= start_date
+            ]
+        if end_date:
+            events = [
+                event for event in events
+                if event.get('date') and event['date'] <= end_date
+            ]
+
         # ---- 按 event_type 过滤 ----
         if event_type:
-            events = [e for e in events if e['type'] == event_type]
+            event_types = {
+                item.strip()
+                for item in event_type.split(',')
+                if item.strip()
+            }
+            if event_types:
+                events = [e for e in events if e['type'] in event_types]
 
         # ---- 按时间倒序排序 ----
         events.sort(key=lambda x: x.get('timestamp') or '', reverse=True)
@@ -469,7 +492,7 @@ class ProjectCalendarView(APIView):
       - year: 指定年份(默认当前年)
       - project_id: 按项目过滤
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsInternalTeamMember]
 
     def get(self, request):
         import datetime
@@ -650,6 +673,18 @@ class PublicPortalView(APIView):
         from apps.users.models import User
         from apps.notifications.models import Announcement
         from django.db.models import Count
+        from .portal_models import PortalPublication
+        from .portal_serializers import PortalSettingsSerializer
+        from .portal_views import get_portal_settings
+
+        publications = list(
+            PortalPublication.objects.filter(is_public=True).order_by(
+                '-is_featured', 'display_order', 'id'
+            )
+        )
+        publications_by_type = defaultdict(list)
+        for publication in publications:
+            publications_by_type[publication.content_type].append(publication)
 
         # 统计数据
         total_projects = Project.objects.count()
@@ -666,8 +701,13 @@ class PublicPortalView(APIView):
         ).count()
         total_competitions = Competition.objects.count()
         awarded_competitions = Competition.objects.filter(is_awarded=True).count()
+        # 已授权成果在完成正式归档前也属于已形成的知识产权成果。
+        # 只统计 archived 会让门户明明展示已授权成果，顶部数量却仍为 0。
         total_ip = IntellectualPropertyApplication.objects.filter(
-            status='archived'
+            status__in=(
+                IntellectualPropertyApplication.Status.AUTHORIZED,
+                IntellectualPropertyApplication.Status.ARCHIVED,
+            )
         ).count()
 
         # P17: 项目统计（总数 / 进行中 / 已完成）
@@ -701,17 +741,21 @@ class PublicPortalView(APIView):
                 'published_at': _fmt_dt(ann.published_at),
             })
 
-        # 获奖项目成果 - 包含有获奖比赛的项目或已结项项目
+        # 项目成果只展示经过逐项公开确认的项目。
         awarded_project_list = []
-        # 查询有获奖比赛的项目 ID
-        project_ids_with_awards = Competition.objects.filter(
-            is_awarded=True
-        ).values_list('project_id', flat=True).distinct()
-        awarded_qs = Project.objects.filter(
-            Q(id__in=project_ids_with_awards) |
-            Q(current_stage__in=[Project.Stage.AWARDED, Project.Stage.CLOSED])
-        ).distinct().order_by('-updated_at')[:20]
-        for proj in awarded_qs:
+        project_publications = publications_by_type[
+            PortalPublication.ContentType.PROJECT
+        ][:20]
+        project_map = {
+            project.id: project
+            for project in Project.objects.select_related('leader').filter(
+                id__in=[item.object_id for item in project_publications]
+            ).prefetch_related('competitions')
+        }
+        for publication in project_publications:
+            proj = project_map.get(publication.object_id)
+            if not proj:
+                continue
             awards = proj.competitions.filter(is_awarded=True)
             award_info = []
             for a in awards:
@@ -723,42 +767,76 @@ class PublicPortalView(APIView):
                 })
             awarded_project_list.append({
                 'project_id': proj.id,
-                'project_name': proj.name,
+                'project_name': publication.custom_title or proj.name,
                 'project_code': proj.code,
-                'intro': proj.intro[:100] if proj.intro else '',
+                'intro': (
+                    publication.custom_summary
+                    or (proj.intro[:200] if proj.intro else '')
+                ),
                 'leader_name': proj.leader.name if proj.leader else '',
                 'start_date': _fmt_date(proj.start_date),
                 'awards': award_info,
+                'is_featured': publication.is_featured,
+                'image_url': publication.image_url,
             })
 
-        # 知识产权成果
+        # 知识产权同样仅展示经过逐项公开确认的条目。
         ip_results = []
-        for ip in IntellectualPropertyApplication.objects.filter(
-            status__in=['authorized', 'archived']
-        ).order_by('-authorized_date')[:20]:
+        ip_publications = publications_by_type[
+            PortalPublication.ContentType.IP_APPLICATION
+        ][:20]
+        ip_map = {
+            item.id: item
+            for item in IntellectualPropertyApplication.objects.filter(
+                id__in=[publication.object_id for publication in ip_publications]
+            )
+        }
+        for publication in ip_publications:
+            ip = ip_map.get(publication.object_id)
+            if not ip:
+                continue
             ip_results.append({
                 'ip_id': ip.id,
-                'title': ip.title,
+                'title': publication.custom_title or ip.title,
                 'ip_type': ip.ip_type,
                 'ip_type_display': ip.get_ip_type_display(),
                 'application_code': ip.application_code,
                 'authorized_date': _fmt_date(ip.authorized_date),
-                'intro': ip.intro[:100] if ip.intro else '',
+                'intro': (
+                    publication.custom_summary
+                    or (ip.intro[:200] if ip.intro else '')
+                ),
+                'is_featured': publication.is_featured,
+                'image_url': publication.image_url,
             })
 
-        # 核心成员(按参与项目数排序)
+        # 成员必须同时满足管理员发布和成员本人授权。
         core_members = []
-        for user in User.objects.filter(is_active=True).annotate(
-            proj_count=Count('project_memberships')
-        ).order_by('-proj_count')[:12]:
+        member_publications = [
+            item for item in publications_by_type[PortalPublication.ContentType.MEMBER]
+            if item.member_consent
+        ][:20]
+        member_map = {
+            user.id: user
+            for user in User.objects.filter(
+                is_active=True,
+                id__in=[item.object_id for item in member_publications],
+            ).annotate(proj_count=Count('project_memberships'))
+        }
+        for publication in member_publications:
+            user = member_map.get(publication.object_id)
+            if not user:
+                continue
             core_members.append({
                 'user_id': user.id,
-                'name': user.name,
+                'name': publication.custom_title or user.name,
                 'global_role': user.global_role,
                 'global_role_display': user.get_global_role_display(),
                 'grade': user.grade,
                 'major': user.major,
                 'project_count': user.proj_count,
+                'summary': publication.custom_summary,
+                'is_featured': publication.is_featured,
             })
 
         data = {
@@ -775,5 +853,6 @@ class PublicPortalView(APIView):
             'awarded_projects': awarded_project_list,
             'ip_results': ip_results,
             'core_members': core_members,
+            'settings': PortalSettingsSerializer(get_portal_settings()).data,
         }
         return success_response(data, message='success')

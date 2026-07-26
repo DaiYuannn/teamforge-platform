@@ -8,10 +8,10 @@ from decimal import Decimal
 
 from django.db.models import Count, Q, Sum
 from django.utils import timezone
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
 from common.response import success_response, error_response
+from common.permissions import IsInternalTeamMember
 from apps.projects.models import Project, ProjectMember
 from apps.tasks.models import Task
 from apps.finance.models import FinanceBudget, FinanceExpense
@@ -31,7 +31,8 @@ class RiskPredictionView(APIView):
     返回：risk_score(0-100)、risk_factors、recommendations
     """
 
-    permission_classes = [IsAuthenticated]
+    # 风险因子含预算和支出数据，仅供在队/暂离内部成员查看。
+    permission_classes = [IsInternalTeamMember]
 
     def get(self, request):
         project_id = request.query_params.get('project_id')
@@ -49,7 +50,7 @@ class RiskPredictionView(APIView):
 def _predict_risk(project):
     """计算项目风险评分与风险因子"""
     now = timezone.now()
-    week_ago = now - timedelta(days=7)
+    stale_threshold = now - timedelta(days=11)
     factors = []
 
     # ---------- 1. 逾期任务风险 ----------
@@ -112,7 +113,9 @@ def _predict_risk(project):
                 })
 
     # ---------- 3. 团队负载风险 ----------
-    members = ProjectMember.objects.filter(project=project)
+    members = ProjectMember.objects.filter(
+        project=project, status=ProjectMember.Status.ACTIVE
+    )
     member_count = members.count()
     overloaded_members = 0
     if member_count > 0:
@@ -145,18 +148,16 @@ def _predict_risk(project):
         })
 
     # ---------- 4. 历史模式 / 未更新风险 ----------
-    # 超过 7 天未打卡
-    stale = (
-        project.last_leader_update is None
-        or project.last_leader_update < week_ago
-    )
+    # 超过 11 天未打卡
+    update_baseline = project.last_leader_update or project.created_at
+    stale = update_baseline <= stale_threshold
     if stale:
         factors.append({
             'category': 'stale_update',
             'label': '项目长期未更新',
             'severity': 'medium',
             'score': 10.0,
-            'detail': '项目负责人已超过 7 天未更新项目',
+            'detail': '项目负责人已超过 11 天未更新项目',
         })
 
     # 已识别的未关闭高风险

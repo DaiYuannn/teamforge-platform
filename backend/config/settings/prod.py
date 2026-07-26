@@ -32,6 +32,11 @@ SECURE_HSTS_PRELOAD = os.environ.get('SECURE_HSTS_PRELOAD', 'False').lower() == 
 X_FRAME_OPTIONS = 'DENY'
 SECURE_CONTENT_TYPE_NOSNIFF = True
 
+# Nginx 仅允许 Django 验签/鉴权后通过 internal location 转发媒体文件。
+PROTECTED_MEDIA_USE_X_ACCEL_REDIRECT = (
+    os.environ.get('PROTECTED_MEDIA_USE_X_ACCEL_REDIRECT', 'True').lower() == 'true'
+)
+
 CORS_ALLOW_ALL_ORIGINS = False
 CORS_ALLOWED_ORIGINS = [
     origin.strip()

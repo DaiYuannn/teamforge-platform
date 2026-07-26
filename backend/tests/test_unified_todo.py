@@ -52,6 +52,48 @@ class TestUnifiedTodoAPI:
         results = data['results']
         assert not any(t.get('title') == '他人任务' for t in results)
 
+    def test_collaborator_gets_relevant_task(
+        self,
+        member_client,
+        make_task,
+        make_user,
+    ):
+        assignee = make_user(email='todo-collaborator-assignee@test.com')
+        task = make_task(assignee=assignee, title='协作任务', status='doing')
+        task.collaborators.add(member_client.user)
+
+        response = member_client.get(TODO_URL)
+
+        item = next(
+            row for row in extract_data(response)['results']
+            if row['id'] == task.id
+        )
+        assert item['task_role'] == 'collaborator'
+
+    def test_reviewer_gets_pending_review_task(
+        self,
+        member_client,
+        make_task,
+        make_user,
+    ):
+        assignee = make_user(email='todo-review-assignee@test.com')
+        task = make_task(
+            assignee=assignee,
+            reviewer=member_client.user,
+            title='待我验收',
+            status='pending_review',
+            completion_note='已提交交付物',
+        )
+
+        response = member_client.get(TODO_URL)
+
+        item = next(
+            row for row in extract_data(response)['results']
+            if row['id'] == task.id
+        )
+        assert item['task_role'] == 'reviewer'
+        assert item['route_query']['task_id'] == task.id
+
     def test_overdue_task_type(self, member_client, make_task):
         """逾期任务标记为 overdue_task 类型"""
         past = timezone.now() - timedelta(days=1)
@@ -184,3 +226,53 @@ class TestUnifiedTodoAPI:
         results = data['results']
         assert len(results) >= 1
         assert all(t['type'] == 'contribution_review' for t in results)
+
+    def test_project_leader_gets_only_own_contribution_reviews(
+        self,
+        member_client,
+        make_user,
+        make_project,
+    ):
+        from apps.contributions.models import Contribution
+
+        contributor = make_user(email='leader-review-contributor@test.com')
+        own_project = make_project(leader=member_client.user)
+        other_project = make_project()
+        own = Contribution.objects.create(
+            user=contributor,
+            project=own_project,
+            contribution_type=Contribution.ContributionType.TASK_COMPLETE,
+            content='本项目贡献',
+            status=Contribution.Status.PENDING,
+        )
+        Contribution.objects.create(
+            user=contributor,
+            project=other_project,
+            contribution_type=Contribution.ContributionType.TASK_COMPLETE,
+            content='其他项目贡献',
+            status=Contribution.Status.PENDING,
+        )
+
+        response = member_client.get(f'{TODO_URL}?type=contribution_review')
+        assert response.status_code == 200
+        results = extract_data(response)['results']
+        assert [item['id'] for item in results] == [own.id]
+        assert results[0]['url'].startswith('/contributions/pending?')
+        assert not results[0]['url'].startswith('/api/')
+
+    def test_task_todo_links_to_frontend_business_page(
+        self,
+        member_client,
+        make_task,
+    ):
+        task = make_task(
+            assignee=member_client.user,
+            title='可跳转任务',
+            status='todo',
+        )
+        response = member_client.get(TODO_URL)
+        results = extract_data(response)['results']
+        item = next(result for result in results if result['id'] == task.id)
+        assert item['url'].startswith('/tasks?')
+        assert item['route_name'] == 'TaskList'
+        assert item['route_query']['task_id'] == task.id

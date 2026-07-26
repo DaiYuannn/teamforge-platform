@@ -1,9 +1,11 @@
 <template>
-  <el-popover placement="bottom-end" :width="360" trigger="click" @show="handlePopoverShow">
+  <el-popover placement="bottom-end" :width="360" trigger="click" @after-enter="handlePopoverShow">
     <template #reference>
-      <el-badge :value="unreadCount" :max="99" :hidden="unreadCount === 0" class="bell-badge">
-        <el-icon size="20" class="bell-icon"><Bell /></el-icon>
-      </el-badge>
+      <el-button text circle class="bell-button" :aria-label="unreadLabel">
+        <el-badge :value="unreadCount" :max="99" :hidden="unreadCount === 0" class="bell-badge">
+          <el-icon size="19"><Bell /></el-icon>
+        </el-badge>
+      </el-button>
     </template>
 
     <!-- 下拉面板 -->
@@ -37,36 +39,26 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { computed, ref, onMounted, onUnmounted } from 'vue'
+import { storeToRefs } from 'pinia'
 import { useRouter } from 'vue-router'
 import { Bell } from '@element-plus/icons-vue'
-import { getUnreadCount, getNotifications, markAsRead, markAllAsRead } from '@/api/notifications'
 import { formatRelativeTime } from '@/utils/format'
 import type { Notification } from '@/types'
+import { useNotificationStore } from '@/stores/notification'
+import { notificationRelatedRoute } from '@/utils/notificationRoute'
 
 const router = useRouter()
+const notificationStore = useNotificationStore()
+const { unreadCount, recentNotifications: recentList } = storeToRefs(notificationStore)
 
-const unreadCount = ref(0)
 const loading = ref(false)
-const recentList = ref<Notification[]>([])
-let timer: ReturnType<typeof setInterval> | null = null
+const unreadLabel = computed(() => unreadCount.value ? `通知，${unreadCount.value} 条未读` : '通知')
 
-// 获取未读数量
-async function loadUnreadCount(): Promise<void> {
-  try {
-    const res: any = await getUnreadCount()
-    unreadCount.value = res.count ?? 0
-  } catch {
-    // 静默失败
-  }
-}
-
-// 加载最近5条通知
-async function loadRecent(): Promise<void> {
+async function refreshNotifications(): Promise<void> {
   loading.value = true
   try {
-    const res: any = await getNotifications({ page: 1, page_size: 5 })
-    recentList.value = res.results || []
+    await notificationStore.hydrate()
   } catch {
     // 静默失败
   } finally {
@@ -74,32 +66,26 @@ async function loadRecent(): Promise<void> {
   }
 }
 
-// 弹出面板展开时：刷新最近通知并同步未读数（需求H：保证实时性）
 function handlePopoverShow(): void {
-  loadRecent()
-  loadUnreadCount()
+  void refreshNotifications()
 }
 
 // 点击单条通知
 async function handleClickItem(item: Notification): Promise<void> {
   if (!item.is_read) {
     try {
-      await markAsRead(item.id)
-      item.is_read = true
-      unreadCount.value = Math.max(0, unreadCount.value - 1)
+      await notificationStore.markAsRead(item.id)
     } catch {
       // 静默
     }
   }
-  goToCenter()
+  await router.push(notificationRelatedRoute(item) || '/notifications')
 }
 
 // 全部标记已读
 async function handleMarkAllRead(): Promise<void> {
   try {
-    await markAllAsRead()
-    unreadCount.value = 0
-    recentList.value.forEach((n) => (n.is_read = true))
+    await notificationStore.markAllAsRead()
   } catch {
     // 静默
   }
@@ -111,13 +97,11 @@ function goToCenter(): void {
 }
 
 onMounted(() => {
-  loadUnreadCount()
-  // 每30秒轮询一次未读数量
-  timer = setInterval(loadUnreadCount, 30000)
+  void refreshNotifications().finally(() => notificationStore.startStream())
 })
 
 onUnmounted(() => {
-  if (timer) clearInterval(timer)
+  notificationStore.stopStream()
 })
 </script>
 
@@ -127,11 +111,15 @@ onUnmounted(() => {
   align-items: center;
 }
 
-.bell-icon {
-  cursor: pointer;
-  color: #606266;
-  &:hover {
-    color: #409eff;
+.bell-button {
+  width: 36px;
+  height: 36px;
+  color: var(--color-text-regular);
+
+  &:hover,
+  &:focus-visible {
+    color: var(--color-primary);
+    background: var(--color-primary-soft);
   }
 }
 
@@ -141,12 +129,12 @@ onUnmounted(() => {
     align-items: center;
     justify-content: space-between;
     padding-bottom: 8px;
-    border-bottom: 1px solid #ebeef5;
+    border-bottom: 1px solid var(--color-border-light);
 
     .bell-panel-title {
       font-size: 15px;
       font-weight: 600;
-      color: #303133;
+      color: var(--color-text);
     }
   }
 
@@ -156,7 +144,7 @@ onUnmounted(() => {
 
     .bell-empty {
       text-align: center;
-      color: #909399;
+      color: var(--color-text-muted);
       font-size: 13px;
       padding: 32px 0;
     }
@@ -164,17 +152,17 @@ onUnmounted(() => {
 
   .bell-item {
     padding: 10px 4px;
-    border-bottom: 1px solid #f0f2f5;
+    border-bottom: 1px solid var(--color-border-light);
     cursor: pointer;
 
     &:hover {
-      background: #f5f7fa;
+      background: var(--color-surface-subtle);
     }
 
     &.unread {
       .bell-item-title {
         font-weight: 600;
-        color: #303133;
+        color: var(--color-text);
       }
     }
 
@@ -186,7 +174,7 @@ onUnmounted(() => {
 
       .bell-item-title {
         font-size: 13px;
-        color: #606266;
+        color: var(--color-text-regular);
         flex: 1;
         overflow: hidden;
         text-overflow: ellipsis;
@@ -197,7 +185,7 @@ onUnmounted(() => {
 
     .bell-item-content {
       font-size: 12px;
-      color: #909399;
+      color: var(--color-text-muted);
       margin: 0 0 4px;
       overflow: hidden;
       text-overflow: ellipsis;
@@ -206,14 +194,14 @@ onUnmounted(() => {
 
     .bell-item-time {
       font-size: 11px;
-      color: #c0c4cc;
+      color: var(--color-text-muted);
     }
   }
 
   .bell-panel-footer {
     text-align: center;
     padding-top: 8px;
-    border-top: 1px solid #ebeef5;
+    border-top: 1px solid var(--color-border-light);
   }
 }
 </style>

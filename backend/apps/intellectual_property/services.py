@@ -18,19 +18,19 @@ from apps.contributions.models import Contribution
 
 # ============ 状态流转合法路径定义 ============
 VALID_TRANSITIONS = {
-    'draft': ['writing', 'paused', 'terminated'],
-    'writing': ['leader_review', 'paused', 'terminated'],
-    'leader_review': ['teacher_confirm', 'writing', 'paused'],
-    'teacher_confirm': ['research_office_review', 'leader_review', 'paused'],
-    'research_office_review': ['accepted', 'returned', 'paused'],
-    'returned': ['modifying', 'paused', 'terminated'],
-    'modifying': ['resubmitted', 'paused', 'terminated'],
-    'resubmitted': ['research_office_review', 'accepted', 'returned', 'paused'],
+    'draft': ['writing', 'paused', 'terminated', 'deferred'],
+    'writing': ['leader_review', 'paused', 'terminated', 'deferred'],
+    'leader_review': ['teacher_confirm', 'writing', 'paused', 'deferred'],
+    'teacher_confirm': ['research_office_review', 'leader_review', 'paused', 'deferred'],
+    'research_office_review': ['accepted', 'paused', 'deferred'],
+    'returned': ['modifying', 'paused', 'terminated', 'deferred'],
+    'modifying': ['paused', 'terminated', 'deferred'],
+    'resubmitted': ['research_office_review', 'accepted', 'paused', 'deferred'],
     'accepted': ['authorized', 'paused'],
-    'authorized': ['archived'],
+    'authorized': [],
     'archived': [],
     'paused': ['draft', 'writing', 'leader_review', 'teacher_confirm',
-               'research_office_review', 'modifying'],
+               'research_office_review', 'modifying', 'deferred'],
     'terminated': [],
     'deferred': ['draft'],
 }
@@ -69,6 +69,16 @@ def log_operation(user, action, obj, detail=''):
     )
 
 
+def _stored_file_exists(file_asset):
+    """Return whether a FileAsset points to a readable object in its storage."""
+    if not file_asset or not file_asset.file or not file_asset.file.name:
+        return False
+    try:
+        return file_asset.file.storage.exists(file_asset.file.name)
+    except (OSError, ValueError):
+        return False
+
+
 class IPService:
     """知识产权业务服务"""
 
@@ -82,6 +92,10 @@ class IPService:
         :param user: 操作人
         :return: (success: bool, data_or_message)
         """
+        application = (
+            IntellectualPropertyApplication.objects.select_for_update()
+            .get(pk=application.pk)
+        )
         current_status = application.status
 
         # 目标状态与当前状态相同
@@ -92,6 +106,17 @@ class IPService:
         valid_status_values = [choice[0] for choice in IntellectualPropertyApplication.Status.choices]
         if target_status not in valid_status_values:
             return False, f'无效的状态值: {target_status}'
+
+        specialized_targets = {
+            IntellectualPropertyApplication.Status.RETURNED:
+                '退回状态必须通过“新建退回记录”进入，以保留原因、责任人与修改期限',
+            IntellectualPropertyApplication.Status.RESUBMITTED:
+                '重新提交必须通过“完成退回修改”进入，以结清退回记录并同步贡献',
+            IntellectualPropertyApplication.Status.ARCHIVED:
+                '归档状态必须通过“成果归档”操作进入，以同步归档贡献和审计记录',
+        }
+        if target_status in specialized_targets:
+            return False, specialized_targets[target_status]
 
         # 校验状态转换路径合法性
         allowed_targets = VALID_TRANSITIONS.get(current_status, [])
@@ -119,6 +144,10 @@ class IPService:
 
         application.save()
 
+        # 正式授权/登记时自动落贡献；后续手工同步仍保持幂等。
+        if target_status == IntellectualPropertyApplication.Status.AUTHORIZED:
+            IPService.sync_contribution(application, user)
+
         # 写操作日志
         log_operation(
             user=user,
@@ -144,6 +173,21 @@ class IPService:
         :param user: 操作人（指派人）
         :return: (success: bool, data_or_message)
         """
+        application = (
+            IntellectualPropertyApplication.objects.select_for_update()
+            .get(pk=application.pk)
+        )
+        if application.status not in {
+            IntellectualPropertyApplication.Status.RESEARCH_OFFICE_REVIEW,
+            IntellectualPropertyApplication.Status.RESUBMITTED,
+        }:
+            return False, '仅科研处审核中或已重新提交的申请可登记退回'
+        if IPReturnRecord.objects.filter(
+            application=application,
+            result=IPReturnRecord.ReturnResult.PENDING,
+        ).exists():
+            return False, '该申请已有待处理的退回记录，不能重复登记'
+
         # 创建退回记录
         return_record = IPReturnRecord.objects.create(
             application=application,
@@ -189,7 +233,23 @@ class IPService:
         :param user: 操作人（实际修改人）
         :return: (success: bool, data_or_message)
         """
-        application = return_record.application
+        return_record = (
+            IPReturnRecord.objects.select_for_update()
+            .select_related('application')
+            .get(pk=return_record.pk)
+        )
+        application = (
+            IntellectualPropertyApplication.objects.select_for_update()
+            .get(pk=return_record.application_id)
+        )
+
+        if return_record.result != IPReturnRecord.ReturnResult.PENDING:
+            return False, '该退回记录已完成处理，不能重复提交'
+        if application.status not in {
+            IntellectualPropertyApplication.Status.RETURNED,
+            IntellectualPropertyApplication.Status.MODIFYING,
+        }:
+            return False, '申请仅在退回修改或修改中状态可完成本次退回'
 
         # 更新退回记录
         return_record.modify_description = data.get('modify_description', '')
@@ -218,6 +278,7 @@ class IPService:
             contribution_type=Contribution.ContributionType.IP_RETURN_FIX,
             description=f'知识产权申请"{application.title}"退回修改完成',
             related_object_id=application.id,
+            period=timezone.localdate().strftime('%Y-%m'),
         )
 
         return True, return_record
@@ -227,30 +288,67 @@ class IPService:
     def sync_contribution(application, user):
         """
         同步贡献记录到 Contribution 表
-        - 根据申请的责任分工记录，为每个成员创建对应的贡献记录
+        - 根据责任分工记录和申请责任链字段，为每个成员创建对应贡献
+        - 同一申请、成员、贡献类型幂等
         - 写 OperationLog
         :param application: 知识产权申请实例
         :param user: 操作人
         :return: (success: bool, data_or_message) data 为创建的贡献记录数量
         """
-        contributors = application.contributors.all()
-        if not contributors.exists():
+        assignments = [
+            (contributor.user, contributor.role, contributor.get_role_display())
+            for contributor in application.contributors.select_related('user').all()
+        ]
+        direct_assignments = (
+            (
+                application.main_writer,
+                IPApplicationContributor.ContributorRole.MAIN_WRITER,
+                '主导撰写人',
+            ),
+            (
+                application.applicant_executor,
+                IPApplicationContributor.ContributorRole.EXECUTOR,
+                '申请执行人',
+            ),
+            (
+                application.material_manager,
+                IPApplicationContributor.ContributorRole.MATERIAL_MANAGER,
+                '材料整理人',
+            ),
+            (
+                application.project_reviewer,
+                IPApplicationContributor.ContributorRole.REVIEWER,
+                '项目负责人审核人',
+            ),
+        )
+        assignments.extend(
+            assignment for assignment in direct_assignments if assignment[0] is not None
+        )
+        if not assignments:
             return False, '该申请暂无责任分工记录，无法同步贡献'
 
         created_count = 0
-        for contributor in contributors:
+        seen = set()
+        for contributor_user, contributor_role, role_label in assignments:
             contribution_type = ROLE_TO_CONTRIBUTION_TYPE.get(
-                contributor.role, Contribution.ContributionType.OTHER
+                contributor_role, Contribution.ContributionType.OTHER
             )
+            assignment_key = (contributor_user.id, contribution_type)
+            if assignment_key in seen:
+                continue
+            seen.add(assignment_key)
             # 避免重复创建：同一申请同一用户同一贡献类型只创建一次
             _, created = Contribution.objects.get_or_create(
-                user=contributor.user,
+                user=contributor_user,
                 project=application.related_project,
                 contribution_type=contribution_type,
                 related_object_id=application.id,
                 defaults={
                     'description': f'知识产权申请"{application.title}" - '
-                                   f'{contributor.get_role_display()}',
+                                   f'{role_label}',
+                    'content': f'知识产权申请"{application.title}" - {role_label}',
+                    'filled_by': user,
+                    'period': timezone.localdate().strftime('%Y-%m'),
                 },
             )
             if created:
@@ -271,16 +369,40 @@ class IPService:
     def archive_application(application, user):
         """
         成果归档
+        - 校验已授权/登记状态、最终证书和最终材料
+        - 幂等补齐职责贡献
         - 更新申请状态为 archived
-        - 将所有材料标记为非最终版（保留当前最终版）
         - 写 OperationLog
         :param application: 知识产权申请实例
         :param user: 操作人
         :return: (success: bool, data_or_message)
         """
-        # 校验当前状态必须为已授权/已登记
+        application = (
+            IntellectualPropertyApplication.objects.select_for_update()
+            .get(pk=application.pk)
+        )
+        # 归档只接收正式授权/登记后的成果，且必须形成可核验的材料闭环。
         if application.status != IntellectualPropertyApplication.Status.AUTHORIZED:
-            return False, '仅"已授权/已登记"状态的申请可以归档'
+            return False, '仅“已授权/已登记”状态的申请可以归档'
+
+        certificate = application.final_certificate_file
+        if certificate is None:
+            return False, '归档前请先上传最终授权/登记证书'
+        if not _stored_file_exists(certificate):
+            return False, '最终证书文件不存在或无法读取，请重新上传后再归档'
+
+        final_materials = list(
+            IPMaterialVersion.objects.select_for_update()
+            .select_related('file_asset')
+            .filter(application=application, is_final=True)
+        )
+        if not final_materials:
+            return False, '归档前请至少将一个成果材料版本标记为最终版'
+        if not any(_stored_file_exists(material.file_asset) for material in final_materials):
+            return False, '最终材料文件不存在或无法读取，请重新上传后再归档'
+
+        # 兼容历史上直接置为授权状态的数据，归档时再次幂等补齐职责贡献。
+        IPService.sync_contribution(application, user)
 
         old_status = application.status
         application.status = IntellectualPropertyApplication.Status.ARCHIVED
@@ -288,12 +410,17 @@ class IPService:
 
         # 为创建人记录归档贡献
         if application.related_project:
-            Contribution.objects.create(
+            Contribution.objects.get_or_create(
                 user=user,
                 project=application.related_project,
                 contribution_type=Contribution.ContributionType.IP_ARCHIVE,
-                description=f'知识产权申请"{application.title}"成果归档',
                 related_object_id=application.id,
+                defaults={
+                    'description': f'知识产权申请"{application.title}"成果归档',
+                    'content': f'知识产权申请"{application.title}"成果归档',
+                    'filled_by': user,
+                    'period': timezone.localdate().strftime('%Y-%m'),
+                },
             )
 
         # 写操作日志

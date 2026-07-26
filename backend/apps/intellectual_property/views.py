@@ -31,6 +31,7 @@ from .serializers import (
     IPApplicationContributorSerializer,
     IPReturnRecordSerializer,
     IPReturnRecordCreateSerializer,
+    IPReturnResolveSerializer,
     IPMaterialVersionSerializer,
     IPMaterialVersionCreateSerializer,
     IPObjectionSerializer,
@@ -42,7 +43,8 @@ from .permissions import (
     IsProjectLeaderOrTeacherOrAdminForIP,
     IsMainWriterOrExecutor,
     IsReturnModifier,
-    _is_project_member,
+    _can_access_application,
+    accessible_ip_applications,
 )
 from .services import ip_service
 
@@ -87,6 +89,14 @@ class IPApplicationViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelView
     search_fields = ['title', 'application_code', 'intro']
     ordering_fields = ['created_at', 'updated_at', 'submit_date', 'accepted_date']
 
+    def get_queryset(self):
+        return (
+            super()
+            .get_queryset()
+            .select_related('related_project', 'related_project__leader')
+            .filter(pk__in=accessible_ip_applications(self.request.user))
+        )
+
     def get_serializer_class(self):
         """
         retrieve 时根据项目成员身份返回不同序列化器
@@ -95,7 +105,7 @@ class IPApplicationViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelView
         """
         if self.action == 'retrieve':
             instance = self.get_object()
-            if not _is_project_member(self.request.user, instance):
+            if not _can_access_application(self.request.user, instance):
                 return IPApplicationListSerializer
         return super().get_serializer_class()
 
@@ -138,24 +148,53 @@ class IPApplicationViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelView
         body: {"target_status": "writing"}
         """
         application = self.get_object()
-        # 权限校验：项目负责人/老师/管理员，或主导撰写人/申请执行人
+        target_status = request.data.get('target_status')
+        if not target_status:
+            return error_response(message='请提供 target_status 参数')
+
+        # 权限随当前审批阶段收紧，避免业务角色越过后续审核节点。
         user = request.user
-        can_transition = (
-            user.global_role in ['sys_admin', 'teacher'] or
-            application.main_writer_id == user.id or
-            application.applicant_executor_id == user.id or
-            (application.related_project and
-             application.related_project.leader_id == user.id)
+        is_privileged = user.global_role in ['sys_admin', 'teacher']
+        is_project_leader = bool(
+            application.related_project
+            and application.related_project.leader_id == user.id
         )
+        institutional_targets = (
+            IntellectualPropertyApplication.Status.ACCEPTED,
+            IntellectualPropertyApplication.Status.RETURNED,
+            IntellectualPropertyApplication.Status.AUTHORIZED,
+            IntellectualPropertyApplication.Status.ARCHIVED,
+        )
+        if target_status in institutional_targets:
+            can_transition = is_privileged
+        elif application.status == IntellectualPropertyApplication.Status.LEADER_REVIEW:
+            can_transition = (
+                is_privileged
+                or is_project_leader
+                or application.project_reviewer_id == user.id
+            )
+        elif application.status == IntellectualPropertyApplication.Status.TEACHER_CONFIRM:
+            can_transition = (
+                is_privileged or application.teacher_confirmer_id == user.id
+            )
+        elif application.status in (
+            IntellectualPropertyApplication.Status.RESEARCH_OFFICE_REVIEW,
+            IntellectualPropertyApplication.Status.ACCEPTED,
+            IntellectualPropertyApplication.Status.AUTHORIZED,
+        ):
+            can_transition = is_privileged
+        else:
+            can_transition = (
+                is_privileged
+                or is_project_leader
+                or application.main_writer_id == user.id
+                or application.applicant_executor_id == user.id
+            )
         if not can_transition:
             return error_response(
                 message='无权进行状态流转操作', code=1003,
                 http_status=status.HTTP_403_FORBIDDEN,
             )
-
-        target_status = request.data.get('target_status')
-        if not target_status:
-            return error_response(message='请提供 target_status 参数')
 
         success, result = ip_service.transition_status(
             application=application,
@@ -245,6 +284,7 @@ class IPApplicationViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelView
             Q(main_writer=user, status='writing') |
             # 项目负责人审核 - 审核中
             Q(project_reviewer=user, status='leader_review') |
+            Q(related_project__leader=user, status='leader_review') |
             # 老师确认 - 确认中
             Q(teacher_confirmer=user, status='teacher_confirm') |
             # 申请执行人 - 退回修改中
@@ -258,7 +298,8 @@ class IPApplicationViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelView
             queryset = self.filter_queryset(self.get_queryset()).filter(
                 Q(main_writer=user, status='writing') |
                 Q(project_reviewer=user, status='leader_review') |
-                Q(teacher_confirmer=user, status='teacher_confirm') |
+                Q(related_project__leader=user, status='leader_review') |
+                Q(status='teacher_confirm') |
                 Q(applicant_executor=user, status__in=['returned', 'modifying']) |
                 Q(main_writer=user, status__in=['returned', 'modifying']) |
                 Q(status='research_office_review')
@@ -298,11 +339,19 @@ class IPContributorViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelView
         'update': [IsProjectLeaderOrTeacherOrAdminForIP],
         'partial_update': [IsProjectLeaderOrTeacherOrAdminForIP],
         'destroy': [IsProjectLeaderOrTeacherOrAdminForIP],
+        'confirm': [IsAuthenticated],
     }
 
     filterset_fields = ['application', 'user', 'role', 'is_confirmed']
     search_fields = ['application__title', 'user__name', 'contribution_description']
     ordering_fields = ['created_at', 'confirmed_at']
+
+    def get_queryset(self):
+        return super().get_queryset().select_related(
+            'application__related_project', 'user', 'confirmed_by'
+        ).filter(
+            application__in=accessible_ip_applications(self.request.user)
+        ).distinct()
 
     def create(self, request, *args, **kwargs):
         """创建责任分工记录"""
@@ -335,6 +384,29 @@ class IPContributorViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelView
         instance.delete()
         return success_response(message='责任分工记录删除成功')
 
+    @action(detail=True, methods=['post'])
+    def confirm(self, request, pk=None):
+        """由贡献本人确认责任分工；重复调用保持幂等。"""
+        contributor = self.get_object()
+        if contributor.user_id != request.user.id:
+            return error_response(
+                message='仅贡献本人可确认责任分工', code=1003,
+                http_status=status.HTTP_403_FORBIDDEN,
+            )
+
+        if not contributor.is_confirmed:
+            contributor.is_confirmed = True
+            contributor.confirmed_by = request.user
+            contributor.confirmed_at = timezone.now()
+            contributor.save(update_fields=[
+                'is_confirmed', 'confirmed_by', 'confirmed_at'
+            ])
+
+        return success_response(
+            IPApplicationContributorSerializer(contributor).data,
+            message='责任分工确认成功',
+        )
+
 
 class IPReturnRecordViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet):
     """
@@ -351,14 +423,15 @@ class IPReturnRecordViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelVie
         'create': IPReturnRecordCreateSerializer,
         'update': IPReturnRecordSerializer,
         'partial_update': IPReturnRecordSerializer,
+        'resolve': IPReturnResolveSerializer,
     }
 
     permission_classes_by_action = {
         'list': [IsAuthenticated],
         'retrieve': [IsAuthenticated],
         'create': [IsAuthenticated],
-        'update': [IsAuthenticated],
-        'partial_update': [IsAuthenticated],
+        'update': [IsProjectLeaderOrTeacherOrAdminForIP],
+        'partial_update': [IsProjectLeaderOrTeacherOrAdminForIP],
         'destroy': [IsProjectLeaderOrTeacherOrAdminForIP],
         'resolve': [IsReturnModifier],
     }
@@ -367,6 +440,14 @@ class IPReturnRecordViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelVie
                         'result', 'responsible_user']
     search_fields = ['application__title', 'return_reason', 'modify_description']
     ordering_fields = ['return_time', 'created_at', 'modify_deadline']
+
+    def get_queryset(self):
+        return super().get_queryset().select_related(
+            'application__related_project', 'responsible_user', 'assigned_by',
+            'actual_modifier', 'proof_file',
+        ).filter(
+            application__in=accessible_ip_applications(self.request.user)
+        ).distinct()
 
     def create(self, request, *args, **kwargs):
         """创建退回记录"""
@@ -413,13 +494,12 @@ class IPReturnRecordViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelVie
         """
         return_record = self.get_object()
         self.check_object_permissions(request, return_record)
-
-        modify_description = request.data.get('modify_description', '')
-        result = request.data.get('result', 'modified')
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
 
         success, result_obj = ip_service.resolve_return_record(
             return_record=return_record,
-            data={'modify_description': modify_description, 'result': result},
+            data=serializer.validated_data,
             user=request.user,
         )
 
@@ -453,7 +533,7 @@ class IPMaterialVersionViewSet(MultiSerializerMixin, MultiPermissionMixin, Model
     permission_classes_by_action = {
         'list': [IsAuthenticated],
         'retrieve': [IsAuthenticated],
-        'create': [IsAuthenticated],
+        'create': [IsIPProjectMember],
         'update': [IsMainWriterOrExecutor],
         'partial_update': [IsMainWriterOrExecutor],
         'destroy': [IsTeacherOrAdmin],
@@ -462,6 +542,14 @@ class IPMaterialVersionViewSet(MultiSerializerMixin, MultiPermissionMixin, Model
     filterset_fields = ['application', 'material_type', 'uploaded_by', 'is_final']
     search_fields = ['application__title', 'change_note']
     ordering_fields = ['created_at', 'version']
+
+    def get_queryset(self):
+        return super().get_queryset().select_related(
+            'application__related_project', 'file_asset', 'uploaded_by',
+            'related_return_record',
+        ).filter(
+            application__in=accessible_ip_applications(self.request.user)
+        ).distinct()
 
     def create(self, request, *args, **kwargs):
         """创建材料版本"""
@@ -518,7 +606,7 @@ class IPObjectionViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSe
     permission_classes_by_action = {
         'list': [IsAuthenticated],
         'retrieve': [IsAuthenticated],
-        'create': [IsAuthenticated],
+        'create': [IsIPProjectMember],
         'update': [IsProjectLeaderOrTeacherOrAdminForIP],
         'partial_update': [IsProjectLeaderOrTeacherOrAdminForIP],
         'destroy': [IsTeacherOrAdmin],
@@ -528,6 +616,14 @@ class IPObjectionViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSe
     filterset_fields = ['application', 'objection_type', 'status', 'objector']
     search_fields = ['application__title', 'content', 'final_result']
     ordering_fields = ['created_at', 'updated_at']
+
+    def get_queryset(self):
+        return super().get_queryset().select_related(
+            'application__related_project', 'objector', 'proof_file',
+            'leader_reviewer', 'teacher_confirmer',
+        ).filter(
+            application__in=accessible_ip_applications(self.request.user)
+        ).distinct()
 
     def create(self, request, *args, **kwargs):
         """创建异议"""

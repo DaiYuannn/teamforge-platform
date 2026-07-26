@@ -7,7 +7,7 @@ from .activity_models import Activity  # noqa: F401
 # 敏感操作确认（N37）
 from .confirmation_models import SensitiveConfirmation  # noqa: F401
 # 多团队支持（N40）
-from .team_models import Team, TeamMember  # noqa: F401
+from .team_models import Team, TeamMember, TeamMembershipEvent  # noqa: F401
 # 审批流程（N41）
 from .approval_models import ApprovalFlow, ApprovalRequest  # noqa: F401
 # 自定义表单（N42）

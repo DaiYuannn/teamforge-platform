@@ -6,6 +6,12 @@
 """
 import pytest
 import math
+from django.core.files.uploadedfile import SimpleUploadedFile
+from django.test import override_settings
+from rest_framework.test import APIClient
+
+from apps.projects.models import ProjectMember
+from apps.users.models import User
 
 
 def extract_data(response):
@@ -65,15 +71,61 @@ class TestFinanceAPI:
             assert not math.isnan(data), f'NaN float at {path}'
             assert not math.isinf(data), f'Inf float at {path}'
 
-    def test_finance_member_cannot_create(self, member_client, make_project):
-        """P04: 普通成员不能创建经费记录"""
+    def test_non_project_member_cannot_create(self, member_client, make_project):
+        """非项目成员不能登记该项目支出。"""
         project = make_project()
         resp = member_client.post('/api/v1/finance/expenses/', {
             'project': project.id,
-                        'amount': 100,
-            'title': '成员尝试创建',
+            'amount': 100,
+            'title': '非项目成员尝试创建',
+            'expense_date': '2026-07-07',
         }, format='json')
-        assert resp.status_code in (401, 403)
+        assert resp.status_code == 403, resp.json()
+
+    def test_project_member_can_create_only_as_self(
+        self, member_client, make_project, make_user
+    ):
+        """项目成员可登记本人支出，传入他人经办人也会被服务端改为本人。"""
+        project = make_project()
+        other = make_user(email='finance-other-spender@test.com')
+        ProjectMember.objects.create(project=project, user=member_client.user)
+
+        resp = member_client.post('/api/v1/finance/expenses/', {
+            'project': project.id,
+            'amount': 128.50,
+            'title': '成员垫付材料费',
+            'expense_date': '2026-07-07',
+            'spender': other.id,
+        }, format='json')
+
+        assert resp.status_code == 201, resp.json()
+        assert extract_data(resp)['spender'] == member_client.user.id
+
+    def test_member_can_upload_and_delete_receipt_for_own_draft(
+        self, tmp_path, member_client, make_project, make_finance
+    ):
+        project = make_project()
+        ProjectMember.objects.create(project=project, user=member_client.user)
+        expense = make_finance(project=project, spender=member_client.user)
+        upload = SimpleUploadedFile(
+            'receipt.txt',
+            b'demo receipt',
+            content_type='text/plain',
+        )
+
+        with override_settings(MEDIA_ROOT=tmp_path):
+            created = member_client.post(
+                '/api/v1/finance/receipts/',
+                {'expense': expense.id, 'file': upload},
+                format='multipart',
+            )
+            assert created.status_code == 201, created.json()
+            receipt_id = extract_data(created)['id']
+            deleted = member_client.delete(
+                f'/api/v1/finance/receipts/{receipt_id}/'
+            )
+
+        assert deleted.status_code in (200, 204), deleted.json()
 
     def test_finance_filter_by_project(self, member_client, make_finance, make_project):
         """P04: 按项目筛选经费"""
@@ -114,5 +166,50 @@ class TestFinanceAPI:
         finance = make_finance(project=project)
         resp = teacher_client.delete(f'/api/v1/finance/expenses/{finance.id}/')
         assert resp.status_code in (200, 204)
+
+
+@pytest.mark.api
+@pytest.mark.permission
+@pytest.mark.django_db
+class TestFinanceInternalDataBoundary:
+    def test_external_collaborator_cannot_access_finance_or_derived_analytics(
+        self, make_user, make_project
+    ):
+        external = make_user(
+            email='external-finance@test.com',
+            membership_status=User.MembershipStatus.EXTERNAL,
+        )
+        project = make_project()
+        ProjectMember.objects.create(project=project, user=external)
+        client = APIClient()
+        client.force_authenticate(user=external)
+        urls = [
+            '/api/v1/finance/budgets/',
+            '/api/v1/finance/expenses/',
+            '/api/v1/finance/incomes/',
+            '/api/v1/finance/receipts/',
+            '/api/v1/finance/alerts/',
+            '/api/v1/finance/trends/',
+            '/api/v1/dashboard/',
+            '/api/v1/dashboard/timeline/',
+            '/api/v1/dashboard/calendar/',
+            '/api/v1/dashboard/weekly-report/',
+            '/api/v1/exports/?type=finance_budget&file_format=xlsx',
+            f'/api/v1/exports/project-report/{project.id}/',
+            '/api/v1/recycle-bin/?type=finance_expense',
+            f'/api/v1/projects/health-score/?project_id={project.id}',
+            f'/api/v1/projects/risk-prediction/?project_id={project.id}',
+            f'/api/v1/projects/smart-review/?project_id={project.id}',
+            f'/api/v1/projects/material-check/?project_id={project.id}',
+            '/api/v1/exports/custom-reports/',
+            '/api/v1/exports/scheduled-reports/',
+        ]
+
+        for url in urls:
+            response = client.get(url)
+            assert response.status_code == 403, (url, response.status_code)
+
+        ocr = client.post('/api/v1/finance/ocr/recognize/', {}, format='json')
+        assert ocr.status_code == 403
 
 

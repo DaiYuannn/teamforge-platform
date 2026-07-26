@@ -107,6 +107,69 @@ class TestSensitiveDataAPI:
         }, format='json')
         assert resp.status_code in (401, 403)
 
+    def test_access_request_cannot_be_rewritten_with_generic_patch(
+        self,
+        member_client,
+        make_sensitive_data,
+    ):
+        from apps.sensitive.models import SensitiveAccessRequest
+
+        request_obj = SensitiveAccessRequest.objects.create(
+            sensitive_data=make_sensitive_data(),
+            applicant=member_client.user,
+            usage_scenario='等待独立审批',
+            is_download=False,
+            status=SensitiveAccessRequest.Status.PENDING,
+        )
+
+        response = member_client.patch(
+            f'/api/v1/sensitive/requests/{request_obj.id}/',
+            {
+                'status': SensitiveAccessRequest.Status.APPROVED,
+                'approver': member_client.user.id,
+                'access_expires_at': '2099-01-01T00:00:00Z',
+                'is_download': True,
+            },
+            format='json',
+        )
+
+        assert response.status_code == 405
+        request_obj.refresh_from_db()
+        assert request_obj.status == SensitiveAccessRequest.Status.PENDING
+        assert request_obj.approver_id is None
+        assert request_obj.access_expires_at is None
+        assert request_obj.is_download is False
+
+    def test_approver_cannot_approve_their_own_request(
+        self,
+        approver_client,
+        make_sensitive_data,
+    ):
+        from apps.sensitive.models import SensitiveAccessRequest
+
+        request_obj = SensitiveAccessRequest.objects.create(
+            sensitive_data=make_sensitive_data(),
+            applicant=approver_client.user,
+            usage_scenario='审批角色也必须由他人审批',
+            is_download=True,
+            status=SensitiveAccessRequest.Status.PENDING,
+        )
+
+        response = approver_client.post(
+            f'/api/v1/sensitive/requests/{request_obj.id}/approve/',
+            {
+                'action': 'approve',
+                'approval_opinion': '自行放行',
+                'expire_hours': 24,
+            },
+            format='json',
+        )
+
+        assert response.status_code == 400
+        request_obj.refresh_from_db()
+        assert request_obj.status == SensitiveAccessRequest.Status.PENDING
+        assert request_obj.approver_id is None
+
     def test_sensitive_access_logged(self, approver_client, make_sensitive_data, make_user):
         """P03: 敏感资料访问必须记录日志"""
         from apps.sensitive.models import SensitiveAccessRequest

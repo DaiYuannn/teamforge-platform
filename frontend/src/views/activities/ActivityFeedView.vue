@@ -1,11 +1,23 @@
 <template>
-  <div class="activity-feed">
-    <PageHeader title="动态" />
+  <div class="activity-feed page-container">
+    <PageHeader title="动态" subtitle="团队近半年的协作记录" />
 
     <!-- ==================== GitHub 风格贡献热力图 ==================== -->
-    <el-card shadow="never" class="calendar-card">
-      <div class="calendar-header">
-        <span class="calendar-title">{{ totalContributions }} 次动态在过去半年</span>
+    <section class="surface-panel calendar-card">
+      <div class="section-bar calendar-header">
+        <div>
+          <h2 class="section-heading">协作热度</h2>
+          <span class="section-meta">过去半年共 {{ totalContributions }} 次动态</span>
+        </div>
+        <div class="calendar-legend" aria-label="活跃度图例">
+          <span>少</span>
+          <div class="legend-cell level-0"></div>
+          <div class="legend-cell level-1"></div>
+          <div class="legend-cell level-2"></div>
+          <div class="legend-cell level-3"></div>
+          <div class="legend-cell level-4"></div>
+          <span>多</span>
+        </div>
       </div>
 
       <div class="calendar-wrapper">
@@ -45,19 +57,6 @@
         </div>
       </div>
 
-      <!-- 图例 -->
-      <div class="calendar-footer">
-        <div class="calendar-legend">
-          <span>少</span>
-          <div class="legend-cell level-0"></div>
-          <div class="legend-cell level-1"></div>
-          <div class="legend-cell level-2"></div>
-          <div class="legend-cell level-3"></div>
-          <div class="legend-cell level-4"></div>
-          <span>多</span>
-        </div>
-      </div>
-
       <!-- 悬浮提示 -->
       <div
         v-if="hoveredDay"
@@ -66,16 +65,20 @@
       >
         {{ hoveredDay.count }} 次动态于 {{ hoveredDay.dateLabel }}
       </div>
-    </el-card>
+    </section>
 
     <!-- ==================== 动态列表 ==================== -->
-    <el-card shadow="never" class="mt-16">
-      <div class="toolbar">
+    <section class="surface-panel activity-list-panel">
+      <div class="section-bar toolbar">
+        <div>
+          <h2 class="section-heading">动态记录</h2>
+          <span class="section-meta">共 {{ total }} 条</span>
+        </div>
         <el-select
           v-model="filterType"
           placeholder="全部类型"
           clearable
-          style="width: 180px"
+          class="type-filter"
           @change="onFilterChange"
         >
           <el-option label="创建项目" value="project_created" />
@@ -126,11 +129,11 @@
           v-model:current-page="page"
           :page-size="pageSize"
           :total="total"
-          layout="total, prev, pager, next"
+          :layout="isMobile ? 'prev, pager, next' : 'total, prev, pager, next'"
           @current-change="loadData"
         />
       </div>
-    </el-card>
+    </section>
   </div>
 </template>
 
@@ -139,6 +142,10 @@ import { ref, computed, onMounted } from 'vue'
 import { Folder, Plus, Edit, Check, Upload, ChatDotRound, User } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { get } from '@/api/request'
+import { useDevice } from '@/composables/useDevice'
+import { useAppStore } from '@/stores/app'
+
+const { isMobile } = useDevice()
 
 // ============================================
 // 动态列表状态
@@ -146,7 +153,7 @@ import { get } from '@/api/request'
 const loading = ref(false)
 const activities = ref<any[]>([])
 const page = ref(1)
-const pageSize = 20
+const pageSize = useAppStore().itemsPerPage
 const total = ref(0)
 const filterType = ref('')
 
@@ -186,11 +193,11 @@ function getIconName(type: string): any {
 }
 
 function getIconColor(type: string): string {
-  if (type.includes('created')) return '#67C23A'
-  if (type.includes('completed')) return '#409EFF'
-  if (type.includes('uploaded')) return '#E6A23C'
-  if (type.includes('comment')) return '#909399'
-  return '#409EFF'
+  if (type.includes('created')) return 'var(--color-success)'
+  if (type.includes('completed')) return 'var(--color-primary)'
+  if (type.includes('uploaded')) return 'var(--color-warning)'
+  if (type.includes('comment')) return 'var(--color-info)'
+  return 'var(--color-primary)'
 }
 
 // ============================================
@@ -424,24 +431,46 @@ onMounted(() => {
 </script>
 
 <style scoped>
-/* ============================================
-   贡献日历
-   ============================================ */
+.activity-feed {
+  display: flex;
+  flex-direction: column;
+}
+
 .calendar-card {
   position: relative;
-  margin-bottom: 16px;
+  padding: 0;
+  overflow: hidden;
 }
-.calendar-header {
-  margin-bottom: 16px;
+
+.section-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  min-height: 58px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--color-border-light);
 }
-.calendar-title {
+
+.section-heading {
+  margin: 0;
   font-size: 14px;
-  font-weight: 500;
-  color: var(--el-text-color-primary);
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--color-text);
 }
+
+.section-meta {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
 .calendar-wrapper {
   display: flex;
   align-items: flex-start;
+  padding: 16px;
 }
 /* 左侧星期标签：与网格行对齐 */
 .weekday-labels {
@@ -493,37 +522,32 @@ onMounted(() => {
   height: 13px;
   border-radius: 2px;
   cursor: pointer;
-  transition: outline 0.1s ease;
+  transition: outline var(--transition-fast);
 }
 .calendar-cell:hover {
-  outline: 1px solid rgba(0, 0, 0, 0.25);
+  outline: 1px solid var(--color-text-muted);
   outline-offset: -1px;
 }
-/* GitHub 配色 */
+
 .level-0 {
-  background-color: #ebedf0;
+  background-color: var(--color-surface-strong);
 }
 .level-1 {
-  background-color: #9be9a8;
+  background-color: var(--color-primary-soft);
 }
 .level-2 {
-  background-color: #40c463;
+  background-color: #bad3d3;
 }
 .level-3 {
-  background-color: #30a14e;
+  background-color: #5d969b;
 }
 .level-4 {
-  background-color: #216e39;
+  background-color: var(--color-primary);
 }
 .level-future {
   background-color: transparent;
   cursor: default;
   pointer-events: none;
-}
-.calendar-footer {
-  display: flex;
-  justify-content: flex-end;
-  margin-top: 12px;
 }
 .calendar-legend {
   display: flex;
@@ -542,54 +566,64 @@ onMounted(() => {
   z-index: 20;
   padding: 6px 10px;
   font-size: 12px;
-  color: #fff;
+  color: var(--color-surface);
   white-space: nowrap;
-  background: rgba(0, 0, 0, 0.82);
-  border-radius: 4px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  background: var(--color-text);
+  border-radius: var(--radius-xs);
+  box-shadow: var(--shadow-lg);
   pointer-events: none;
 }
 
-/* ============================================
-   动态列表
-   ============================================ */
-.mt-16 {
-  margin-top: 16px;
+.activity-list-panel {
+  padding: 0;
+  margin-top: var(--space-4);
+  overflow: hidden;
 }
+
 .toolbar {
-  margin-bottom: 16px;
+  min-height: 62px;
 }
+
+.type-filter {
+  width: 180px;
+}
+
 .timeline {
   min-height: 200px;
+  padding: 10px 16px 0;
 }
 .empty {
   padding: 40px 0;
 }
 .date-group-header {
-  padding: 12px 0 6px;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding: 10px 0 6px;
   font-size: 12px;
   font-weight: 600;
-  letter-spacing: 0.5px;
-  color: var(--el-text-color-secondary);
+  color: var(--color-text-muted);
+  background: var(--color-surface);
 }
 .date-group-header:first-child {
   padding-top: 0;
 }
 .activity-item {
   display: flex;
-  gap: 10px;
-  padding: 8px 0;
-  border-bottom: 1px solid var(--el-border-color-lighter);
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--color-border-light);
 }
 .activity-icon {
   flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 30px;
-  height: 30px;
-  border-radius: 50%;
-  background: var(--el-fill-color-light);
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-subtle);
 }
 .activity-content {
   flex: 1;
@@ -603,40 +637,76 @@ onMounted(() => {
 .actor-name {
   font-size: 14px;
   font-weight: 500;
-  color: var(--el-text-color-primary);
+  color: var(--color-text);
 }
 .time {
   margin-left: auto;
   font-size: 12px;
-  color: var(--el-text-color-secondary);
+  color: var(--color-text-muted);
 }
 .activity-desc {
-  margin: 2px 0;
+  margin: 4px 0;
   font-size: 13px;
-  color: var(--el-text-color-regular);
+  line-height: 1.55;
+  color: var(--color-text-regular);
 }
 .project-link {
   display: flex;
   align-items: center;
   gap: 4px;
   font-size: 12px;
-  color: var(--el-color-primary);
+  color: var(--color-primary);
 }
 .pagination-wrapper {
   display: flex;
   justify-content: flex-end;
-  margin-top: 16px;
+  padding: 0 16px 14px;
 }
 
-/* ============================================
-   响应式：小屏日历可横向滚动
-   ============================================ */
 @media screen and (max-width: 768px) {
+  .section-bar {
+    align-items: flex-start;
+    min-height: 54px;
+    padding: 10px 12px;
+  }
+
+  .calendar-wrapper {
+    padding: 14px 12px;
+  }
+
   .calendar-scroll {
     overflow-x: auto;
   }
+
   .calendar-tooltip {
     display: none;
+  }
+
+  .toolbar {
+    align-items: center;
+  }
+
+  .type-filter {
+    width: 132px;
+  }
+
+  .timeline {
+    padding: 8px 12px 0;
+  }
+
+  .activity-header {
+    flex-wrap: wrap;
+    gap: 5px 8px;
+  }
+
+  .time {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .pagination-wrapper {
+    justify-content: center;
+    padding: 0 8px 12px;
   }
 }
 </style>

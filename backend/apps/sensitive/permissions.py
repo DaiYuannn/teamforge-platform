@@ -1,6 +1,7 @@
 """
 敏感资料模块权限
-- IsSensitiveDataOwner: 只能查看自己的敏感资料（脱敏）
+- IsInternalSensitiveMember: 内部成员可查看团队脱敏目录
+- IsSensitiveDataOwner: 安全读取开放脱敏元数据，写操作仍校验所有者/角色
 - IsSensitiveApproverOrAdmin: 审批权限
 - HasValidAccessApproval: 有有效审批才能查看明文
 所有权限必须后端真实校验
@@ -8,21 +9,43 @@
 from rest_framework.permissions import BasePermission, SAFE_METHODS
 
 
+def is_internal_sensitive_member(user):
+    """离队成员和外部协作者不能浏览团队敏感资料目录。"""
+    if not user or not user.is_authenticated or not user.is_active:
+        return False
+    if user.global_role in ['sys_admin', 'sens_approver', 'teacher']:
+        return True
+    return getattr(user, 'membership_status', 'active') in ['active', 'on_leave']
+
+
+class IsInternalSensitiveMember(BasePermission):
+    """团队内部成员可访问脱敏目录并提交自己的访问申请。"""
+
+    def has_permission(self, request, view):
+        return is_internal_sensitive_member(getattr(request, 'user', None))
+
+
 class IsSensitiveDataOwner(BasePermission):
     """
     敏感资料拥有者权限
-    - 普通成员只能查看自己上传的敏感资料（脱敏）
+    - 普通内部成员可查看所有条目的脱敏元数据
+    - 非安全方法仍只允许拥有者或审批角色
     - 管理员/敏感审批人可查看所有
     """
 
     def has_permission(self, request, view):
-        if not request.user or not request.user.is_authenticated:
-            return False
-        return True
+        return is_internal_sensitive_member(getattr(request, 'user', None))
 
     def has_object_permission(self, request, view, obj):
-        if not request.user or not request.user.is_authenticated:
+        if (
+            not request.user
+            or not request.user.is_authenticated
+            or not request.user.is_active
+        ):
             return False
+        # 安全方法只返回脱敏序列化结果，内部成员均可查看并据此申请。
+        if request.method in SAFE_METHODS:
+            return is_internal_sensitive_member(request.user)
         # 系统管理员/敏感审批人可访问所有
         if request.user.global_role in ['sys_admin', 'sens_approver']:
             return True
@@ -42,12 +65,16 @@ class IsSensitiveApproverOrAdmin(BasePermission):
     """
 
     def has_permission(self, request, view):
-        if not request.user or not request.user.is_authenticated:
+        if not request.user or not request.user.is_authenticated or not request.user.is_active:
             return False
         return request.user.global_role in ['sens_approver', 'sys_admin', 'teacher']
 
     def has_object_permission(self, request, view, obj):
-        if not request.user or not request.user.is_authenticated:
+        if (
+            not request.user
+            or not request.user.is_authenticated
+            or not request.user.is_active
+        ):
             return False
         return request.user.global_role in ['sens_approver', 'sys_admin', 'teacher']
 
@@ -59,7 +86,7 @@ class IsSensitiveDataCreator(BasePermission):
     """
 
     def has_permission(self, request, view):
-        if not request.user or not request.user.is_authenticated:
+        if not request.user or not request.user.is_authenticated or not request.user.is_active:
             return False
         if request.method in SAFE_METHODS:
             return True
@@ -74,6 +101,4 @@ class HasValidAccessApproval(BasePermission):
     """
 
     def has_permission(self, request, view):
-        if not request.user or not request.user.is_authenticated:
-            return False
-        return True
+        return is_internal_sensitive_member(getattr(request, 'user', None))

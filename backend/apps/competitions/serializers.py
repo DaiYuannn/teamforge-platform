@@ -37,8 +37,9 @@ class CompetitionListSerializer(serializers.ModelSerializer):
         model = Competition
         fields = (
             'id', 'project', 'project_name', 'name', 'comp_type',
-            'level', 'level_display', 'status', 'status_display',
+            'level', 'level_display', 'organizer', 'status', 'status_display',
             'is_promoted', 'is_awarded', 'award_level',
+            'current_stage',
             'register_date', 'defense_date', 'result_date',
             'created_at',
         )

@@ -9,6 +9,7 @@ from rest_framework.viewsets import ModelViewSet
 
 from common.response import success_response, error_response
 from common.mixins import MultiSerializerMixin, MultiPermissionMixin
+from common.project_access import scope_project_queryset, user_can_access_project
 from .discussion_models import DiscussionTopic, DiscussionReply
 from .discussion_serializers import (
     DiscussionTopicSerializer,
@@ -57,13 +58,30 @@ class DiscussionTopicViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelVi
     ordering_fields = ['created_at', 'updated_at', 'view_count', 'reply_count']
 
     def get_queryset(self):
-        """支持按项目过滤"""
-        return super().get_queryset()
+        """内部成员透明读取；外部协作者仅可见获授权项目。"""
+        return scope_project_queryset(
+            super().get_queryset(),
+            self.request.user,
+            project_lookup='project',
+        )
+
+    def check_object_permissions(self, request, obj):
+        super().check_object_permissions(request, obj)
+        write = request.method not in ('GET', 'HEAD', 'OPTIONS')
+        if not user_can_access_project(request.user, obj.project, write=write):
+            self.permission_denied(request, message='无权访问该项目讨论')
 
     def create(self, request, *args, **kwargs):
         """创建讨论主题，自动设置作者为当前用户"""
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        project = serializer.validated_data.get('project')
+        if not user_can_access_project(request.user, project, write=True):
+            return error_response(
+                message='仅项目活动成员可发起讨论',
+                code=1003,
+                http_status=status.HTTP_403_FORBIDDEN,
+            )
         topic = serializer.save(author=request.user)
         return success_response(
             DiscussionTopicSerializer(topic, context={'request': request}).data,
@@ -84,6 +102,13 @@ class DiscussionTopicViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelVi
             )
         serializer = self.get_serializer(instance, data=request.data, partial=partial)
         serializer.is_valid(raise_exception=True)
+        target_project = serializer.validated_data.get('project', instance.project)
+        if not user_can_access_project(request.user, target_project, write=True):
+            return error_response(
+                message='无权将讨论移动到该项目',
+                code=1003,
+                http_status=status.HTTP_403_FORBIDDEN,
+            )
         topic = serializer.save()
         return success_response(
             DiscussionTopicSerializer(topic, context={'request': request}).data,

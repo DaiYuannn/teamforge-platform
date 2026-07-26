@@ -35,7 +35,8 @@ class NotificationViewSet(MultiSerializerMixin, ReadOnlyModelViewSet):
     def get_queryset(self):
         """只返回当前用户的通知"""
         queryset = Notification.objects.select_related('recipient', 'sender').filter(
-            recipient=self.request.user
+            recipient=self.request.user,
+            channel=Notification.Channel.INAPP,
         )
 
         # 按是否已读筛选
@@ -129,7 +130,9 @@ class NotificationViewSet(MultiSerializerMixin, ReadOnlyModelViewSet):
         POST /api/v1/notifications/clear_all/
         """
         count, _ = Notification.objects.filter(
-            recipient=request.user, is_read=True
+            recipient=request.user,
+            channel=Notification.Channel.INAPP,
+            is_read=True,
         ).delete()
         return success_response(
             data={'count': count},
@@ -143,7 +146,9 @@ class NotificationViewSet(MultiSerializerMixin, ReadOnlyModelViewSet):
         POST /api/v1/notifications/delete_read/
         """
         count, _ = Notification.objects.filter(
-            recipient=request.user, is_read=True
+            recipient=request.user,
+            channel=Notification.Channel.INAPP,
+            is_read=True,
         ).delete()
         return success_response(
             data={'count': count},

@@ -1,325 +1,604 @@
 <template>
-  <div class="page-container">
-    <!-- 返回按钮 -->
-    <div class="detail-header">
-      <el-button :icon="ArrowLeft" @click="$router.back()">返回</el-button>
-      <h2 class="detail-title">成员详情</h2>
-    </div>
+  <div class="page-container member-detail-page">
+    <PageHeader title="成员详情" subtitle="团队成员资料、项目参与和成长记录">
+      <template #actions>
+        <el-button :icon="ArrowLeft" @click="$router.back()">返回</el-button>
+      </template>
+    </PageHeader>
 
-    <div v-loading="loading">
-      <!-- 基本信息 -->
-      <div class="card">
-        <div class="member-header">
+    <el-alert
+      v-if="loadFailed"
+      class="load-alert"
+      title="成员详情暂时无法加载"
+      type="error"
+      :closable="false"
+      show-icon
+    >
+      <template #default>
+        <el-button link type="primary" @click="loadData">重新加载</el-button>
+      </template>
+    </el-alert>
+
+    <div v-loading="loading" class="detail-content">
+      <section class="profile-surface" aria-labelledby="profile-name">
+        <header class="profile-header">
           <AvatarWithName
-            :name="member?.name || ''"
+            :name="memberName"
             :avatar-url="member?.avatar"
-            :size="64"
+            :size="58"
             :show-name="false"
           />
-          <div class="member-info">
-            <h3>{{ member?.name }}</h3>
-            <p>{{ member?.email }}</p>
+          <div class="profile-identity">
+            <div class="profile-name-row">
+              <h2 id="profile-name">{{ memberName }}</h2>
+              <el-tag :type="roleTagType(member?.global_role) as any" size="small">
+                {{ member?.global_role_display || '未设置角色' }}
+              </el-tag>
+              <el-tag :type="membershipStatusType(member?.membership_status) as any" size="small" effect="plain">
+                {{ membershipStatusLabel(member?.membership_status) }}
+              </el-tag>
+            </div>
+            <p>{{ member?.email || '未填写邮箱' }}</p>
           </div>
-        </div>
-        <el-descriptions :column="2" border class="mt-16">
-          <el-descriptions-item label="角色">{{ member?.global_role_display || '暂无数据' }}</el-descriptions-item>
-          <el-descriptions-item label="年级">{{ member?.grade || '暂无数据' }}</el-descriptions-item>
-          <el-descriptions-item label="专业">{{ member?.major || '暂无数据' }}</el-descriptions-item>
-          <el-descriptions-item label="联系方式">{{ member?.phone || '暂无数据' }}</el-descriptions-item>
-          <el-descriptions-item label="邮箱">{{ member?.email || '暂无数据' }}</el-descriptions-item>
-          <el-descriptions-item label="加入时间">{{ member?.date_joined ? formatDate(member.date_joined) : '暂无数据' }}</el-descriptions-item>
-        </el-descriptions>
-      </div>
+        </header>
 
-      <!-- 参与项目 -->
-      <div class="card mt-16">
-        <h3 class="section-title">参与项目</h3>
-        <el-table :data="member?.projects || []" border size="small">
-          <el-table-column prop="project_name" label="项目名称" min-width="200" />
-          <el-table-column prop="role_in_project_display" label="项目角色" width="150" />
+        <dl class="profile-details">
+          <div>
+            <dt>年级</dt>
+            <dd>{{ member?.grade || '-' }}</dd>
+          </div>
+          <div>
+            <dt>专业</dt>
+            <dd>{{ member?.major || '-' }}</dd>
+          </div>
+          <div>
+            <dt>联系电话</dt>
+            <dd>{{ member?.phone || '-' }}</dd>
+          </div>
+          <div>
+            <dt>加入时间</dt>
+            <dd>{{ displayDate(member?.team_joined_at || member?.date_joined) }}</dd>
+          </div>
+          <div v-if="member?.team_left_at">
+            <dt>离队时间</dt>
+            <dd>{{ displayDate(member.team_left_at) }}</dd>
+          </div>
+        </dl>
+
+        <dl class="summary-strip" aria-label="成员统计摘要">
+          <div>
+            <dt>参与项目</dt>
+            <dd>{{ member?.project_count ?? 0 }}</dd>
+          </div>
+          <div>
+            <dt>成员类型</dt>
+            <dd class="summary-text">{{ member?.is_student ? '学生' : '非学生' }}</dd>
+          </div>
+          <div>
+            <dt>贡献总数</dt>
+            <dd>{{ timelineData?.contrib_summary.total ?? 0 }}</dd>
+          </div>
+          <div>
+            <dt>待审核</dt>
+            <dd :class="{ 'is-warning': (timelineData?.contrib_summary.pending || 0) > 0 }">
+              {{ timelineData?.contrib_summary.pending ?? 0 }}
+            </dd>
+          </div>
+          <div>
+            <dt>已通过</dt>
+            <dd class="is-success">{{ timelineData?.contrib_summary.approved ?? 0 }}</dd>
+          </div>
+          <div>
+            <dt>总权重</dt>
+            <dd>{{ timelineData?.contrib_summary.total_weight ?? 0 }}</dd>
+          </div>
+        </dl>
+      </section>
+
+      <section class="detail-surface" aria-labelledby="member-projects-title">
+        <header class="section-heading">
+          <div>
+            <h2 id="member-projects-title">参与项目</h2>
+            <p>{{ member?.projects?.length || 0 }} 个项目</p>
+          </div>
+        </header>
+
+        <el-table v-if="!isMobile" :data="member?.projects || []" table-layout="fixed" size="small">
+          <template #empty>
+            <EmptyState text="暂无参与项目" compact />
+          </template>
+          <el-table-column label="项目" min-width="220">
+            <template #default="{ row }">
+              <div class="project-name-cell">
+                <strong>{{ row.project_name }}</strong>
+                <span>{{ row.project_code || '-' }}</span>
+              </div>
+            </template>
+          </el-table-column>
+          <el-table-column prop="role_in_project_display" label="项目角色" width="140" />
+          <el-table-column label="参与状态" width="110">
+            <template #default="{ row }">
+              <el-tag size="small" :type="projectMembershipStatusType(row.membership_status)">
+                {{ row.membership_status_display || projectMembershipStatusLabel(row.membership_status) }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="项目状态" width="110">
+            <template #default="{ row }">
+              <el-tag size="small" type="info">{{ row.project_status || '-' }}</el-tag>
+            </template>
+          </el-table-column>
         </el-table>
-        <el-empty v-if="!member?.projects?.length" description="暂无参与项目" :image-size="60" />
-      </div>
 
-      <!-- 统计信息 -->
-      <div class="card mt-16">
-        <h3 class="section-title">统计信息</h3>
-        <el-row :gutter="16">
-          <el-col :span="8">
-            <div class="task-stat-card">
-              <div class="stat-value">{{ member?.project_count ?? '暂无数据' }}</div>
-              <div class="stat-label">参与项目数</div>
+        <div v-else class="mobile-project-list">
+          <EmptyState v-if="!member?.projects?.length" text="暂无参与项目" compact />
+          <article v-for="project in member?.projects || []" :key="project.project_id">
+            <div>
+              <strong>{{ project.project_name }}</strong>
+              <span>{{ project.project_code || '-' }}</span>
             </div>
-          </el-col>
-          <el-col :span="8">
-            <div class="task-stat-card">
-              <div class="stat-value">{{ member?.is_student ? '是' : '否' }}</div>
-              <div class="stat-label">是否学生</div>
+            <div class="mobile-project-meta">
+              <span>{{ project.role_in_project_display || '-' }}</span>
+              <el-tag size="small" :type="projectMembershipStatusType(project.membership_status)">
+                {{ project.membership_status_display || projectMembershipStatusLabel(project.membership_status) }}
+              </el-tag>
+              <el-tag size="small" type="info">{{ project.project_status || '-' }}</el-tag>
             </div>
-          </el-col>
-          <el-col :span="8">
-            <div class="task-stat-card">
-              <div class="stat-value">{{ member?.date_joined ? formatDate(member.date_joined) : '暂无数据' }}</div>
-              <div class="stat-label">加入时间</div>
-            </div>
-          </el-col>
-        </el-row>
-      </div>
+          </article>
+        </div>
+      </section>
 
-      <!-- 贡献汇总 -->
-      <div class="card mt-16">
-        <h3 class="section-title">贡献汇总</h3>
-        <el-row :gutter="16">
-          <el-col :xs="12" :sm="6">
-            <div class="task-stat-card">
-              <div class="stat-value stat-blue">{{ timelineData?.contrib_summary.total ?? 0 }}</div>
-              <div class="stat-label">总贡献数</div>
-            </div>
-          </el-col>
-          <el-col :xs="12" :sm="6">
-            <div class="task-stat-card">
-              <div class="stat-value stat-green">{{ timelineData?.contrib_summary.approved ?? 0 }}</div>
-              <div class="stat-label">已通过</div>
-            </div>
-          </el-col>
-          <el-col :xs="12" :sm="6">
-            <div class="task-stat-card">
-              <div class="stat-value stat-orange">{{ timelineData?.contrib_summary.pending ?? 0 }}</div>
-              <div class="stat-label">待审核</div>
-            </div>
-          </el-col>
-          <el-col :xs="12" :sm="6">
-            <div class="task-stat-card">
-              <div class="stat-value stat-purple">{{ timelineData?.contrib_summary.total_weight ?? 0 }}</div>
-              <div class="stat-label">总权重</div>
-            </div>
-          </el-col>
-        </el-row>
-      </div>
+      <section class="detail-surface" aria-labelledby="growth-title">
+        <header class="section-heading">
+          <div>
+            <h2 id="growth-title">成长时间线</h2>
+            <p>{{ timelineData?.total_events || 0 }} 条记录</p>
+          </div>
+        </header>
 
-      <!-- 成长时间线 -->
-      <div class="card mt-16">
-        <h3 class="section-title">成长时间线</h3>
-        <el-timeline v-if="timelineData?.events?.length" class="growth-timeline">
-          <el-timeline-item
-            v-for="event in timelineData.events"
-            :key="event.id"
-            :timestamp="event.date ? formatDate(event.date) : '-'"
-            placement="top"
-            :color="getEventColor(event.type)"
-          >
-            <div class="growth-event">
-              <div class="growth-event-header">
-                <span class="growth-event-title">{{ event.title }}</span>
-                <el-tag
-                  size="small"
-                  effect="light"
-                  :style="{ color: getEventColor(event.type), borderColor: getEventColor(event.type) }"
-                >
-                  {{ getEventTypeLabel(event.type) }}
-                </el-tag>
-              </div>
-              <p v-if="event.description" class="growth-event-desc">{{ event.description }}</p>
-              <div v-if="event.project_name" class="growth-event-project">
-                <el-icon><Folder /></el-icon>
-                <span>{{ event.project_name }}</span>
-              </div>
-            </div>
-          </el-timeline-item>
-        </el-timeline>
-        <el-empty v-else description="暂无成长记录" :image-size="60" />
-      </div>
+        <div v-loading="timelineLoading" class="timeline-content">
+          <el-timeline v-if="timelineData?.events?.length" class="growth-timeline">
+            <el-timeline-item
+              v-for="event in timelineData.events"
+              :key="event.id"
+              :timestamp="displayDate(event.date)"
+              placement="top"
+              :color="eventColor(event.type)"
+            >
+              <article class="growth-event">
+                <header>
+                  <strong>{{ event.title }}</strong>
+                  <el-tag size="small" effect="light" :type="eventTagType(event.type) as any">
+                    {{ eventTypeLabel(event.type) }}
+                  </el-tag>
+                </header>
+                <p v-if="event.description">{{ event.description }}</p>
+                <span v-if="event.project_name" class="growth-project">
+                  <el-icon><Folder /></el-icon>
+                  {{ event.project_name }}
+                </span>
+              </article>
+            </el-timeline-item>
+          </el-timeline>
+          <EmptyState v-else-if="!timelineLoading" text="暂无成长记录" compact />
+        </div>
+      </section>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { ArrowLeft, Folder } from '@element-plus/icons-vue'
-import { getMember, getGrowthTimeline } from '@/api/members'
+import { getGrowthTimeline, getMember, type GrowthTimelineData } from '@/api/members'
 import { formatDate } from '@/utils/format'
+import { useDevice } from '@/composables/useDevice'
 import type { Member } from '@/types'
-import type { GrowthTimelineData } from '@/api/members'
 import AvatarWithName from '@/components/AvatarWithName.vue'
+import EmptyState from '@/components/EmptyState.vue'
+import PageHeader from '@/components/PageHeader.vue'
 
 const route = useRoute()
+const { isMobile } = useDevice()
 const memberId = Number(route.params.id)
-
 const loading = ref(false)
+const timelineLoading = ref(false)
+const loadFailed = ref(false)
 const member = ref<Member | null>(null)
 const timelineData = ref<GrowthTimelineData | null>(null)
 
-// 事件类型颜色映射
-const EVENT_COLOR_MAP: Record<string, string> = {
-  contribution: '#409EFF', // 蓝色
-  project_join: '#67C23A', // 绿色
-  competition: '#E6A23C', // 橙色
-  ip_contribution: '#9B59B6', // 紫色
-  task_completed: '#36CFC9', // 青色
-}
+const memberName = computed(
+  () => member.value?.name || member.value?.user_name || member.value?.username || '成员',
+)
 
-// 事件类型标签映射
 const EVENT_TYPE_LABEL: Record<string, string> = {
   contribution: '贡献',
   project_join: '加入项目',
   competition: '比赛',
   ip_contribution: '知识产权',
   task_completed: '任务完成',
+  member_status: '成员状态',
+  project_membership: '项目成员变动',
 }
 
-/** 获取事件颜色 */
-function getEventColor(type: string): string {
-  return EVENT_COLOR_MAP[type] || '#909399'
+function displayDate(value?: string | null): string {
+  return value ? formatDate(value) : '-'
 }
 
-/** 获取事件类型标签 */
-function getEventTypeLabel(type: string): string {
+function roleTagType(role?: string): string {
+  if (role === 'sys_admin') return 'danger'
+  if (role === 'teacher') return 'warning'
+  return 'info'
+}
+
+function membershipStatusLabel(value?: string): string {
+  return {
+    active: '在队',
+    on_leave: '暂离',
+    exited: '已离队',
+    external: '外部协作者',
+  }[value || 'active'] || '在队'
+}
+
+function membershipStatusType(value?: string): 'success' | 'warning' | 'danger' | 'info' {
+  if (value === 'exited') return 'danger'
+  if (value === 'on_leave') return 'warning'
+  if (value === 'external') return 'info'
+  return 'success'
+}
+
+function projectMembershipStatusLabel(value?: string): string {
+  return { active: '参与中', on_leave: '暂离', exited: '已退出' }[value || 'active'] || '参与中'
+}
+
+function projectMembershipStatusType(value?: string): 'success' | 'warning' | 'info' {
+  if (value === 'on_leave') return 'warning'
+  if (value === 'exited') return 'info'
+  return 'success'
+}
+
+function eventTypeLabel(type: string): string {
   return EVENT_TYPE_LABEL[type] || type
+}
+
+function eventTagType(type: string): string {
+  if (type === 'project_join' || type === 'task_completed') return 'success'
+  if (type === 'member_status' || type === 'project_membership') return 'warning'
+  if (type === 'competition') return 'warning'
+  if (type === 'ip_contribution') return 'info'
+  return ''
+}
+
+function eventColor(type: string): string {
+  if (type === 'project_join' || type === 'task_completed') return 'var(--color-success)'
+  if (type === 'member_status' || type === 'project_membership') return 'var(--color-warning)'
+  if (type === 'competition') return 'var(--color-warning)'
+  if (type === 'ip_contribution') return 'var(--ip-color)'
+  return 'var(--color-primary)'
+}
+
+async function loadTimeline(userId: number): Promise<void> {
+  timelineLoading.value = true
+  try {
+    timelineData.value = await getGrowthTimeline(userId)
+  } catch {
+    timelineData.value = null
+  } finally {
+    timelineLoading.value = false
+  }
 }
 
 async function loadData(): Promise<void> {
   loading.value = true
+  loadFailed.value = false
   try {
     member.value = await getMember(memberId)
-    // 加载成长时间线（需要 user_id）
-    const userId = member.value?.user
-    if (userId) {
-      loadTimeline(userId)
-    }
+    await loadTimeline(member.value.id)
   } catch {
-    // 已处理
+    loadFailed.value = true
   } finally {
     loading.value = false
   }
 }
 
-async function loadTimeline(userId: number): Promise<void> {
-  try {
-    timelineData.value = await getGrowthTimeline(userId)
-  } catch {
-    // 忽略时间线加载错误
-  }
-}
-
-onMounted(() => {
-  loadData()
-})
+onMounted(loadData)
 </script>
 
 <style lang="scss" scoped>
-.detail-header {
+.load-alert {
+  margin-bottom: 12px;
+}
+
+.detail-content {
   display: flex;
-  align-items: center;
+  flex-direction: column;
   gap: 12px;
-  margin-bottom: 16px;
-
-  .detail-title {
-    font-size: 20px;
-    font-weight: 600;
-    color: #303133;
-    margin: 0;
-  }
+  min-height: 240px;
 }
 
-.card {
-  background: #fff;
-  border-radius: 8px;
-  padding: 16px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+.profile-surface,
+.detail-surface {
+  overflow: hidden;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-md);
 }
 
-.mt-16 { margin-top: 16px; }
-
-.member-header {
+.profile-header {
   display: flex;
   align-items: center;
   gap: 16px;
-
-  .member-info {
-    h3 {
-      font-size: 20px;
-      color: #303133;
-      margin: 0 0 4px 0;
-    }
-    p {
-      font-size: 14px;
-      color: #909399;
-      margin: 0;
-    }
-  }
+  padding: 18px;
 }
 
-.section-title {
-  font-size: 16px;
-  font-weight: 600;
-  color: #303133;
-  margin-bottom: 16px;
-}
+.profile-identity {
+  min-width: 0;
 
-.task-stat-card {
-  background: #f5f7fa;
-  border-radius: 8px;
-  padding: 24px;
-  text-align: center;
-
-  .stat-value {
-    font-size: 28px;
-    font-weight: 700;
-    color: #409eff;
-
-    &.stat-blue { color: #409eff; }
-    &.stat-green { color: #67c23a; }
-    &.stat-orange { color: #e6a23c; }
-    &.stat-purple { color: #9b59b6; }
-  }
-  .stat-label {
-    font-size: 13px;
-    color: #909399;
+  > p {
     margin-top: 4px;
+    overflow: hidden;
+    color: var(--color-text-muted);
+    font-size: 13px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 }
 
-/* ==================== 成长时间线 ==================== */
-.growth-timeline {
-  padding: 8px 8px 8px 0;
+.profile-name-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
 
-  .growth-event {
-    .growth-event-header {
+  h2 {
+    overflow-wrap: anywhere;
+    color: var(--color-text);
+    font-size: 20px;
+    font-weight: 600;
+    line-height: 1.35;
+    letter-spacing: 0;
+  }
+}
+
+.profile-details {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+  padding: 16px 18px;
+  background: var(--color-surface-subtle);
+  border-top: 1px solid var(--color-border-light);
+
+  dt,
+  .summary-strip dt {
+    color: var(--color-text-muted);
+    font-size: 11px;
+  }
+
+  dd {
+    margin-top: 3px;
+    overflow-wrap: anywhere;
+    color: var(--color-text-regular);
+    font-size: 13px;
+  }
+}
+
+.summary-strip {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  border-top: 1px solid var(--color-border-light);
+
+  > div {
+    min-width: 0;
+    padding: 14px 18px;
+    border-left: 1px solid var(--color-border-light);
+
+    &:first-child {
+      border-left: 0;
+    }
+  }
+
+  dt {
+    color: var(--color-text-muted);
+    font-size: 11px;
+  }
+
+  dd {
+    margin-top: 3px;
+    color: var(--color-text);
+    font-size: 20px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+
+    &.summary-text {
+      font-size: 14px;
+    }
+
+    &.is-warning {
+      color: var(--color-warning);
+    }
+
+    &.is-success {
+      color: var(--color-success);
+    }
+  }
+}
+
+.section-heading {
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--color-border-light);
+
+  h2 {
+    color: var(--color-text);
+    font-size: 16px;
+    font-weight: 600;
+    letter-spacing: 0;
+  }
+
+  p {
+    margin-top: 2px;
+    color: var(--color-text-muted);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+.project-name-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+
+  strong {
+    color: var(--color-text);
+    font-weight: 600;
+  }
+
+  span {
+    color: var(--color-text-muted);
+    font-size: 11px;
+  }
+}
+
+.mobile-project-list {
+  padding: 0 14px;
+
+  article {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 14px 0;
+    border-bottom: 1px solid var(--color-border-light);
+
+    &:last-child {
+      border-bottom: 0;
+    }
+
+    > div:first-child {
       display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 8px;
-      margin-bottom: 4px;
+      flex-direction: column;
+      min-width: 0;
 
-      .growth-event-title {
-        font-size: 14px;
-        font-weight: 600;
-        color: #303133;
-        flex: 1;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
+      strong {
+        overflow-wrap: anywhere;
+        color: var(--color-text);
+        font-size: 13px;
+      }
+
+      span {
+        margin-top: 2px;
+        color: var(--color-text-muted);
+        font-size: 11px;
       }
     }
+  }
+}
 
-    .growth-event-desc {
-      font-size: 13px;
-      color: #606266;
-      margin: 4px 0;
-      display: -webkit-box;
-      -webkit-line-clamp: 2;
-      -webkit-box-orient: vertical;
-      overflow: hidden;
+.mobile-project-meta {
+  display: flex;
+  align-items: flex-end;
+  flex-direction: column;
+  flex: 0 0 auto;
+  gap: 5px;
+  color: var(--color-text-regular);
+  font-size: 12px;
+}
+
+.timeline-content {
+  min-height: 132px;
+  padding: 18px 18px 4px;
+}
+
+.growth-timeline {
+  padding: 2px 0 0 4px;
+}
+
+.growth-event {
+  padding-bottom: 8px;
+
+  header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+
+    strong {
+      min-width: 0;
+      overflow-wrap: anywhere;
+      color: var(--color-text);
+      font-size: 14px;
+      font-weight: 600;
+    }
+  }
+
+  > p {
+    margin-top: 6px;
+    color: var(--color-text-regular);
+    font-size: 13px;
+    line-height: 1.55;
+  }
+}
+
+.growth-project {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 7px;
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
+@media screen and (max-width: 900px) {
+  .summary-strip {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+
+    > div:nth-child(4) {
+      border-left: 0;
     }
 
-    .growth-event-project {
-      display: flex;
-      align-items: center;
-      gap: 4px;
-      font-size: 12px;
-      color: #909399;
-      margin-top: 4px;
+    > div:nth-child(n + 4) {
+      border-top: 1px solid var(--color-border-light);
+    }
+  }
+}
+
+@media screen and (max-width: 768px) {
+  .profile-header {
+    padding: 16px 14px;
+  }
+
+  .profile-details {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    padding: 14px;
+  }
+
+  .summary-strip > div {
+    padding: 12px;
+  }
+
+  .summary-strip dd {
+    font-size: 18px;
+  }
+
+  .section-heading {
+    padding: 13px 14px;
+  }
+
+  .timeline-content {
+    padding: 16px 14px 2px;
+  }
+}
+
+@media screen and (max-width: 420px) {
+  .summary-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+
+    > div:nth-child(odd) {
+      border-left: 0;
+    }
+
+    > div:nth-child(n + 3) {
+      border-top: 1px solid var(--color-border-light);
     }
   }
 }

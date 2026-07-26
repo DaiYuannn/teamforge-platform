@@ -6,6 +6,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
 from common.response import success_response, error_response
+from common.project_access import scope_project_queryset
 from .models import Competition
 from .serializers import CompetitionSerializer
 
@@ -34,7 +35,11 @@ class CompetitionComparisonView(APIView):
         if len(ids) > 10:
             return error_response(message='对比最多支持 10 个比赛')
 
-        competitions = Competition.objects.filter(id__in=ids).select_related('project')
+        competitions = scope_project_queryset(
+            Competition.objects.filter(id__in=ids).select_related('project'),
+            request.user,
+            project_lookup='project',
+        )
         competitions = sorted(competitions, key=lambda c: ids.index(c.id) if c.id in ids else 0)
 
         # 构建对比数据

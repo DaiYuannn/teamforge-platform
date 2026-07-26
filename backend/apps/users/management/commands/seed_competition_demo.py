@@ -15,16 +15,17 @@
     - 6 个核心成员，每人负责 1 个项目，同时交叉参与其他项目。
     - 6 个项目均为 5-8 人团队；每个项目至少同时参加 3 个比赛。小挑/大挑全项目覆盖，数字中国只安排 2 个项目。
     - 覆盖项目历程、人员变动、任务、经费、文件版本、贡献、排序、知识产权、敏感资料、通知、日志、导入记录。
-    - 每个项目含真实 PDF/DOCX 项目计划书；PPT 路演和 Word 路演稿为合法占位空文件。
+    - 每个项目含真实 PDF/DOCX 项目计划书、精简 Excel 数据表和两行内容的 Word 路演稿；PPT 为合法占位文件。
 """
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from pathlib import Path
 
 from django.conf import settings
 from django.core.files.base import ContentFile
+from django.core.management import call_command
 from django.core.management.base import BaseCommand
 from django.db import transaction
 from django.utils import timezone
@@ -32,8 +33,15 @@ from django.utils import timezone
 from apps.audit.models import OperationLog
 from apps.competitions.models import Competition
 from apps.contributions.models import Contribution, MemberRanking, RankingObjection
+from apps.dashboard.portal_models import PortalPublication, PortalSettings
+from apps.exports.custom_report_models import CustomReport
+from apps.exports.scheduled_report_models import ScheduledReport
+from apps.exports.scheduled_report_service import (
+    compute_next_run,
+    execute_scheduled_report,
+)
 from apps.files.models import FileAsset, FileVersion
-from apps.finance.models import FinanceBudget, FinanceExpense, FinanceReceipt
+from apps.finance.models import FinanceBudget, FinanceExpense, FinanceIncome, FinanceReceipt
 from apps.imports.models import ImportTask
 from apps.integrations.models import IntegrationConfig, IntegrationLog
 from apps.intellectual_property.models import (
@@ -314,51 +322,25 @@ def money(value: str) -> Decimal:
 
 
 class Command(BaseCommand):
-    help = '生成多项目多赛事并行的比赛型演示数据。'
+    help = '兼容入口：生成统一的完整团队演示数据。'
 
     def add_arguments(self, parser):
         parser.add_argument('--clean', action='store_true', help='先清除本命令生成的演示数据。')
         parser.add_argument('--force', action='store_true', help='跳过确认。')
 
     def handle(self, *args, **options):
-        if not options['force']:
-            confirm = input('将生成 6 个比赛项目的完整演示数据，是否继续？[y/N]: ')
-            if confirm.strip().lower() not in ('y', 'yes'):
-                self.stdout.write(self.style.WARNING('已取消。'))
-                return
-        if not options['clean'] and User.objects.filter(email__endswith='@demo.com').exists():
-            self.stdout.write(self.style.ERROR('检测到 @demo.com 演示账号已存在。请使用 --clean --force 重新生成，避免唯一约束冲突。'))
-            return
-        with transaction.atomic():
-            if options['clean']:
-                self.clean_demo_data()
-            self.users = {}
-            self.projects = []
-            self.project_by_code = {}
-            self.project_members = {}
-            self.files = {}
-            self.expenses = []
-            self.ip_apps = []
-            self.create_users()
-            self.create_projects_and_members()
-            self.create_project_histories()
-            self.create_competitions()
-            self.create_tasks()
-            self.create_finance()
-            self.create_files_and_versions()
-            self.create_skills_and_work_schedules()
-            self.create_contributions_and_rankings()
-            self.create_ip_flow()
-            self.create_sensitive_flow()
-            self.create_notifications()
-            self.create_import_tasks()
-            self.create_operation_logs()
-            self.create_integration_configs()
-            self.create_integration_logs()
-            self.create_user_preferences()
-            self.create_assistant_skills()
-            self.post_adjust_data()
-        self.print_summary()
+        self.stdout.write(self.style.WARNING(
+            'seed_competition_demo 已合并到 seed_demo_data；'
+            '本命令将生成同一份完整演示数据。'
+        ))
+        call_command(
+            'seed_demo_data',
+            clean=options['clean'],
+            force=options['force'],
+            stdout=self.stdout,
+            stderr=self.stderr,
+            verbosity=options.get('verbosity', 1),
+        )
 
     def backend_dir(self) -> Path:
         return Path(__file__).resolve().parents[4]
@@ -377,6 +359,15 @@ class Command(BaseCommand):
     def save_asset(self, project: Project, kind: str, display_name: str, level: str, uploader: User,
                    subdir: str, suffix: str, content_type: str, version: int = 1) -> FileAsset:
         filename, data = self.get_asset_bytes(subdir, project.code, suffix)
+        return self.save_generated_asset(
+            project, kind, display_name, level, uploader,
+            filename, data, content_type, version,
+        )
+
+    def save_generated_asset(self, project: Project, kind: str, display_name: str, level: str,
+                             uploader: User, filename: str, data: bytes, content_type: str,
+                             version: int = 1) -> FileAsset:
+        """保存命令生成的真实附件，并登记到演示文件索引。"""
         asset = FileAsset.objects.create(
             project=project,
             name=display_name,
@@ -389,6 +380,48 @@ class Command(BaseCommand):
         asset.file.save(filename, ContentFile(data), save=True)
         self.files[(project.code, kind)] = asset
         return asset
+
+    @staticmethod
+    def build_minimal_pdf(lines: list[str]) -> bytes:
+        """生成仅含少量 ASCII 文本、无需系统 PDF 依赖的有效单页 PDF。"""
+        def escape_pdf_text(value: str) -> str:
+            return value.replace('\\', '\\\\').replace('(', '\\(').replace(')', '\\)')
+
+        text_commands = ['BT', '/F1 14 Tf', '72 760 Td']
+        for index, line in enumerate(lines):
+            if index:
+                text_commands.append('0 -24 Td')
+            text_commands.append(f'({escape_pdf_text(line)}) Tj')
+        text_commands.append('ET')
+        stream = '\n'.join(text_commands).encode('ascii', errors='replace')
+        objects = [
+            b'<< /Type /Catalog /Pages 2 0 R >>',
+            b'<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+            (
+                b'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] '
+                b'/Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>'
+            ),
+            b'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+            b'<< /Length ' + str(len(stream)).encode('ascii') + b' >>\nstream\n'
+            + stream + b'\nendstream',
+        ]
+        pdf = bytearray(b'%PDF-1.4\n%\xe2\xe3\xcf\xd3\n')
+        offsets = [0]
+        for number, obj in enumerate(objects, 1):
+            offsets.append(len(pdf))
+            pdf.extend(f'{number} 0 obj\n'.encode('ascii'))
+            pdf.extend(obj)
+            pdf.extend(b'\nendobj\n')
+        xref_offset = len(pdf)
+        pdf.extend(f'xref\n0 {len(objects) + 1}\n'.encode('ascii'))
+        pdf.extend(b'0000000000 65535 f \n')
+        for offset in offsets[1:]:
+            pdf.extend(f'{offset:010d} 00000 n \n'.encode('ascii'))
+        pdf.extend(
+            f'trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\n'
+            f'startxref\n{xref_offset}\n%%EOF\n'.encode('ascii')
+        )
+        return bytes(pdf)
 
     def create_users(self):
         U = User.GlobalRole
@@ -552,22 +585,49 @@ class Command(BaseCommand):
             bonus = money(str(8000 + idx * 2500))
             other = money(str(2000 + idx * 700))
             amounts = [money(str(450 + idx * 90)), money(str(780 + idx * 120)), money(str(1260 + idx * 210)), money(str(1680 + idx * 180)), money(str(620 + idx * 75))]
-            used = sum(amounts, money('0'))
-            FinanceBudget.objects.create(project=p, bonus_amount=bonus, other_income=other, used_amount=used,
-                                         pending_reimbursement=money(str(500 + idx * 80)),
-                                         status=FinanceBudget.Status.WARNING if idx in (4, 5) else FinanceBudget.Status.NORMAL,
-                                         period='2026春季')
+            FinanceIncome.objects.create(
+                project=p, title=f'{p.code} 比赛奖金', amount=bonus,
+                income_type=FinanceIncome.IncomeType.BONUS,
+                income_date=date(2026, 2, min(20, 5 + idx)),
+                source='赛事奖金', reference_number=f'DEMO-BONUS-{p.code}',
+                recorded_by=p.leader,
+            )
+            FinanceIncome.objects.create(
+                project=p, title=f'{p.code} 项目配套经费', amount=other,
+                income_type=FinanceIncome.IncomeType.GRANT,
+                income_date=date(2026, 3, min(20, 5 + idx)),
+                source='团队项目经费', reference_number=f'DEMO-GRANT-{p.code}',
+                recorded_by=p.leader,
+            )
             for j, ((cat, title), amount) in enumerate(zip(categories, amounts), 1):
+                reimbursement_status = (
+                    FinanceExpense.ReimbursementStatus.PAID if j <= 3
+                    else FinanceExpense.ReimbursementStatus.APPROVED if j == 4
+                    else FinanceExpense.ReimbursementStatus.PENDING
+                )
+                spender = self.project_members[p.code][j % len(self.project_members[p.code])]
                 expense = FinanceExpense.objects.create(
-                    project=p, title=f'{p.code} {title}', amount=amount, spender=self.project_members[p.code][j % len(self.project_members[p.code])],
+                    project=p, title=f'{p.code} {title}', amount=amount, spender=spender,
                     expense_date=date(2026, min(6, 2 + j), min(27, 3 + idx + j)), category=cat,
-                    purpose=f'{p.name} 参赛准备支出：{title}', reviewer=self.users['teacher1'],
+                    purpose=f'{p.name} 参赛准备支出：{title}',
+                    reimbursement_status=reimbursement_status,
+                    applied_by=spender, applied_at=timezone.now() - timedelta(days=12 - j),
+                    reviewer=self.users['teacher1'] if reimbursement_status != FinanceExpense.ReimbursementStatus.PENDING else None,
+                    reviewed_at=timezone.now() - timedelta(days=8 - j) if reimbursement_status != FinanceExpense.ReimbursementStatus.PENDING else None,
+                    review_opinion='用途与票据核验通过。' if reimbursement_status != FinanceExpense.ReimbursementStatus.PENDING else '',
+                    paid_by=self.users['teacher1'] if reimbursement_status == FinanceExpense.ReimbursementStatus.PAID else None,
+                    paid_at=timezone.now() - timedelta(days=4 - j) if reimbursement_status == FinanceExpense.ReimbursementStatus.PAID else None,
+                    payment_method='银行转账' if reimbursement_status == FinanceExpense.ReimbursementStatus.PAID else '',
+                    payment_reference=f'DEMO-PAY-{p.code}-{j}' if reimbursement_status == FinanceExpense.ReimbursementStatus.PAID else '',
                 )
                 self.expenses.append(expense)
                 if j <= 2:
                     filename, data = self.get_asset_bytes('receipts', p.code, f'receipt_{j}.jpg')
                     rec = FinanceReceipt.objects.create(expense=expense, uploaded_by=expense.spender)
                     rec.file.save(filename, ContentFile(data), save=True)
+            budget = FinanceBudget.objects.filter(project=p).order_by('-updated_at').first()
+            budget.period = '2026春季'
+            budget.save(update_fields=['period', 'updated_at'])
 
     def create_files_and_versions(self):
         for p in self.projects:
@@ -576,10 +636,16 @@ class Command(BaseCommand):
                                         'project_plans', '项目计划书.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', version=2)
             plan_pdf = self.save_asset(p, 'plan_pdf', f'{p.code} 项目计划书 PDF v2.0', FileAsset.Level.PUBLIC, leader,
                                        'project_plans', '项目计划书.pdf', 'application/pdf', version=2)
+            summary_xlsx = self.save_asset(
+                p, 'summary_xlsx', f'{p.code} 项目数据简表 XLSX',
+                FileAsset.Level.INTERNAL, leader, 'project_tables',
+                '项目数据简表.xlsx',
+                'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            )
             ppt = self.save_asset(p, 'roadshow_ppt', f'{p.code} 路演 PPT 占位文件', FileAsset.Level.INTERNAL, leader,
                                   'roadshow_placeholders', '路演PPT_占位.pptx', 'application/vnd.openxmlformats-officedocument.presentationml.presentation', version=1)
-            script = self.save_asset(p, 'roadshow_script', f'{p.code} 路演稿 Word 占位文件', FileAsset.Level.INTERNAL, leader,
-                                     'roadshow_placeholders', '路演稿_占位.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', version=1)
+            script = self.save_asset(p, 'roadshow_script', f'{p.code} 路演稿 Word 演示文件', FileAsset.Level.INTERNAL, leader,
+                                     'roadshow_placeholders', '路演稿_演示.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', version=1)
             for asset, suffix, note in [
                 (plan_docx, '项目计划书.docx', '根据指导老师意见补充市场规模和竞品分析'),
                 (plan_pdf, '项目计划书.pdf', '导出 PDF 版用于正式提交'),
@@ -592,12 +658,107 @@ class Command(BaseCommand):
             OperationLog.objects.create(operator=leader, operation_type=OperationLog.OperationType.UPDATE, module='files', object_type='FileAsset',
                                         object_id=str(plan_docx.id), request_method='PATCH', request_path=f'/api/files/{plan_docx.id}/', response_status=200,
                                         description=f'【演示】{p.name} 文件修改：项目计划书从 v1 修订为 v2，{note if "note" in locals() else "完成版本归档"}。',
-                                        request_data={'file': plan_docx.name, 'version': 2})
-            # 一份敏感级别的签名页占位，用于敏感资料附件。
+                                        request_data={
+                                            'file': plan_docx.name,
+                                            'version': 2,
+                                            'related_spreadsheet': summary_xlsx.name,
+                                        })
+            # 一份敏感级别的简版签名页，用于敏感资料附件流程演示。
+            signature_pdf = self.build_minimal_pdf([
+                'DEMO TEAM SIGNATURE PAGE',
+                f'Project: {p.code}',
+            ])
             signature = FileAsset.objects.create(project=p, name=f'{p.code} 团队成员签名页（敏感）', level=FileAsset.Level.SENSITIVE,
-                                                 size=len(b'signature placeholder'), content_type='application/pdf', uploader=leader, version=1)
-            signature.file.save(f'{p.code}_signature_sensitive.pdf', ContentFile(b'%PDF-1.4\n% demo sensitive signature placeholder\n%%EOF'), save=True)
+                                                 size=len(signature_pdf), content_type='application/pdf', uploader=leader, version=1)
+            signature.file.save(f'{p.code}_signature_sensitive.pdf', ContentFile(signature_pdf), save=True)
             self.files[(p.code, 'signature')] = signature
+
+    def create_scheduled_reports(self):
+        """创建覆盖三种格式、三种频率和不同账户的报表演示计划。"""
+        definitions = [
+            {
+                'name': '每日项目经营概览',
+                'description': '每日汇总项目状态与阶段分布，供系统管理员查看。',
+                'source': 'project',
+                'group_by': 'status',
+                'creator': 'admin',
+                'recipients': ['admin', 'teacher1'],
+                'frequency': ScheduledReport.Frequency.DAILY,
+                'format': ScheduledReport.FileFormat.XLSX,
+                'execution_time': time(8, 30),
+                'run_demo': True,
+            },
+            {
+                'name': '每周任务交付报告',
+                'description': '每周一汇总任务进度、逾期项和项目分布。',
+                'source': 'task',
+                'group_by': 'project',
+                'creator': 'teacher1',
+                'recipients': ['teacher1', 'leader1', 'leader2'],
+                'frequency': ScheduledReport.Frequency.WEEKLY,
+                'format': ScheduledReport.FileFormat.DOCX,
+                'execution_time': time(9, 0),
+                'weekday': 0,
+                'run_demo': True,
+            },
+            {
+                'name': '每月经费执行报告',
+                'description': '每月汇总各项目经费支出及类别结构。',
+                'source': 'finance',
+                'group_by': 'project',
+                'creator': 'leader6',
+                'recipients': ['leader6', 'teacher2'],
+                'frequency': ScheduledReport.Frequency.MONTHLY,
+                'format': ScheduledReport.FileFormat.PDF,
+                'execution_time': time(10, 0),
+                'day_of_month': 5,
+                'run_demo': True,
+            },
+            {
+                'name': '每周比赛推进简报',
+                'description': '按比赛级别展示参赛、晋级和获奖进展。',
+                'source': 'competition',
+                'group_by': 'level',
+                'creator': 'leader1',
+                'recipients': ['leader1', 'teacher1'],
+                'frequency': ScheduledReport.Frequency.WEEKLY,
+                'format': ScheduledReport.FileFormat.XLSX,
+                'execution_time': time(16, 30),
+                'weekday': 4,
+            },
+        ]
+        for definition in definitions:
+            creator = self.users[definition['creator']]
+            report = CustomReport.objects.create(
+                name=definition['name'],
+                description=definition['description'],
+                report_type=definition['source'],
+                config={
+                    'data_source': definition['source'],
+                    'group_by': definition['group_by'],
+                    'chart_type': 'table',
+                },
+                created_by=creator,
+                is_scheduled=True,
+            )
+            schedule = ScheduledReport.objects.create(
+                report=report,
+                created_by=creator,
+                frequency=definition['frequency'],
+                file_format=definition['format'],
+                execution_time=definition['execution_time'],
+                weekday=definition.get('weekday', 0),
+                day_of_month=definition.get('day_of_month', 1),
+                timezone='Asia/Shanghai',
+                is_active=True,
+            )
+            schedule.recipients.set([
+                self.users[key] for key in definition['recipients']
+            ])
+            schedule.next_run = compute_next_run(schedule)
+            schedule.save(update_fields=['next_run'])
+            if definition.get('run_demo'):
+                execute_scheduled_report(schedule, user=creator)
 
     def create_skills_and_work_schedules(self):
         skill_objs = {name: SkillTag.objects.create(name=name) for name in SKILLS}
@@ -737,20 +898,23 @@ class Command(BaseCommand):
                                     recipient=None, sender=self.users['admin'])
 
     def create_import_tasks(self):
-        ImportTask.objects.create(module=ImportTask.Module.PROJECTS, file_path='seed_assets/competition_demo_files/imports/projects_demo.xlsx',
+        import_dir = self.assets_dir() / 'imports'
+        projects_file = str(import_dir / 'projects_demo.xlsx')
+        finance_file = str(import_dir / 'finance_demo_with_errors.xlsx')
+        ImportTask.objects.create(module=ImportTask.Module.PROJECTS, file_path=projects_file,
                                   status=ImportTask.Status.CONFIRMED, field_mapping={'项目名称': 'name', '项目编号': 'code', '负责人邮箱': 'leader'},
                                   preview_data=[{'项目编号': p.code, '项目名称': p.name} for p in self.projects[:3]], snapshot=[p.id for p in self.projects],
                                   total_rows=6, valid_rows=6, error_rows=0, error_details={}, created_by=self.users['admin'])
-        ImportTask.objects.create(module=ImportTask.Module.FINANCE, file_path='seed_assets/competition_demo_files/imports/finance_demo_with_errors.xlsx',
+        ImportTask.objects.create(module=ImportTask.Module.FINANCE, file_path=finance_file,
                                   status=ImportTask.Status.PREVIEWED, field_mapping={'支出标题': 'title', '金额': 'amount', '类别': 'category'},
                                   preview_data=[{'支出标题': '打印费', '金额': '480.00'}, {'支出标题': '差旅费', '金额': '待确认'}], snapshot=[],
-                                  total_rows=12, valid_rows=10, error_rows=2, error_details={'4': '金额不能为空', '9': '类别无法识别'}, created_by=self.users['leader6'])
+                                  total_rows=2, valid_rows=1, error_rows=1, error_details={'2': '金额格式不正确'}, created_by=self.users['leader6'])
 
     def create_operation_logs(self):
         actions = [
             (OperationLog.OperationType.LOGIN, 'users', '登录系统并进入 Dashboard'),
             (OperationLog.OperationType.UPDATE, 'projects', '更新项目阶段和负责人说明'),
-            (OperationLog.OperationType.UPLOAD, 'files', '上传项目计划书和路演占位文件'),
+            (OperationLog.OperationType.UPLOAD, 'files', '上传项目计划书和路演演示文件'),
             (OperationLog.OperationType.APPROVE, 'contributions', '审核成员贡献记录'),
             (OperationLog.OperationType.EXPORT, 'finance', '导出经费公开台账'),
             (OperationLog.OperationType.VIEW_SENSITIVE, 'sensitive', '审批后限时查看敏感资料'),
@@ -879,6 +1043,35 @@ class Command(BaseCommand):
             dashboard_layout={'cards': ['stats', 'tasks']},
         )
 
+        configured_users = {'admin', 'leader1', 'teacher1', 'leader4'}
+        preferred_themes = {
+            'teacher2': 'green',
+            'approver': 'orange',
+            'leader2': 'blue',
+            'leader3': 'purple',
+            'leader5': 'green',
+            'leader6': 'blue',
+        }
+        custom_primary_colors = {
+            # 留一个非预设色账户，便于演示“任意主色 + 切换账户自动恢复”。
+            'leader6': '#245c8a',
+        }
+        theme_cycle = ('blue', 'green', 'purple', 'orange')
+        for key, user in self.users.items():
+            if key in configured_users:
+                continue
+            suffix = ''.join(character for character in key if character.isdigit())
+            cycle_index = int(suffix) - 1 if suffix else user.pk
+            UserPreference.objects.create(
+                user=user,
+                theme_color=preferred_themes.get(
+                    key, theme_cycle[cycle_index % len(theme_cycle)]
+                ),
+                primary_color=custom_primary_colors.get(
+                    key, UserPreference.DEFAULT_PRIMARY_COLOR
+                ),
+            )
+
     def create_assistant_skills(self):
         """为 member1~8 分配技能标签（原脚本仅 leader 有技能）"""
         skill_objs = {s.name: s for s in SkillTag.objects.filter(name__in=SKILLS)}
@@ -929,11 +1122,75 @@ class Command(BaseCommand):
                 overdue_task.overdue_reminded = True
                 overdue_task.save(update_fields=['overdue_reminded'])
 
+    def create_portal_publications(self):
+        """为纯演示账号生成明确的逐项公开决策和成员授权。"""
+        PortalSettings.objects.get_or_create(
+            singleton_key='default',
+            defaults={
+                'team_name': '创新实践团队',
+                'tagline': '项目实践 · 赛事成长 · 成果沉淀',
+                'contact_email': 'teacher1@demo.com',
+                'join_title': '加入创新实践团队',
+                'join_message': '欢迎愿意持续参与项目、赛事和成果整理的同学联系我们。',
+                'updated_by': self.users['teacher1'],
+            },
+        )
+        for index, project in enumerate(self.projects):
+            PortalPublication.objects.update_or_create(
+                content_type=PortalPublication.ContentType.PROJECT,
+                object_id=project.id,
+                defaults={
+                    'is_public': True,
+                    'is_featured': index < 3,
+                    'display_order': index,
+                    'updated_by': self.users['teacher1'],
+                },
+            )
+        for index, application in enumerate(self.ip_apps):
+            PortalPublication.objects.update_or_create(
+                content_type=PortalPublication.ContentType.IP_APPLICATION,
+                object_id=application.id,
+                defaults={
+                    'is_public': application.status in ('authorized', 'archived'),
+                    'is_featured': index == 0,
+                    'display_order': index,
+                    'updated_by': self.users['teacher1'],
+                },
+            )
+        public_members = [
+            self.users[key]
+            for key in ('leader1', 'leader2', 'leader3', 'leader4', 'leader5', 'leader6')
+        ]
+        for index, member in enumerate(public_members):
+            PortalPublication.objects.update_or_create(
+                content_type=PortalPublication.ContentType.MEMBER,
+                object_id=member.id,
+                defaults={
+                    'is_public': True,
+                    'is_featured': index < 3,
+                    'member_consent': True,
+                    'display_order': index,
+                    'updated_by': member,
+                },
+            )
+
     def clean_demo_data(self):
         self.stdout.write(self.style.WARNING('清理本命令生成的演示数据...'))
         # v1.2 新增数据清理
         IntegrationLog.objects.filter(provider__in=['wecom', 'webhook', 'email']).delete()
         IntegrationConfig.objects.filter(created_by__email__endswith='@demo.com').delete()
+        demo_reports = CustomReport.objects.filter(created_by__email__endswith='@demo.com')
+        for execution in (
+            ScheduledReport.objects.filter(report__in=demo_reports)
+            .prefetch_related('executions')
+            .values_list('executions__file', flat=True)
+        ):
+            if execution:
+                try:
+                    (Path(settings.MEDIA_ROOT) / execution).unlink(missing_ok=True)
+                except OSError:
+                    pass
+        demo_reports.delete()
         UserPreference.objects.filter(user__email__endswith='@demo.com').delete()
         demo_projects = Project.objects.filter(code__startswith='DEMO-2026-')
         legacy_demo_projects = Project.objects.filter(
@@ -943,9 +1200,25 @@ class Command(BaseCommand):
         demo_projects = demo_projects | legacy_demo_projects
         demo_project_ids = list(demo_projects.values_list('id', flat=True))
         ip_apps = IntellectualPropertyApplication.objects.filter(application_code__startswith='IP-DEMO-')
+        demo_user_ids = list(
+            User.objects.filter(email__endswith='@demo.com').values_list('id', flat=True)
+        )
+        PortalPublication.objects.filter(
+            content_type=PortalPublication.ContentType.PROJECT,
+            object_id__in=demo_project_ids,
+        ).delete()
+        PortalPublication.objects.filter(
+            content_type=PortalPublication.ContentType.IP_APPLICATION,
+            object_id__in=ip_apps.values_list('id', flat=True),
+        ).delete()
+        PortalPublication.objects.filter(
+            content_type=PortalPublication.ContentType.MEMBER,
+            object_id__in=demo_user_ids,
+        ).delete()
         OperationLog.objects.filter(description__contains='【演示】').delete()
         Notification.objects.filter(title__startswith='【演示】').delete()
         ImportTask.objects.filter(file_path__contains='competition_demo_files').delete()
+        ImportTask.objects.filter(file_path__contains=str(Path('imports') / 'demo')).delete()
         IPObjection.objects.filter(application__in=ip_apps).delete()
         IPMaterialVersion.objects.filter(application__in=ip_apps).delete()
         IPReturnRecord.objects.filter(application__in=ip_apps).delete()
@@ -958,6 +1231,7 @@ class Command(BaseCommand):
         SensitiveData.objects.filter(project_id__in=demo_project_ids).delete()
         FinanceReceipt.objects.filter(expense__project_id__in=demo_project_ids).delete()
         FinanceExpense.objects.filter(project_id__in=demo_project_ids).delete()
+        FinanceIncome.objects.filter(project_id__in=demo_project_ids).delete()
         FinanceBudget.objects.filter(project_id__in=demo_project_ids).delete()
         TaskLog.objects.filter(task__project_id__in=demo_project_ids).delete()
         Task.objects.filter(project_id__in=demo_project_ids).delete()
@@ -981,6 +1255,6 @@ class Command(BaseCommand):
         self.stdout.write('  敏感审批：approver@demo.com / approver123456')
         self.stdout.write('  六个核心负责人：leader1~leader6@demo.com / leader123456')
         self.stdout.write('  普通协作成员：member1~member8@demo.com / member123456')
-        self.stdout.write('数据覆盖：6 项目（001 已获奖阶段）、22 条参赛记录、小挑/大挑全覆盖、数字中国 2 组、项目历程、人员变动、方向变化、文件版本、贡献排序、IP、敏感资料、通知、日志、导入记录。')
-        self.stdout.write('v1.2 新增：3 条集成配置（企业微信+Webhook+邮件）、8 条集成日志、4 条用户偏好（蓝/绿/紫/橙主题）、8 名协作成员技能、2 个逾期任务已提醒标记。')
+        self.stdout.write('数据覆盖：6 项目（001 已获奖阶段）、22 条参赛记录、小挑/大挑全覆盖、数字中国 2 组、项目历程、人员变动、方向变化、真实 Word/PDF/Excel 附件、文件版本、贡献排序、IP、敏感资料、通知、日志、导入记录。')
+        self.stdout.write('v1.3 新增：4 个定时报表计划、Excel/Word/PDF 执行历史、实时通知演示、3 条集成配置、全部演示账号的账户级主题偏好，以及可下载的 PDF/Excel/Word 演示附件。')
         self.stdout.write(self.style.WARNING('下一步：重新跑 python manage.py check、登录前端，用 Dashboard/项目/比赛/经费/移动端截图验收。'))

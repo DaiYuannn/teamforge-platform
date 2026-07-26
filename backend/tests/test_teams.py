@@ -5,7 +5,7 @@ N40: 多团队支持测试
 """
 import pytest
 
-from apps.common.team_models import Team, TeamMember
+from apps.common.team_models import Team, TeamMember, TeamMembershipEvent
 
 
 def extract_data(response):
@@ -101,13 +101,18 @@ class TestTeam:
         assert any(m['user'] == u.id for m in data)
 
     def test_remove_member(self, member_client, make_user):
-        """移除成员"""
+        """成员离队保留关系和历史"""
         team = Team.objects.create(name='移除团队', owner=member_client.user)
         u = make_user(email='rm@test.com')
         m = TeamMember.objects.create(team=team, user=u, role='member')
         resp = member_client.delete(f'/api/v1/teams/{team.id}/members/{m.id}/')
         assert resp.status_code == 200
-        assert not TeamMember.objects.filter(id=m.id).exists()
+        m.refresh_from_db()
+        assert m.status == TeamMember.Status.EXITED
+        assert m.left_at is not None
+        assert TeamMembershipEvent.objects.filter(
+            membership=m, event_type='exited'
+        ).exists()
 
     def test_member_count(self, member_client, make_user):
         """成员计数"""
@@ -128,6 +133,51 @@ class TestTeam:
         }, format='json')
         assert resp.status_code in (200, 201), resp.json()
         assert TeamMember.objects.filter(team=team, user=u, role='admin').exists()
+
+    def test_non_manager_cannot_add_team_member(
+        self, member_client, make_user, api_client
+    ):
+        owner = make_user(email='team-owner@test.com')
+        team = Team.objects.create(name='权限团队', owner=owner)
+        TeamMember.objects.create(team=team, user=member_client.user, role='member')
+        candidate = make_user(email='team-candidate@test.com')
+
+        resp = member_client.post(
+            f'/api/v1/teams/{team.id}/members/',
+            {'user': candidate.id, 'role': 'member'},
+            format='json',
+        )
+
+        assert resp.status_code == 403
+        assert not TeamMember.objects.filter(team=team, user=candidate).exists()
+
+    def test_transfer_owner_preserves_both_memberships(self, member_client, make_user):
+        team = Team.objects.create(name='交接团队', owner=member_client.user)
+        old_owner = TeamMember.objects.create(
+            team=team, user=member_client.user, role=TeamMember.Role.OWNER
+        )
+        successor = make_user(email='team-successor@test.com')
+        successor_membership = TeamMember.objects.create(
+            team=team, user=successor, role=TeamMember.Role.MEMBER
+        )
+
+        resp = member_client.post(
+            f'/api/v1/teams/{team.id}/transfer-owner/',
+            {'member_id': successor_membership.id, 'reason': '届满交接'},
+            format='json',
+        )
+
+        assert resp.status_code == 200, resp.json()
+        team.refresh_from_db()
+        old_owner.refresh_from_db()
+        successor_membership.refresh_from_db()
+        assert team.owner_id == successor.id
+        assert old_owner.role == TeamMember.Role.ADMIN
+        assert successor_membership.role == TeamMember.Role.OWNER
+        assert TeamMembershipEvent.objects.filter(
+            membership=successor_membership,
+            event_type='role_changed',
+        ).exists()
 
     def test_unauthenticated_blocked(self, api_client):
         """未认证不可访问"""

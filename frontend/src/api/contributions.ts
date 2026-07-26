@@ -1,4 +1,6 @@
 import request from './request'
+import { get } from './request'
+import type { Contribution, PaginatedResponse } from '@/types'
 
 // 贡献记录模块基础路径
 const BASE = '/contributions'
@@ -22,11 +24,40 @@ export const deleteContribution = (id: number) => request.delete(`${BASE}/contri
 /** 审核贡献记录 */
 export const reviewContribution = (id: number, data: any) => request.patch(`${BASE}/contributions/${id}/review/`, data)
 
-/** 获取我的贡献记录 */
-export const getMyContributions = () => request.get(`${BASE}/contributions/my_contributions/`)
+async function getAllContributionPages(
+  path: string,
+  params: Record<string, unknown> = {},
+): Promise<Contribution[]> {
+  const pageSize = 100
+  const firstPage = await get<PaginatedResponse<Contribution> | Contribution[]>(path, {
+    ...params,
+    page: 1,
+    page_size: pageSize,
+  })
+  if (Array.isArray(firstPage)) return firstPage
 
-/** 获取待我审核的贡献记录 */
-export const getPendingReview = () => request.get(`${BASE}/contributions/pending_review/`)
+  const pageCount = Math.ceil(firstPage.count / pageSize)
+  if (pageCount <= 1) return firstPage.results
+
+  const remainingPages = await Promise.all(
+    Array.from({ length: pageCount - 1 }, (_, index) =>
+      get<PaginatedResponse<Contribution>>(path, {
+        ...params,
+        page: index + 2,
+        page_size: pageSize,
+      }),
+    ),
+  )
+  return [firstPage, ...remainingPages].flatMap((page) => page.results)
+}
+
+/** 获取我的全部贡献记录 */
+export const getMyContributions = (params: Record<string, unknown> = {}) =>
+  getAllContributionPages(`${BASE}/contributions/my_contributions/`, params)
+
+/** 获取待我审核的全部贡献记录 */
+export const getPendingReview = (params: Record<string, unknown> = {}) =>
+  getAllContributionPages(`${BASE}/contributions/pending_review/`, params)
 
 /** 按项目获取贡献记录 */
 export const getContributionsByProject = (projectId: number) => request.get(`${BASE}/contributions/by_project/`, { params: { project: projectId } })
@@ -39,16 +70,19 @@ export const getContributionsByProject = (projectId: number) => request.get(`${B
 export const getRankings = (params?: any) => request.get(`${BASE}/rankings/`, { params })
 
 /** 生成排序（项目负责人） */
-export const generateRanking = (projectId: number) => request.post(`${BASE}/rankings/generate/`, { project: projectId })
+export const generateRanking = (projectId: number, period?: string) =>
+  request.post(`${BASE}/rankings/generate/`, { project: projectId, period })
 
 /** 更新排名（拖拽或输入修改） */
 export const updateRank = (id: number, data: any) => request.patch(`${BASE}/rankings/${id}/update_rank/`, data)
 
 /** 确认排序（老师） */
-export const confirmRanking = (projectId: number) => request.post(`${BASE}/rankings/confirm/`, { project: projectId })
+export const confirmRanking = (projectId: number, period?: string) =>
+  request.post(`${BASE}/rankings/confirm/`, { project: projectId, period })
 
 /** 按项目获取排序 */
-export const getRankingsByProject = (projectId: number) => request.get(`${BASE}/rankings/by_project/`, { params: { project: projectId } })
+export const getRankingsByProject = (projectId: number, period?: string) =>
+  request.get(`${BASE}/rankings/by_project/`, { params: { project: projectId, period } })
 
 // ============================================
 // 排序异议 API

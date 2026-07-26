@@ -87,6 +87,7 @@ class MemberListSerializer(serializers.ModelSerializer):
         fields = (
             'id', 'username', 'name', 'email', 'phone', 'avatar',
             'global_role', 'global_role_display', 'is_student', 'grade', 'major',
+            'membership_status', 'team_joined_at', 'team_left_at', 'is_active',
         )
         read_only_fields = fields
 
@@ -104,6 +105,8 @@ class MemberSerializer(serializers.ModelSerializer):
         fields = (
             'id', 'username', 'name', 'email', 'phone', 'avatar',
             'global_role', 'global_role_display', 'is_student', 'grade', 'major',
+            'membership_status', 'team_joined_at', 'team_left_at', 'exit_reason',
+            'handover_to', 'handover_notes', 'is_active',
             'projects', 'project_count', 'date_joined',
         )
         read_only_fields = fields
@@ -121,6 +124,10 @@ class MemberSerializer(serializers.ModelSerializer):
                 'project_code': project.code,
                 'role_in_project': membership.role_in_project,
                 'role_in_project_display': membership.get_role_in_project_display(),
+                'membership_status': membership.status,
+                'membership_status_display': membership.get_status_display(),
+                'exited_at': membership.exited_at,
+                'exit_reason': membership.exit_reason,
                 'project_status': project.status,
             })
         return result
@@ -128,7 +135,9 @@ class MemberSerializer(serializers.ModelSerializer):
     def get_project_count(self, obj):
         """获取用户参与的项目数量"""
         from apps.projects.models import ProjectMember
-        return ProjectMember.objects.filter(user=obj).count()
+        return ProjectMember.objects.filter(
+            user=obj, status=ProjectMember.Status.ACTIVE
+        ).count()
 
 
 class MemberDetailSerializer(serializers.ModelSerializer):
@@ -155,6 +164,8 @@ class MemberDetailSerializer(serializers.ModelSerializer):
         fields = (
             'id', 'username', 'name', 'email', 'phone', 'avatar',
             'global_role', 'global_role_display', 'is_student', 'grade', 'major',
+            'membership_status', 'team_joined_at', 'team_left_at', 'exit_reason',
+            'handover_to', 'handover_notes', 'is_active',
             'skills', 'latest_work_schedule',
             'projects', 'project_count',
             'tasks', 'task_count',
@@ -187,6 +198,10 @@ class MemberDetailSerializer(serializers.ModelSerializer):
                 'project_code': project.code,
                 'role_in_project': membership.role_in_project,
                 'role_in_project_display': membership.get_role_in_project_display(),
+                'membership_status': membership.status,
+                'membership_status_display': membership.get_status_display(),
+                'exited_at': membership.exited_at,
+                'exit_reason': membership.exit_reason,
                 'project_status': project.status,
             })
         return result
@@ -194,7 +209,9 @@ class MemberDetailSerializer(serializers.ModelSerializer):
     def get_project_count(self, obj):
         """获取用户参与的项目数量"""
         from apps.projects.models import ProjectMember
-        return ProjectMember.objects.filter(user=obj).count()
+        return ProjectMember.objects.filter(
+            user=obj, status=ProjectMember.Status.ACTIVE
+        ).count()
 
     def get_tasks(self, obj):
         """获取分配给用户的任务列表（进行中/待办）"""

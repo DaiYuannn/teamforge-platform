@@ -5,6 +5,7 @@ from .base import *  # noqa: F401,F403
 DEBUG = True
 ALLOWED_HOSTS = ['*']
 CORS_ALLOW_ALL_ORIGINS = True
+PROTECTED_MEDIA_USE_X_ACCEL_REDIRECT = False
 
 os.environ.setdefault(
     'FIELD_ENCRYPTION_KEY',

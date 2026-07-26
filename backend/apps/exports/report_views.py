@@ -6,9 +6,9 @@ GET /api/v1/exports/project-report/<project_id>/
 from urllib.parse import quote
 
 from django.http import FileResponse
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
+from common.permissions import IsInternalTeamMember
 from common.response import error_response
 from .report_templates import generate_project_report, HAS_PYTHON_DOCX
 
@@ -20,7 +20,7 @@ class ProjectReportView(APIView):
     - 权限: IsAuthenticated
     """
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsInternalTeamMember]
 
     def get(self, request, project_id):
         try:

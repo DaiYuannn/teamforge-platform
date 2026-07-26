@@ -1,314 +1,253 @@
-# 备份与恢复文档（Backup & Recovery Guide）
+# 生产备份、校验与恢复演练指南
 
-> 本文档说明如何备份和恢复团队管理平台的关键数据，包括数据库、媒体文件和加密密钥。
+本指南对应仓库中的：
 
----
+- `scripts/backup.sh`：生成 PostgreSQL 自定义格式备份、媒体归档和 SHA-256 清单。
+- `scripts/verify_backup.sh`：校验完整备份集，并在隔离容器中执行非破坏恢复演练。
 
-## 目录
+演示数据备份页面只用于功能演示，不能替代本指南中的生产备份。
 
-1. [备份内容概览](#1-备份内容概览)
-2. [备份 PostgreSQL 数据库](#2-备份-postgresql-数据库)
-3. [备份 media 文件](#3-备份-media-文件)
-4. [备份敏感资料加密密钥](#4-备份敏感资料加密密钥)
-5. [定期自动备份](#5-定期自动备份)
-6. [恢复到某一天的数据](#6-恢复到某一天的数据)
+## 1. 备份范围与边界
 
----
+| 项目 | 备份方式 | 建议频率 |
+|---|---|---|
+| PostgreSQL | `pg_dump --format=custom` | 每日 |
+| `/app/media` 受保护媒体 | `tar.gz` 全量归档 | 每日 |
+| `FIELD_ENCRYPTION_KEY` | 独立离线保管，不放入数据备份 | 创建及轮换时 |
+| 生产环境变量 | 加密后离线保管 | 每次变更 |
+| 恢复演练 | 临时 PostgreSQL 容器 + 临时媒体目录 | 每月 |
 
-## 1. 备份内容概览
+数据库和媒体归档不是事务级原子快照。应在低流量时段执行；严格要求一致性时，
+在备份窗口暂停上传及写入任务，备份结束后再恢复。
 
-| 备份项 | 重要程度 | 频率 | 存储位置 |
-|--------|----------|------|----------|
-| PostgreSQL 数据库 | 极高 | 每日 | /opt/backups/db/ |
-| media 文件（票据/附件） | 高 | 每日 | /opt/backups/media/ |
-| FIELD_ENCRYPTION_KEY | 极高 | 一次性 | 安全离线存储 |
-| .env.production | 极高 | 变更时 | 安全离线存储 |
-| Docker Compose 配置 | 中 | 变更时 | Git 仓库 |
+`FIELD_ENCRYPTION_KEY` 必须与数据库分开存放。只有数据库而没有该密钥时，
+已加密的敏感资料无法恢复；同时泄露两者则会失去加密保护。
 
-> 核心原则：数据库和加密密钥必须分开存储。如果攻击者同时获取了两者，敏感资料将被破解。
+## 2. 前置条件
 
----
+备份主机需要：
 
-## 2. 备份 PostgreSQL 数据库
+- Docker CLI，且能访问生产 Docker daemon；
+- `tar`、`sha256sum`、`find`、`flock`；
+- 可选：`gpg`（加密）、`aws`（S3）、`rclone`（其他远端）、`curl`（告警）。
 
-### 2.1 手动备份
+生产容器默认名称：
+
+- PostgreSQL：`team_postgres_prod`
+- 后端：`team_backend_prod`
+
+如名称不同，通过环境变量覆盖，不要直接修改脚本。
+
+## 3. 配置
+
+脚本默认读取 `/etc/team-management/backup.env`，也可通过
+`BACKUP_CONFIG_FILE` 指定其他文件。配置文件权限应为 `600`。
 
 ```bash
-# 创建备份目录
-mkdir -p /opt/backups/db
-
-# 执行备份（Docker 部署）
-docker exec team_postgres_prod pg_dump -U postgres team_management \
-  > /opt/backups/db/db_$(date +%Y%m%d_%H%M%S).sql
-
-# 验证备份文件
-ls -lh /opt/backups/db/
+sudo install -d -m 700 /etc/team-management
+sudo install -m 600 /dev/null /etc/team-management/backup.env
+sudo editor /etc/team-management/backup.env
 ```
 
-### 2.2 压缩备份
+示例：
 
 ```bash
-docker exec team_postgres_prod pg_dump -U postgres team_management | gzip \
-  > /opt/backups/db/db_$(date +%Y%m%d_%H%M%S).sql.gz
-```
-
-### 2.3 验证备份可用性
-
-```bash
-# 查看备份文件内容（前 20 行）
-head -20 /opt/backups/db/db_20260701_120000.sql
-
-# 检查是否包含关键表
-grep "CREATE TABLE" /opt/backups/db/db_20260701_120000.sql | head -20
-```
-
----
-
-## 3. 备份 media 文件
-
-media 目录包含用户上传的票据图片、项目文件等，必须定期备份。
-
-### 3.1 手动备份
-
-```bash
-# 创建备份目录
-mkdir -p /opt/backups/media
-
-# 打包备份 media 文件（Docker 部署）
-docker exec team_backend_prod tar czf - /app/media \
-  > /opt/backups/media/media_$(date +%Y%m%d_%H%M%S).tar.gz
-
-# 或直接从 Docker 卷备份
-docker run --rm -v team_management_media_data:/data -v /opt/backups/media:/backup \
-  alpine tar czf /backup/media_$(date +%Y%m%d_%H%M%S).tar.gz -C /data .
-
-# 验证
-ls -lh /opt/backups/media/
-```
-
-### 3.2 增量同步（使用 rsync）
-
-```bash
-# 从 Docker 卷同步到备份目录
-rsync -avz \
-  --exclude='*.tmp' \
-  /var/lib/docker/volumes/team_management_media_data/_data/ \
-  /opt/backups/media/current/
-```
-
----
-
-## 4. 备份敏感资料加密密钥
-
-`FIELD_ENCRYPTION_KEY` 是整个系统中最敏感的配置项。
-
-> 警告：此密钥一旦丢失，所有已加密的敏感资料（身份证号等）将永远无法解密。
-> 警告：此密钥一旦泄露，所有敏感资料将被破解。
-
-### 4.1 导出密钥
-
-```bash
-# 从环境变量文件中提取
-grep FIELD_ENCRYPTION_KEY /opt/team-management/deploy/env/backend.prod.env
-```
-
-### 4.2 安全存储方式
-
-推荐以下存储方式（至少选择两种）：
-
-1. **密码管理器**：存入 1Password / Bitwarden / KeePass 等密码管理器
-2. **离线 USB**：写入 USB 存储设备，存放于物理安全位置
-3. **加密邮件**：发送到仅自己可访问的加密邮箱
-4. **打印纸质**：打印后存放于保险柜
-
-### 4.3 密钥不要存放的地方
-
-- Git 仓库（即使私有仓库）
-- 聊天记录（微信/飞书/Slack）
-- 共享文档
-- 服务器明文文件（除 .env.production 外）
-
----
-
-## 5. 定期自动备份
-
-### 5.1 创建备份脚本
-
-```bash
-sudo nano /opt/team-management/scripts/backup.sh
-```
-
-脚本内容：
-
-```bash
-#!/bin/bash
-# ==========================================
-# 团队管理平台 - 自动备份脚本
-# ==========================================
-
-BACKUP_DIR="/opt/backups"
-DB_DIR="${BACKUP_DIR}/db"
-MEDIA_DIR="${BACKUP_DIR}/media"
-DATE=$(date +%Y%m%d_%H%M%S)
+BACKUP_DIR=/opt/backups/team-management
 RETAIN_DAYS=30
+PG_CONTAINER=team_postgres_prod
+BACKEND_CONTAINER=team_backend_prod
+DB_USER=postgres
+DB_NAME=team_management
 
-# 创建目录
-mkdir -p ${DB_DIR} ${MEDIA_DIR}
+# 留空表示本机备份。支持以下三类根目录：
+# file:///mnt/offsite/team-management
+# s3://example-backups/team-management
+# backup-remote:team-management
+BACKUP_REMOTE_URI=
 
-echo "[$(date)] 开始备份..."
+# 可选：失败时接收 JSON POST。
+BACKUP_ALERT_WEBHOOK=
 
-# 1. 备份数据库
-echo "  备份数据库..."
-docker exec team_postgres_prod pg_dump -U postgres team_management | gzip \
-  > ${DB_DIR}/db_${DATE}.sql.gz
-echo "  数据库备份完成: ${DB_DIR}/db_${DATE}.sql.gz"
-
-# 2. 备份 media 文件
-echo "  备份 media 文件..."
-docker exec team_backend_prod tar czf - /app/media 2>/dev/null \
-  > ${MEDIA_DIR}/media_${DATE}.tar.gz
-echo "  media 备份完成: ${MEDIA_DIR}/media_${DATE}.tar.gz"
-
-# 3. 清理过期备份（保留最近 30 天）
-echo "  清理 ${RETAIN_DAYS} 天前的备份..."
-find ${DB_DIR} -name "db_*.sql.gz" -mtime +${RETAIN_DAYS} -delete
-find ${MEDIA_DIR} -name "media_*.tar.gz" -mtime +${RETAIN_DAYS} -delete
-
-echo "[$(date)] 备份完成"
-echo "  数据库备份大小: $(du -sh ${DB_DIR} | cut -f1)"
-echo "  media备份大小: $(du -sh ${MEDIA_DIR} | cut -f1)"
+# 可选：GPG 公钥的 UID、邮箱或指纹。备份机只需要公钥。
+BACKUP_GPG_RECIPIENT=
 ```
 
-### 5.2 设置定时任务
+`BACKUP_DIR` 和 `file://` 目标必须是两个互不包含的绝对非根目录。脚本使用
+`umask 077`，并在生成备份文件名之前取得进程锁，拒绝并发备份任务。
+
+## 4. 执行备份
 
 ```bash
-# 赋予执行权限
-sudo chmod +x /opt/team-management/scripts/backup.sh
-
-# 编辑 crontab
-sudo crontab -e
-
-# 添加定时任务：每天凌晨 3:00 执行备份
-0 3 * * * /opt/team-management/scripts/backup.sh >> /opt/backups/backup.log 2>&1
-
-# 每周日凌晨 2:00 执行全量备份（额外保留周备份）
-0 2 * * 0 /opt/team-management/scripts/backup.sh >> /opt/backups/backup_weekly.log 2>&1
+cd /opt/team-management
+sudo chmod +x scripts/backup.sh scripts/verify_backup.sh
+sudo scripts/backup.sh
 ```
 
-### 5.3 验证定时任务
+默认输出结构：
+
+```text
+/opt/backups/team-management/
+├── db/
+│   └── db_20260726T030000Z.dump
+├── media/
+│   └── media_20260726T030000Z.tar.gz
+└── manifests/
+    └── backup_20260726T030000Z.sha256
+```
+
+启用 GPG 后，两个数据文件分别增加 `.gpg` 后缀。清单始终针对最终文件计算：
 
 ```bash
-# 查看定时任务
-sudo crontab -l
-
-# 查看备份日志
-cat /opt/backups/backup.log
-
-# 查看备份文件列表
-ls -lh /opt/backups/db/
-ls -lh /opt/backups/media/
+cd /opt/backups/team-management
+sha256sum --check manifests/backup_20260726T030000Z.sha256
 ```
 
----
+只有清单已经存在且校验通过的时间戳，才算完整备份集。`.partial` 文件不是有效
+备份，不得用于恢复。
 
-## 6. 恢复到某一天的数据
+脚本在本地完成以下检查后才发布清单：
 
-### 6.1 恢复数据库
+1. 数据库 dump 非空且可被 `pg_restore --list` 读取；
+2. 媒体归档非空且可被 `tar -tzf` 读取；
+3. 可选的 GPG 文件结构可读取；
+4. 最终数据库和媒体文件通过 SHA-256 清单校验。
+
+## 5. 加密、异地存储与告警
+
+### GPG 加密
+
+先将恢复负责人的公钥导入备份主机：
 
 ```bash
-# 1. 停止后端服务
-cd /opt/team-management/deploy
-docker compose -f docker-compose.prod.yml stop backend
-
-# 2. 恢复数据库（注意：会覆盖现有数据）
-gunzip -c /opt/backups/db/db_20260701_120000.sql.gz | \
-  docker exec -i team_postgres_prod psql -U postgres team_management
-
-# 3. 重新启动后端
-docker compose -f docker-compose.prod.yml start backend
-
-# 4. 验证数据
-docker compose -f docker-compose.prod.yml exec backend python manage.py check
+gpg --import backup-recipient-public.asc
+gpg --list-keys recipient@example.com
 ```
 
-### 6.2 恢复 media 文件
+在 `backup.env` 设置：
 
 ```bash
-# 1. 停止后端服务
-docker compose -f docker-compose.prod.yml stop backend
-
-# 2. 恢复 media 文件
-docker exec team_backend_prod tar xzf - -C / < /opt/backups/media/media_20260701_120000.tar.gz
-
-# 或从宿主机恢复到 Docker 卷
-docker run --rm -v team_management_media_data:/data -v /opt/backups/media:/backup \
-  alpine sh -c "rm -rf /data/* && tar xzf /backup/media_20260701_120000.tar.gz -C /data"
-
-# 3. 重新启动后端
-docker compose -f docker-compose.prod.yml start backend
+BACKUP_GPG_RECIPIENT=recipient@example.com
 ```
 
-### 6.3 恢复加密密钥
+私钥不应存放在生产服务器。恢复演练应在受控验证主机上进行，并导入对应私钥。
+备份脚本会先校验未加密 dump 和媒体归档，再生成加密最终文件；失败时不会发布清单。
 
-如果服务器密钥丢失需要恢复：
+### 异地副本
+
+远端副本保留相同的 `db/`、`media/`、`manifests/` 结构，清单最后上传，作为
+完整性标记：
+
+- `file:///绝对路径`：挂载磁盘或另一台主机的安全挂载点；
+- `s3://bucket/prefix`：使用 AWS CLI；
+- 其他值：使用 `rclone copyto`，例如 `remote:bucket/prefix`。
+
+建议使用独立账号、服务端加密、对象锁或不可变保留策略，并定期从异地副本执行
+恢复演练。脚本只清理本机超过 `RETAIN_DAYS` 的备份，远端生命周期应在存储端配置。
+
+### 失败告警
+
+设置 `BACKUP_ALERT_WEBHOOK` 后，失败时发送：
+
+```json
+{
+  "event": "backup_failed",
+  "host": "backup-host",
+  "timestamp": "20260726T030000Z",
+  "exit_code": 1
+}
+```
+
+恢复演练可设置 `VERIFY_ALERT_WEBHOOK`；未设置时复用 `BACKUP_ALERT_WEBHOOK`，
+事件名为 `backup_verification_failed`。Webhook 不应包含数据库密码或加密密钥。
+
+## 6. 定时执行
+
+每天 03:00 备份：
+
+```cron
+0 3 * * * /opt/team-management/scripts/backup.sh >> /opt/backups/team-management/backup.log 2>&1
+```
+
+每月 1 日 05:00 对最新完整清单执行恢复演练。应由一个包装脚本明确选中清单，
+不要使用可能匹配 `.partial` 的宽泛通配符：
 
 ```bash
-# 1. 编辑环境变量文件
-nano /opt/team-management/deploy/env/backend.prod.env
-
-# 2. 将 FIELD_ENCRYPTION_KEY 替换为备份的密钥
-FIELD_ENCRYPTION_KEY=你备份的Fernet密钥
-
-# 3. 重启后端
-docker compose -f docker-compose.prod.yml restart backend
+latest_manifest="$(
+  find /opt/backups/team-management/manifests -maxdepth 1 \
+    -type f -name 'backup_*.sha256' -printf '%T@ %p\n' |
+  sort -n | tail -1 | cut -d' ' -f2-
+)"
+test -n "${latest_manifest}"
+/opt/team-management/scripts/verify_backup.sh "${latest_manifest}"
 ```
 
-### 6.4 完整恢复流程（数据库 + media + 密钥）
+日志采集系统应同时监控进程退出码和 webhook；不要只检查目录中是否出现文件。
+
+## 7. 非破坏恢复演练
+
+推荐直接传入清单：
 
 ```bash
-cd /opt/team-management/deploy
-
-# 1. 停止全部服务
-docker compose -f docker-compose.prod.yml down
-
-# 2. 删除数据卷（危险！确保有备份）
-docker volume rm team_management_pg_data team_management_media_data
-
-# 3. 重新启动基础设施
-docker compose -f docker-compose.prod.yml up -d postgres redis
-
-# 4. 等待数据库就绪
-sleep 15
-
-# 5. 恢复数据库
-gunzip -c /opt/backups/db/db_20260701_120000.sql.gz | \
-  docker exec -i team_postgres_prod psql -U postgres team_management
-
-# 6. 启动全部服务
-docker compose -f docker-compose.prod.yml up -d --build
-
-# 7. 恢复 media 文件
-docker run --rm -v team_management_media_data:/data -v /opt/backups/media:/backup \
-  alpine sh -c "tar xzf /backup/media_20260701_120000.tar.gz -C /data"
-
-# 8. 重启后端以加载恢复的数据
-docker compose -f docker-compose.prod.yml restart backend
+/opt/team-management/scripts/verify_backup.sh \
+  /opt/backups/team-management/manifests/backup_20260726T030000Z.sha256
 ```
 
----
+也可传入同一备份集的数据库文件，脚本会定位对应清单：
 
-## 备份检查清单
+```bash
+/opt/team-management/scripts/verify_backup.sh \
+  /opt/backups/team-management/db/db_20260726T030000Z.dump
+```
 
-| 检查项 | 频率 | 状态 |
-|--------|------|------|
-| 数据库每日自动备份 | 每天 3:00 | 待启用 |
-| media 文件每日备份 | 每天 3:00 | 待启用 |
-| 备份文件可成功恢复 | 每月一次 | 待验证 |
-| FIELD_ENCRYPTION_KEY 已离线备份 | 一次性 | 待确认 |
-| .env.production 已离线备份 | 变更时 | 待确认 |
-| 过期备份自动清理（30天） | 自动 | 待启用 |
+演练流程：
 
----
+1. 校验清单恰好包含同一时间戳的数据库和媒体文件；
+2. 校验两个文件的 SHA-256；
+3. 必要时解密到权限为 `700/600` 的临时目录；
+4. 将媒体解压到临时目录，拒绝绝对路径和 `..` 路径；
+5. 启动 `--network none`、无端口、无生产卷的临时 PostgreSQL 容器；
+6. 使用 `pg_restore --single-transaction --exit-on-error` 恢复；
+7. 查询核心表并输出行数；
+8. 删除临时容器和临时目录。
 
-> 文档版本：v1.0
-> 维护者：团队管理软件项目组
+默认验证表：
+
+```text
+django_migrations users projects tasks file_assets operation_logs
+```
+
+可通过 `VERIFY_TABLES` 增加业务表，但只允许安全的 SQL 标识符。演练容器镜像可由
+`RESTORE_DRILL_POSTGRES_IMAGE` 覆盖，等待时间由 `RESTORE_DRILL_TIMEOUT` 控制。
+
+该脚本不会连接、停止、清空或覆盖生产数据库，也不会挂载生产数据库或媒体卷。
+
+## 8. 灾难恢复原则
+
+真实恢复属于破坏性运维，必须由老师或系统负责人明确批准。推荐蓝绿恢复：
+
+1. 记录事件时间和目标恢复点；
+2. 对现状再做一份只读保全备份；
+3. 在新的 PostgreSQL 容器/实例和新的媒体卷中恢复，不覆盖原实例；
+4. 使用本指南的清单、核心表、登录、文件下载和敏感资料解密检查；
+5. 确认 `FIELD_ENCRYPTION_KEY` 与目标备份匹配；
+6. 经两人复核后切换应用连接；
+7. 保留旧实例直至业务验收和回滚窗口结束。
+
+不要在未验证备份的情况下执行 `DROP DATABASE`、删除 Docker volume 或清空
+`/app/media`。恢复后应立即执行一次新的完整备份。
+
+## 9. 验收清单
+
+| 检查项 | 频率 |
+|---|---|
+| 备份任务退出码为 0 | 每日 |
+| 本地清单 SHA-256 通过 | 每日自动 |
+| 异地目录结构完整且清单最后上传 | 每日 |
+| 失败告警能到达负责人 | 每季度演练 |
+| 隔离恢复演练通过 | 每月 |
+| GPG 私钥可用但不在生产机 | 每季度 |
+| `FIELD_ENCRYPTION_KEY` 有两个独立离线副本 | 每次轮换 |
+| 异地保留/对象锁策略生效 | 每季度 |
+
+SHA-256 清单用于发现传输或存储损坏，不能防御能够同时替换文件和清单的攻击者；
+此类威胁应通过 GPG、只写备份凭据、对象锁和独立账号控制。
