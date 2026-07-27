@@ -6,10 +6,13 @@
 """
 from decimal import Decimal
 
+from drf_spectacular.utils import OpenApiParameter, extend_schema, inline_serializer
+from rest_framework import serializers
 from rest_framework.views import APIView
 
 from common.permissions import IsInternalTeamMember
 from common.response import success_response
+from common.schema import success_response_schema
 from .models import FinanceBudget
 
 
@@ -26,6 +29,75 @@ class FinanceAlertView(APIView):
     WARNING_THRESHOLD = Decimal('0.8')   # 80%
     DANGER_THRESHOLD = Decimal('1.0')    # 100%
 
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name='project',
+                type=int,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description='按项目 ID 筛选经费总表。',
+            ),
+        ],
+        responses={
+            200: success_response_schema(
+                'FinanceAlertResponse',
+                inline_serializer(
+                    name='FinanceAlertData',
+                    fields={
+                        'summary': inline_serializer(
+                            name='FinanceAlertSummary',
+                            fields={
+                                'total_budgets': serializers.IntegerField(),
+                                'normal': serializers.IntegerField(),
+                                'warning': serializers.IntegerField(),
+                                'danger': serializers.IntegerField(),
+                            },
+                        ),
+                        'warning_count': serializers.IntegerField(),
+                        'alerts': inline_serializer(
+                            name='FinanceAlertItem',
+                            fields={
+                                'budget_id': serializers.IntegerField(),
+                                'project_id': serializers.IntegerField(),
+                                'project_name': serializers.CharField(),
+                                'total_income': serializers.FloatField(),
+                                'used_amount': serializers.FloatField(),
+                                'remaining_amount': serializers.FloatField(),
+                                'pending_reimbursement': serializers.FloatField(),
+                                'usage_rate': serializers.FloatField(),
+                                'alert_level': serializers.ChoiceField(
+                                    choices=['normal', 'warning', 'danger'],
+                                ),
+                                'alert_message': serializers.CharField(),
+                                'period': serializers.CharField(),
+                            },
+                            many=True,
+                        ),
+                        'warnings': inline_serializer(
+                            name='FinanceWarningItem',
+                            fields={
+                                'budget_id': serializers.IntegerField(),
+                                'project_id': serializers.IntegerField(),
+                                'project_name': serializers.CharField(),
+                                'total_income': serializers.FloatField(),
+                                'used_amount': serializers.FloatField(),
+                                'remaining_amount': serializers.FloatField(),
+                                'pending_reimbursement': serializers.FloatField(),
+                                'usage_rate': serializers.FloatField(),
+                                'alert_level': serializers.ChoiceField(
+                                    choices=['warning', 'danger'],
+                                ),
+                                'alert_message': serializers.CharField(),
+                                'period': serializers.CharField(),
+                            },
+                            many=True,
+                        ),
+                    },
+                ),
+            ),
+        },
+    )
     def get(self, request):
         params = request.query_params
         project_id = params.get('project')

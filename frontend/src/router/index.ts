@@ -14,6 +14,12 @@ const publicRoutes: RouteRecordRaw[] = [
     component: () => import('@/views/login/LoginView.vue'),
     meta: { title: '登录', requiresAuth: false },
   },
+  {
+    path: '/reset-password',
+    name: 'ResetPassword',
+    component: () => import('@/views/login/ResetPasswordView.vue'),
+    meta: { title: '重置密码', requiresAuth: false },
+  },
 ]
 
 // 需认证路由（使用响应式布局：PC/Mobile 自动切换）
@@ -46,6 +52,16 @@ const authRoutes: RouteRecordRaw[] = [
         meta: { title: '项目历程', requiresAuth: true, hidden: true },
       },
       {
+        path: 'analytics-studio',
+        name: 'AnalyticsStudio',
+        component: () => import('@/views/dashboard/AnalyticsStudioView.vue'),
+        meta: {
+          title: '分析工作台',
+          requiresAuth: true,
+          roles: ['sys_admin', 'teacher', 'member', 'sens_approver'],
+        },
+      },
+      {
         path: 'projects',
         name: 'ProjectList',
         component: () => import('@/views/projects/ProjectListView.vue'),
@@ -56,6 +72,12 @@ const authRoutes: RouteRecordRaw[] = [
         name: 'ProjectDetail',
         component: () => import('@/views/projects/ProjectDetailView.vue'),
         meta: { title: '项目详情', requiresAuth: true, hidden: true },
+      },
+      {
+        path: 'projects/:id/operations',
+        name: 'ProjectOperations',
+        component: () => import('@/views/projects/ProjectOperationsView.vue'),
+        meta: { title: '项目协作工作台', requiresAuth: true, hidden: true },
       },
       {
         path: 'projects/archive',
@@ -74,6 +96,12 @@ const authRoutes: RouteRecordRaw[] = [
         name: 'TaskList',
         component: () => import('@/views/tasks/TaskListView.vue'),
         meta: { title: '任务管理', icon: 'List', requiresAuth: true },
+      },
+      {
+        path: 'tasks/:id/collaboration',
+        name: 'TaskCollaboration',
+        component: () => import('@/views/tasks/TaskCollaborationView.vue'),
+        meta: { title: '任务协作详情', requiresAuth: true, hidden: true },
       },
       {
         path: 'members',
@@ -127,7 +155,7 @@ const authRoutes: RouteRecordRaw[] = [
         path: 'intellectual-property/todo',
         name: 'IPTodo',
         component: () => import('@/views/intellectual-property/IPTodoView.vue'),
-        meta: { title: '待我处理', icon: 'Bell', requiresAuth: true },
+        meta: { title: '知识产权待办', icon: 'Bell', requiresAuth: true },
       },
       {
         path: 'intellectual-property/:id',
@@ -178,22 +206,23 @@ const authRoutes: RouteRecordRaw[] = [
       {
         path: 'sensitive/my-data',
         name: 'MySensitiveData',
-        component: () => import('@/views/sensitive/MySensitiveDataView.vue'),
-        meta: { title: '我的资料', requiresAuth: true },
+        redirect: (to) => ({ name: 'SensitiveCenter', query: { ...to.query, tab: 'my-data' } }),
+        meta: { title: '资料目录', requiresAuth: true, hidden: true },
       },
       {
         path: 'sensitive/requests',
         name: 'SensitiveRequests',
-        component: () => import('@/views/sensitive/AccessRequestsView.vue'),
-        meta: { title: '资料查看申请', requiresAuth: true },
+        redirect: (to) => ({ name: 'SensitiveCenter', query: { ...to.query, tab: 'requests' } }),
+        meta: { title: '我的访问申请', requiresAuth: true, hidden: true },
       },
       {
         path: 'sensitive/pending',
         name: 'SensitivePending',
-        component: () => import('@/views/sensitive/PendingApproveView.vue'),
+        redirect: (to) => ({ name: 'SensitiveCenter', query: { ...to.query, tab: 'pending' } }),
         meta: {
-          title: '待我审批',
+          title: '访问审批队列',
           requiresAuth: true,
+          hidden: true,
           roles: ['sys_admin', 'sens_approver', 'teacher'],
         },
       },
@@ -222,6 +251,22 @@ const authRoutes: RouteRecordRaw[] = [
         name: 'IntegrationConfig',
         component: () => import('@/views/admin/IntegrationConfigView.vue'),
         meta: { title: '第三方集成', requiresAuth: true, roles: ['sys_admin'] },
+      },
+      {
+        path: 'admin/platform-capabilities',
+        name: 'PlatformCapabilities',
+        component: () => import('@/views/admin/PlatformCapabilitiesView.vue'),
+        meta: { title: '平台能力', requiresAuth: true },
+      },
+      {
+        path: 'admin/engineering',
+        name: 'EngineeringConsole',
+        component: () => import('@/views/admin/EngineeringConsoleView.vue'),
+        meta: {
+          title: '工程控制台',
+          requiresAuth: true,
+          roles: ['sys_admin'],
+        },
       },
       {
         path: 'admin/users',

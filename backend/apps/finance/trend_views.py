@@ -5,10 +5,13 @@
 from decimal import Decimal
 
 from django.db.models import Sum
+from drf_spectacular.utils import OpenApiParameter, extend_schema, inline_serializer
+from rest_framework import serializers
 from rest_framework.views import APIView
 
 from common.permissions import IsInternalTeamMember
 from common.response import success_response
+from common.schema import success_response_schema
 from .models import FinanceExpense
 
 
@@ -21,6 +24,48 @@ class FinanceTrendView(APIView):
     """
     permission_classes = [IsInternalTeamMember]
 
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name='project',
+                type=int,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description='按项目 ID 筛选支出。',
+            ),
+        ],
+        responses={
+            200: success_response_schema(
+                'FinanceTrendResponse',
+                inline_serializer(
+                    name='FinanceTrendData',
+                    fields={
+                        'total_expense': serializers.FloatField(),
+                        'monthly_trend': inline_serializer(
+                            name='FinanceMonthlyTrendItem',
+                            fields={
+                                'month': serializers.RegexField(r'^\d{4}-\d{2}$'),
+                                'amount': serializers.FloatField(),
+                            },
+                            many=True,
+                        ),
+                        'category_breakdown': serializers.DictField(
+                            child=inline_serializer(
+                                name='FinanceCategoryBreakdownItem',
+                                fields={
+                                    'label': serializers.CharField(),
+                                    'amount': serializers.FloatField(),
+                                },
+                            ),
+                        ),
+                        'category_percentage': serializers.DictField(
+                            child=serializers.FloatField(),
+                        ),
+                    },
+                ),
+            ),
+        },
+    )
     def get(self, request):
         params = request.query_params
         project_id = params.get('project')

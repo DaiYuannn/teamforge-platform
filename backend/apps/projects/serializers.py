@@ -4,6 +4,7 @@
 from decimal import Decimal
 
 from rest_framework import serializers
+from drf_spectacular.utils import PolymorphicProxySerializer, extend_schema_field
 
 from common.project_access import is_external_collaborator
 from .models import Project, ProjectMember, ProjectMembershipEvent, ProjectStageLog
@@ -46,6 +47,16 @@ class ProjectMemberSerializer(serializers.ModelSerializer):
         )
         read_only_fields = ('id', 'project', 'joined_at')
 
+    @extend_schema_field(
+        PolymorphicProxySerializer(
+            component_name='ProjectMemberUserDetail',
+            serializers=[
+                ExternalCollaboratorUserSerializer,
+                UserListSerializer,
+            ],
+            resource_type_field_name=None,
+        )
+    )
     def get_user_detail(self, obj):
         request = self.context.get('request')
         serializer_class = (
@@ -108,12 +119,20 @@ class ProjectListSerializer(serializers.ModelSerializer):
         )
         read_only_fields = fields
 
-    def get_member_count(self, obj):
+    def get_member_count(self, obj) -> int:
         annotated_count = getattr(obj, 'active_member_count', None)
         if annotated_count is not None:
             return annotated_count
         return obj.members.filter(status=ProjectMember.Status.ACTIVE).count()
 
+    @extend_schema_field(
+        serializers.DecimalField(
+            max_digits=None,
+            decimal_places=2,
+            allow_null=True,
+            read_only=True,
+        )
+    )
     def get_finance_balance(self, obj):
         """返回项目各预算周期的可用余额，列表查询已预取预算避免 N+1。"""
         request = self.context.get('request')

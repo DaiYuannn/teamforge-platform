@@ -5,21 +5,30 @@
 
     <router-link to="/public" class="back-link">
       <el-icon><ArrowLeft /></el-icon>
-      返回成果首页
+      {{ t('返回成果首页') }}
     </router-link>
 
     <section class="login-context" aria-label="平台品牌">
       <div class="brand-mark"><el-icon><Trophy /></el-icon></div>
-      <p class="brand-kicker">创新团队</p>
-      <h1>团队管理平台</h1>
-      <p>让项目进度、协作责任与团队成果保持清晰。</p>
+      <p class="brand-kicker">{{ t('创新团队') }}</p>
+      <h1>{{ t('团队管理平台') }}</h1>
+      <p>{{ t('让项目进度、协作责任与团队成果保持清晰。') }}</p>
     </section>
 
     <section class="login-panel">
+      <el-select
+        class="language-select"
+        :model-value="locale"
+        aria-label="Language"
+        @change="setLocale"
+      >
+        <el-option label="简体中文" value="zh-CN" />
+        <el-option label="English" value="en" />
+      </el-select>
       <header class="login-panel__header">
-        <p>团队工作台</p>
-        <h2>登录账户</h2>
-        <span>使用团队分配的邮箱和密码继续</span>
+        <p>{{ t('团队工作台') }}</p>
+        <h2>{{ t('登录账户') }}</h2>
+        <span>{{ t('使用团队分配的邮箱和密码继续') }}</span>
       </header>
 
       <el-form
@@ -32,7 +41,7 @@
         <el-form-item prop="email">
           <el-input
             v-model="loginForm.email"
-            placeholder="邮箱地址"
+            :placeholder="t('邮箱地址')"
             name="email"
             autocomplete="email"
             spellcheck="false"
@@ -44,7 +53,7 @@
           <el-input
             v-model="loginForm.password"
             type="password"
-            placeholder="密码"
+            :placeholder="t('密码')"
             name="password"
             autocomplete="current-password"
             :prefix-icon="Lock"
@@ -54,8 +63,8 @@
         </el-form-item>
         <el-form-item class="options-item">
           <div class="form-options">
-            <el-checkbox v-model="rememberMe">记住我</el-checkbox>
-            <el-link type="primary" underline="never" @click="handleForgotPassword">忘记密码</el-link>
+            <el-checkbox v-model="rememberMe">{{ t('记住我') }}</el-checkbox>
+            <el-link type="primary" underline="never" @click="handleForgotPassword">{{ t('忘记密码') }}</el-link>
           </div>
         </el-form-item>
         <el-form-item class="submit-item">
@@ -65,7 +74,7 @@
             class="login-btn"
             :loading="loading"
           >
-            登录
+            {{ t('登录') }}
           </el-button>
         </el-form-item>
       </el-form>
@@ -76,14 +85,17 @@
 <script setup lang="ts">
 import { ref, reactive } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
+import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
 import { ArrowLeft, Lock, Message, Trophy } from '@element-plus/icons-vue'
 import { useUserStore } from '@/stores/user'
 import type { LoginParams } from '@/types'
+import { requestPasswordReset } from '@/api/auth'
+import { useI18n } from '@/i18n'
 
 const router = useRouter()
 const route = useRoute()
 const userStore = useUserStore()
+const { locale, setLocale, t } = useI18n()
 
 const loginFormRef = ref<FormInstance>()
 const loading = ref(false)
@@ -114,7 +126,7 @@ async function handleLogin(): Promise<void> {
     if (!valid) return
     loading.value = true
     try {
-      await userStore.login(loginForm)
+      await userStore.login({ ...loginForm, remember_me: rememberMe.value })
       ElMessage.success('登录成功')
       const redirect = (route.query.redirect as string) || userStore.defaultLandingPath()
       router.push(redirect)
@@ -126,9 +138,27 @@ async function handleLogin(): Promise<void> {
   })
 }
 
-// 忘记密码提示
-function handleForgotPassword(): void {
-  ElMessage.info('请联系管理员重置密码')
+async function handleForgotPassword(): Promise<void> {
+  try {
+    const { value } = await ElMessageBox.prompt(
+      '输入账户邮箱，我们会发送一次性重置链接。',
+      '重置密码',
+      {
+        confirmButtonText: '发送链接',
+        cancelButtonText: '取消',
+        inputType: 'email',
+        inputValue: loginForm.email,
+        inputPattern: /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
+        inputErrorMessage: '请输入有效邮箱地址',
+      },
+    )
+    await requestPasswordReset(value)
+    ElMessage.success('若该账户存在，重置邮件已发送')
+  } catch (error) {
+    if (error !== 'cancel' && error !== 'close') {
+      ElMessage.error('暂时无法发送重置邮件')
+    }
+  }
 }
 </script>
 
@@ -187,6 +217,13 @@ function handleForgotPassword(): void {
   z-index: 1;
 }
 
+.language-select {
+  position: absolute;
+  top: 18px;
+  right: 18px;
+  width: 120px;
+}
+
 .brand-mark {
   display: flex;
   align-items: center;
@@ -194,7 +231,7 @@ function handleForgotPassword(): void {
   width: 44px;
   height: 44px;
   color: var(--color-primary);
-  background: #fff;
+  background: var(--color-surface);
   border-radius: var(--radius-sm);
   font-size: 22px;
 }
@@ -226,7 +263,7 @@ function handleForgotPassword(): void {
   width: 100%;
   padding: 36px;
   color: var(--color-text);
-  background: #fff;
+  background: var(--color-surface);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-xl);
 }

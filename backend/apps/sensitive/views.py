@@ -144,7 +144,9 @@ class SensitiveDataViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelView
             message='查看成功，请注意明文保密',
         )
 
+
 # ============ 访问申请 ============
+
 
 class SensitiveAccessRequestViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet):
     """
@@ -274,6 +276,7 @@ class SensitiveAccessRequestViewSet(MultiSerializerMixin, MultiPermissionMixin, 
         """
         我的申请
         GET /api/v1/sensitive/requests/my_requests/
+        支持标准分页参数：page、page_size
         """
         queryset = self.get_queryset().filter(applicant=request.user)
         page = self.paginate_queryset(queryset)
@@ -286,11 +289,14 @@ class SensitiveAccessRequestViewSet(MultiSerializerMixin, MultiPermissionMixin, 
     @action(detail=False, methods=['get'])
     def pending_approve(self, request):
         """
-        待我审批
+        待我审批（全体审批角色共享队列，排除本人提交的申请）
         GET /api/v1/sensitive/requests/pending_approve/
+        支持标准分页参数：page、page_size
         """
         queryset = self.get_queryset().filter(
-            status=SensitiveAccessRequest.Status.PENDING
+            status=SensitiveAccessRequest.Status.PENDING,
+        ).exclude(
+            applicant=request.user,
         )
         page = self.paginate_queryset(queryset)
         if page is not None:

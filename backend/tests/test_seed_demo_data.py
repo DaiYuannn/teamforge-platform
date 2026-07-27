@@ -284,6 +284,9 @@ def test_seed_demo_data_scale_lifecycle_assets_and_safe_clean(settings, tmp_path
     preferences = UserPreference.objects.filter(user__email__in=owned_emails)
     assert preferences.count() == 60
     assert set(preferences.values_list('items_per_page', flat=True)) <= {10, 20, 50}
+    assert set(preferences.values_list('theme_mode', flat=True)) == {'system'}
+    assert set(preferences.values_list('schedule_start', flat=True)) == {'19:00'}
+    assert set(preferences.values_list('schedule_end', flat=True)) == {'07:00'}
     expected_preference_keys = {
         'system', 'task', 'project', 'competition', 'finance',
         'contribution', 'schedule', 'approval', 'report',

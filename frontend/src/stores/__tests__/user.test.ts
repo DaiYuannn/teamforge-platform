@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { afterEach, describe, it, expect, beforeEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 
 const { notificationStore } = vi.hoisted(() => ({
@@ -36,11 +36,19 @@ vi.mock('@/stores/notification', () => ({
 
 import * as authApi from '@/api/auth'
 import * as usersApi from '@/api/users'
+import { useAppStore } from '@/stores/app'
 import { useUserStore } from '@/stores/user'
-import { DEFAULT_PRIMARY_COLOR } from '@/utils/theme'
-import type { User } from '@/types'
+import {
+  DEFAULT_PRIMARY_COLOR,
+  DEFAULT_THEME_MODE,
+  stopThemeRuntime,
+} from '@/utils/theme'
+import type { ThemeMode, User } from '@/types'
 
-const userFixture = (primaryColor = '#176b73'): User => ({
+const userFixture = (
+  primaryColor = '#176b73',
+  themeMode: ThemeMode = 'system',
+): User => ({
   id: 1,
   username: 'tester',
   email: 'tester@example.com',
@@ -50,6 +58,9 @@ const userFixture = (primaryColor = '#176b73'): User => ({
   date_joined: '2024-01-01',
   preferences: {
     primary_color: primaryColor,
+    theme_mode: themeMode,
+    schedule_start: '19:00',
+    schedule_end: '07:00',
     default_landing: 'dashboard',
     sidebar_collapsed: false,
     notification_sound: true,
@@ -63,7 +74,25 @@ describe('useUserStore', () => {
     // Provide a fresh pinia instance for every test so state does not leak.
     setActivePinia(createPinia())
     vi.clearAllMocks()
+    vi.stubGlobal('matchMedia', vi.fn(() => ({
+      matches: false,
+      media: '(prefers-color-scheme: dark)',
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(() => true),
+    })))
     document.documentElement.removeAttribute('style')
+    document.documentElement.removeAttribute('data-theme')
+    document.documentElement.removeAttribute('data-theme-mode')
+    document.documentElement.classList.remove('dark')
+  })
+
+  afterEach(() => {
+    stopThemeRuntime()
+    vi.unstubAllGlobals()
   })
 
   it('initializes with empty state (token empty, userInfo null)', () => {
@@ -103,6 +132,9 @@ describe('useUserStore', () => {
     expect(notificationStore.stopStream).toHaveBeenCalledOnce()
     expect(notificationStore.clearState).toHaveBeenCalledOnce()
     expect(document.documentElement.style.getPropertyValue('--color-primary')).toBe(DEFAULT_PRIMARY_COLOR)
+    expect(useAppStore().themeMode).toBe(DEFAULT_THEME_MODE)
+    expect(document.documentElement.dataset.themeMode).toBe(DEFAULT_THEME_MODE)
+    expect(document.documentElement.dataset.theme).toBe('light')
   })
 
   it('applies the account primary color after login', async () => {
@@ -118,6 +150,21 @@ describe('useUserStore', () => {
     expect(notificationStore.clearState).toHaveBeenCalledOnce()
     expect(store.primaryColor).toBe('#2f6f4e')
     expect(document.documentElement.style.getPropertyValue('--color-primary')).toBe('#2f6f4e')
+  })
+
+  it('applies the account dark theme after login', async () => {
+    vi.mocked(authApi.login).mockResolvedValue({
+      token: { access: 'access', refresh: 'refresh' },
+      user: userFixture('#2f6f4e', 'dark'),
+    })
+    const store = useUserStore()
+
+    await store.login({ email: 'tester@example.com', password: 'secret123' })
+
+    expect(useAppStore().themeMode).toBe('dark')
+    expect(document.documentElement.dataset.theme).toBe('dark')
+    expect(document.documentElement.dataset.themeMode).toBe('dark')
+    expect(document.documentElement.classList.contains('dark')).toBe(true)
   })
 
   it('normalizes and stores the primary color returned by the profile endpoint', async () => {
@@ -140,6 +187,19 @@ describe('useUserStore', () => {
 
     expect(store.primaryColor).toBe('#176b73')
     expect(document.documentElement.style.getPropertyValue('--color-primary')).toBe('#176b73')
+  })
+
+  it('rolls back an optimistic theme when saving fails', async () => {
+    vi.mocked(authApi.getProfile).mockResolvedValue(userFixture('#176b73', 'dark'))
+    vi.mocked(usersApi.updateUserPreference).mockRejectedValue(new Error('save failed'))
+    const store = useUserStore()
+    await store.fetchProfile()
+
+    await expect(store.savePreference({ theme_mode: 'light' })).rejects.toThrow('save failed')
+
+    expect(useAppStore().themeMode).toBe('dark')
+    expect(document.documentElement.dataset.theme).toBe('dark')
+    expect(document.documentElement.dataset.themeMode).toBe('dark')
   })
 
   it('uses the project workspace as the safe landing page for an external account', () => {

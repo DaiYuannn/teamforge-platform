@@ -84,6 +84,11 @@ import { getProjectCalendar, type CalendarDayItem } from '@/api/dashboard'
 import { getProjects } from '@/api/projects'
 import type { Project } from '@/types'
 import { calendarEventDisplayLabel } from '@/utils/calendarEvents'
+import {
+  createEChartsTooltipStyle,
+  readEChartsThemePalette,
+  useEChartsTheme,
+} from '@/composables/useEChartsTheme'
 
 /**
  * 项目日历热力图页面
@@ -188,9 +193,11 @@ function renderChart(): void {
 
   const year = selectedYear.value
   const maxCount = data.length > 0 ? Math.max(...data.map((d) => d[1] as number)) : 0
+  const palette = readEChartsThemePalette()
 
   chart.setOption({
     tooltip: {
+      ...createEChartsTooltipStyle(palette),
       formatter: (params: any) => {
         const date = params.data?.[0]
         const count = params.data?.[1]
@@ -214,9 +221,15 @@ function renderChart(): void {
       left: 'center',
       bottom: 10,
       inRange: {
-        color: ['#eef2f0', '#d4e5e3', '#8bb5b8', '#3b8187', '#176b73'],
+        color: [
+          palette.primaryLight9,
+          palette.primaryLight7,
+          palette.primaryLight5,
+          palette.primaryLight3,
+          palette.primaryFill,
+        ],
       },
-      textStyle: { fontSize: 12 },
+      textStyle: { color: palette.textMuted, fontSize: 12 },
     },
     calendar: {
       top: 60,
@@ -226,20 +239,20 @@ function renderChart(): void {
       range: [`${year}-01-01`, `${year}-12-31`],
       itemStyle: {
         borderWidth: 2,
-        borderColor: '#ffffff',
-        color: '#eef2f0',
+        borderColor: palette.surface,
+        color: palette.primarySoft,
       },
       yearLabel: { show: false },
       dayLabel: {
         firstDay: 1,
         nameMap: 'cn',
         fontSize: 12,
-        color: '#46524e',
+        color: palette.textRegular,
       },
       monthLabel: {
         nameMap: 'cn',
         fontSize: 12,
-        color: '#46524e',
+        color: palette.textRegular,
         margin: 16,
       },
       splitLine: { show: false },
@@ -254,7 +267,7 @@ function renderChart(): void {
         },
         emphasis: {
           itemStyle: {
-            borderColor: '#176b73',
+            borderColor: palette.primaryHover,
             borderWidth: 2,
           },
         },
@@ -264,6 +277,8 @@ function renderChart(): void {
 }
 
 // 窗口大小变化时重绘
+useEChartsTheme(renderChart)
+
 function handleResize(): void {
   chart?.resize()
 }
@@ -330,17 +345,11 @@ onUnmounted(() => {
         border-radius: 3px;
         margin-right: 4px;
 
-        &.lv-1 {
-          background: #d4e5e3;
-        }
-        &.lv-2 {
-          background: #8bb5b8;
-        }
-        &.lv-3 {
-          background: #3b8187;
-        }
+        &.lv-1 { background: var(--el-color-primary-light-9); }
+        &.lv-2 { background: var(--el-color-primary-light-7); }
+        &.lv-3 { background: var(--el-color-primary-light-3); }
         &.lv-4 {
-          background: var(--color-primary);
+          background: var(--color-primary-fill);
         }
       }
     }

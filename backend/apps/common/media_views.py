@@ -2,6 +2,8 @@
 
 from django.core import signing
 from django.http import Http404
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, extend_schema
 from rest_framework.permissions import AllowAny
 from rest_framework.views import APIView
 
@@ -20,6 +22,31 @@ class ProtectedMediaView(APIView):
     authentication_classes = []
     permission_classes = [AllowAny]
 
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name='token',
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                required=True,
+                description='Time-limited signed media token.',
+            ),
+            OpenApiParameter(
+                name='download',
+                type=OpenApiTypes.BOOL,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description='Return an attachment when true.',
+            ),
+        ],
+        responses={
+            (200, 'application/octet-stream'): OpenApiResponse(
+                response=OpenApiTypes.BINARY,
+                description='Protected media bytes; Content-Type reflects the stored file.',
+            ),
+            404: OpenApiResponse(description='Token invalid, expired, or file missing.'),
+        },
+    )
     def get(self, request):
         token = request.query_params.get('token', '')
         if not token:

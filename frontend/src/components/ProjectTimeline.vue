@@ -289,10 +289,10 @@ onMounted(() => {
     gap: 8px;
     margin-bottom: 12px;
     padding: 9px 11px;
-    color: #7f3030;
+    color: var(--danger-text);
     font-size: 12px;
     background: var(--danger-light);
-    border: 1px solid #efcfcd;
+    border: 1px solid var(--danger-border);
     border-radius: var(--radius-sm);
   }
 

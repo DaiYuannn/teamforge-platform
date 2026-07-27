@@ -658,6 +658,9 @@ class Command(BaseCommand):
                 defaults={
                     'theme_color': theme,
                     'primary_color': UserPreference.primary_color_for_theme(theme),
+                    'theme_mode': UserPreference.DEFAULT_THEME_MODE,
+                    'schedule_start': UserPreference.DEFAULT_SCHEDULE_START,
+                    'schedule_end': UserPreference.DEFAULT_SCHEDULE_END,
                     'dashboard_layout': {
                         'profile': profile,
                         'cards': {

@@ -2,11 +2,14 @@
 比赛对比视图
 - CompetitionComparisonView: 多个比赛横向对比
 """
+from drf_spectacular.utils import OpenApiParameter, extend_schema, inline_serializer
+from rest_framework import serializers
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
 from common.response import success_response, error_response
 from common.project_access import scope_project_queryset
+from common.schema import success_response_schema
 from .models import Competition
 from .serializers import CompetitionSerializer
 
@@ -19,6 +22,63 @@ class CompetitionComparisonView(APIView):
     """
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name='ids',
+                type=str,
+                location=OpenApiParameter.QUERY,
+                required=True,
+                description='逗号分隔的比赛 ID，至少 2 个、最多 10 个。',
+            ),
+        ],
+        responses={
+            200: success_response_schema(
+                'CompetitionComparisonResponse',
+                inline_serializer(
+                    name='CompetitionComparisonData',
+                    fields={
+                        'total': serializers.IntegerField(),
+                        'awarded_count': serializers.IntegerField(),
+                        'promoted_count': serializers.IntegerField(),
+                        'comparison_fields': serializers.ListField(
+                            child=serializers.CharField(),
+                        ),
+                        'items': inline_serializer(
+                            name='CompetitionComparisonItem',
+                            fields={
+                                'id': serializers.IntegerField(),
+                                'project_name': serializers.CharField(),
+                                'name': serializers.CharField(),
+                                'comp_type': serializers.CharField(),
+                                'level': serializers.CharField(),
+                                'level_display': serializers.CharField(),
+                                'organizer': serializers.CharField(),
+                                'register_date': serializers.DateField(allow_null=True),
+                                'material_deadline': serializers.DateField(allow_null=True),
+                                'review_date': serializers.DateField(allow_null=True),
+                                'defense_date': serializers.DateField(allow_null=True),
+                                'school_date': serializers.DateField(allow_null=True),
+                                'city_date': serializers.DateField(allow_null=True),
+                                'province_date': serializers.DateField(allow_null=True),
+                                'national_date': serializers.DateField(allow_null=True),
+                                'result_date': serializers.DateField(allow_null=True),
+                                'status': serializers.CharField(),
+                                'status_display': serializers.CharField(),
+                                'is_promoted': serializers.BooleanField(),
+                                'is_awarded': serializers.BooleanField(),
+                                'award_level': serializers.CharField(),
+                                'current_stage': serializers.CharField(),
+                                'review_summary': serializers.CharField(),
+                                'improvement_suggestion': serializers.CharField(),
+                            },
+                            many=True,
+                        ),
+                    },
+                ),
+            ),
+        },
+    )
     def get(self, request):
         ids_param = request.query_params.get('ids', '')
         if not ids_param:

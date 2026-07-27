@@ -3,11 +3,14 @@
 - CompetitionTimelineView: 返回单个比赛的时间线事件
   - 报名、材料截止、网评、答辩、各阶段比赛、结果公布
 """
+from drf_spectacular.utils import OpenApiParameter, extend_schema, inline_serializer
+from rest_framework import serializers
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
 from common.response import success_response, error_response
 from common.project_access import scope_project_queryset, user_can_access_project
+from common.schema import success_response_schema
 from .models import Competition
 
 
@@ -32,6 +35,48 @@ class CompetitionTimelineView(APIView):
         ('result_date', 'results', '结果公布'),
     ]
 
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name='competition',
+                type=int,
+                location=OpenApiParameter.QUERY,
+                required=True,
+                description='比赛 ID。',
+            ),
+        ],
+        responses={
+            200: success_response_schema(
+                'CompetitionTimelineResponse',
+                inline_serializer(
+                    name='CompetitionTimelineData',
+                    fields={
+                        'competition_id': serializers.IntegerField(),
+                        'competition_name': serializers.CharField(),
+                        'project_name': serializers.CharField(),
+                        'level': serializers.CharField(),
+                        'level_display': serializers.CharField(),
+                        'status': serializers.CharField(),
+                        'status_display': serializers.CharField(),
+                        'is_promoted': serializers.BooleanField(),
+                        'is_awarded': serializers.BooleanField(),
+                        'award_level': serializers.CharField(),
+                        'current_stage': serializers.CharField(),
+                        'events': inline_serializer(
+                            name='CompetitionTimelineEvent',
+                            fields={
+                                'event_type': serializers.CharField(),
+                                'label': serializers.CharField(),
+                                'date': serializers.DateField(),
+                                'field': serializers.CharField(),
+                            },
+                            many=True,
+                        ),
+                    },
+                ),
+            ),
+        },
+    )
     def get(self, request):
         competition_id = request.query_params.get('competition')
         if not competition_id:

@@ -90,6 +90,7 @@ class FileShareLink(models.Model):
         """链接是否仍有效（未撤销、未过期、未超访问次数）"""
         return (
             self.is_active
+            and not self.file.is_deleted
             and self.file.level != 'sensitive'
             and not self.is_expired
             and not self.is_view_limit_reached

@@ -6,8 +6,10 @@ import type { ApiResponse } from '@/types'
 // Axios 实例配置
 // ============================================
 
+export const API_BASE_URL = String(import.meta.env.VITE_API_BASE_URL || '/api/v1').replace(/\/+$/, '')
+
 const service: AxiosInstance = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL,
+  baseURL: API_BASE_URL,
   timeout: 30000,
   headers: {
     'Content-Type': 'application/json',
@@ -26,29 +28,35 @@ let requestsQueue: Array<(token: string) => void> = []
 /** 登录和令牌刷新必须保持匿名，避免失效旧令牌阻断重新登录。 */
 export function isPublicAuthRequest(url?: string): boolean {
   const path = (url || '').split('?')[0].replace(/\/+$/, '')
-  return path.endsWith('/auth/login') || path.endsWith('/auth/refresh')
+  return path.endsWith('/auth/login')
+    || path.endsWith('/auth/refresh')
+    || path.includes('/auth/password-reset/')
 }
 
 /** 获取 Access Token */
 export function getAccessToken(): string | null {
-  return localStorage.getItem(ACCESS_TOKEN_KEY)
+  return localStorage.getItem(ACCESS_TOKEN_KEY) || sessionStorage.getItem(ACCESS_TOKEN_KEY)
 }
 
 /** 获取 Refresh Token */
 export function getRefreshToken(): string | null {
-  return localStorage.getItem(REFRESH_TOKEN_KEY)
+  return localStorage.getItem(REFRESH_TOKEN_KEY) || sessionStorage.getItem(REFRESH_TOKEN_KEY)
 }
 
 /** 设置 Token */
-export function setTokens(access: string, refresh: string): void {
-  localStorage.setItem(ACCESS_TOKEN_KEY, access)
-  localStorage.setItem(REFRESH_TOKEN_KEY, refresh)
+export function setTokens(access: string, refresh: string, persistent = true): void {
+  clearTokens()
+  const storage = persistent ? localStorage : sessionStorage
+  storage.setItem(ACCESS_TOKEN_KEY, access)
+  storage.setItem(REFRESH_TOKEN_KEY, refresh)
 }
 
 /** 清除 Token */
 export function clearTokens(): void {
   localStorage.removeItem(ACCESS_TOKEN_KEY)
   localStorage.removeItem(REFRESH_TOKEN_KEY)
+  sessionStorage.removeItem(ACCESS_TOKEN_KEY)
+  sessionStorage.removeItem(REFRESH_TOKEN_KEY)
 }
 
 /** 清理失效会话并进入独立登录页。 */
@@ -68,11 +76,12 @@ export async function refreshAccessToken(): Promise<string | null> {
   }
   try {
     const response = await axios.post(
-      `${import.meta.env.VITE_API_BASE_URL}/auth/refresh/`,
+      `${API_BASE_URL}/auth/refresh/`,
       { refresh: refreshToken }
     )
     const { access } = response.data
-    localStorage.setItem(ACCESS_TOKEN_KEY, access)
+    const storage = localStorage.getItem(REFRESH_TOKEN_KEY) ? localStorage : sessionStorage
+    storage.setItem(ACCESS_TOKEN_KEY, access)
     return access
   } catch {
     return null
@@ -199,7 +208,11 @@ service.interceptors.response.use(
     }
 
     // 其他错误，提取后端错误消息
-    const errorMessage = response?.data?.message || response?.data?.detail || error.message || '网络异常'
+    const errorMessage = response?.data?.message
+      || response?.data?.detail
+      || (!response ? '无法连接后端服务，请检查服务状态或代理配置' : '')
+      || error.message
+      || '网络异常'
     ElMessage.error(errorMessage)
     return Promise.reject(error)
   }

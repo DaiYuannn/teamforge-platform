@@ -1,19 +1,30 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { PaginatedResponse, Task } from '@/types'
 
-const { getMock, postMock } = vi.hoisted(() => ({
+const { getMock, postMock, patchMock, delMock } = vi.hoisted(() => ({
   getMock: vi.fn(),
   postMock: vi.fn(),
+  patchMock: vi.fn(),
+  delMock: vi.fn(),
 }))
 
 vi.mock('@/api/request', () => ({
   get: getMock,
   post: postMock,
-  patch: vi.fn(),
-  del: vi.fn(),
+  patch: patchMock,
+  del: delMock,
 }))
 
-import { changeTaskStatus, getTasksByProject } from '@/api/tasks'
+import {
+  changeTaskStatus,
+  createTaskDependency,
+  deleteTaskDependency,
+  getSubTasks,
+  getTaskComments,
+  getTasksByProject,
+  toggleSubTask,
+  updateTaskComment,
+} from '@/api/tasks'
 
 function task(id: number): Task {
   return { id, title: `任务 ${id}` } as Task
@@ -31,6 +42,49 @@ function page(results: Task[], next: string | null): PaginatedResponse<Task> {
 beforeEach(() => {
   getMock.mockReset()
   postMock.mockReset()
+  patchMock.mockReset()
+  delMock.mockReset()
+})
+
+describe('task collaboration API contract', () => {
+  it('scopes checklist and comments to the current task', async () => {
+    getMock.mockResolvedValue({ count: 0, next: null, previous: null, results: [] })
+
+    await getSubTasks({ parent: 42, page_size: 100, ordering: 'sort_order' })
+    await getTaskComments({ task: 42, page_size: 100, ordering: 'created_at' })
+
+    expect(getMock).toHaveBeenNthCalledWith(1, '/tasks/subtasks/', {
+      parent: 42,
+      page_size: 100,
+      ordering: 'sort_order',
+    })
+    expect(getMock).toHaveBeenNthCalledWith(2, '/tasks/comments/', {
+      task: 42,
+      page_size: 100,
+      ordering: 'created_at',
+    })
+  })
+
+  it('uses governed action and resource endpoints', async () => {
+    postMock.mockResolvedValue({})
+    patchMock.mockResolvedValue({})
+    delMock.mockResolvedValue(undefined)
+
+    await toggleSubTask(5)
+    await createTaskDependency({ task: 42, depends_on: 9 })
+    await updateTaskComment(13, { content: '更新后的进展' })
+    await deleteTaskDependency(8)
+
+    expect(postMock).toHaveBeenNthCalledWith(1, '/tasks/subtasks/5/toggle/')
+    expect(postMock).toHaveBeenNthCalledWith(2, '/tasks/dependencies/', {
+      task: 42,
+      depends_on: 9,
+    })
+    expect(patchMock).toHaveBeenCalledWith('/tasks/comments/13/', {
+      content: '更新后的进展',
+    })
+    expect(delMock).toHaveBeenCalledWith('/tasks/dependencies/8/')
+  })
 })
 
 describe('project task pagination', () => {

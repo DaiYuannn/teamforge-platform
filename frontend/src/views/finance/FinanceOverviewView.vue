@@ -116,6 +116,7 @@
         </div>
         <el-select
           v-model="filterProject"
+          aria-label="按项目筛选收支流水"
           placeholder="全部项目"
           clearable
           filterable
@@ -415,6 +416,11 @@ import { getProjects } from '@/api/projects'
 import { exportData } from '@/api/exports'
 import { downloadBlob, formatMoneyWithComma, getFinanceCategoryLabel } from '@/utils/format'
 import { useUserStore } from '@/stores/user'
+import {
+  createEChartsTooltipStyle,
+  readEChartsThemePalette,
+  useEChartsTheme,
+} from '@/composables/useEChartsTheme'
 import type {
   FinanceBudget,
   FinanceCategory,
@@ -857,13 +863,15 @@ function renderChart(): void {
   }
 
   chart ||= echarts.init(chartRef.value)
+  const palette = readEChartsThemePalette()
   chart.setOption(
     {
       animationDuration: 250,
       grid: { top: 8, right: 74, bottom: 8, left: 72, containLabel: false },
       tooltip: {
+        ...createEChartsTooltipStyle(palette),
         trigger: 'axis',
-        axisPointer: { type: 'shadow' },
+        axisPointer: { type: 'shadow', shadowStyle: { color: palette.surfaceStrong } },
         formatter: (items: any[]) => {
           const item = items[0]
           return `${item.name}<br/>${formatMoneyWithComma(item.value)}`
@@ -873,7 +881,7 @@ function renderChart(): void {
         type: 'value',
         axisLabel: { show: false },
         axisLine: { show: false },
-        splitLine: { lineStyle: { color: '#EDF1EF' } },
+        splitLine: { lineStyle: { color: palette.borderLight } },
       },
       yAxis: {
         type: 'category',
@@ -881,18 +889,18 @@ function renderChart(): void {
         data: categoryBreakdown.value.map((item) => item.name),
         axisTick: { show: false },
         axisLine: { show: false },
-        axisLabel: { color: '#46524E', fontSize: 12 },
+        axisLabel: { color: palette.textRegular, fontSize: 12 },
       },
       series: [
         {
           type: 'bar',
           data: categoryBreakdown.value.map((item) => item.value),
           barWidth: 12,
-          itemStyle: { color: '#3B8187', borderRadius: [0, 4, 4, 0] },
+          itemStyle: { color: palette.primary, borderRadius: [0, 4, 4, 0] },
           label: {
             show: true,
             position: 'right',
-            color: '#46524E',
+            color: palette.textRegular,
             fontSize: 11,
             formatter: ({ value }: { value: number }) => formatMoneyWithComma(value),
           },
@@ -906,6 +914,8 @@ function renderChart(): void {
   resizeObserver = new ResizeObserver(() => chart?.resize())
   resizeObserver.observe(chartRef.value)
 }
+
+useEChartsTheme(renderChart)
 
 async function handleExport(format: string | number | object): Promise<void> {
   const exportFormat = String(format)
@@ -955,9 +965,9 @@ onUnmounted(() => {
   align-items: center;
   gap: 8px;
   padding: 10px 12px;
-  color: #7f3030;
+  color: var(--danger-text);
   background: var(--danger-light);
-  border: 1px solid #efcfcd;
+  border: 1px solid var(--danger-border);
   border-radius: var(--radius-sm);
 }
 

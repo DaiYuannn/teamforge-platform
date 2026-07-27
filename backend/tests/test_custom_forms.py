@@ -87,6 +87,8 @@ class TestFormSubmission:
     def test_submit_form(self, member_client):
         """提交表单"""
         form = CustomForm.objects.create(name='提交表', fields=[])
+        form.fields = [{'key': 'phone', 'type': 'text', 'required': True}]
+        form.save(update_fields=['fields'])
         resp = member_client.post('/api/v1/common/form-submissions/', {
             'form': form.id, 'data': {'phone': '13800000000'},
         }, format='json')
@@ -131,3 +133,45 @@ class TestFormSubmission:
         """未认证不可访问"""
         resp = api_client.get('/api/v1/common/forms/')
         assert resp.status_code in (401, 403)
+
+    def test_submission_validates_required_types_options_and_unknown_fields(
+        self, member_client
+    ):
+        form = CustomForm.objects.create(name='Validated form', fields=[
+            {'key': 'name', 'type': 'text', 'required': True, 'min_length': 2},
+            {'key': 'score', 'type': 'number', 'min': 0, 'max': 100},
+            {'key': 'day', 'type': 'date'},
+            {'key': 'level', 'type': 'select', 'options': ['A', 'B']},
+            {'key': 'confirmed', 'type': 'switch'},
+        ])
+        invalid = member_client.post('/api/v1/common/form-submissions/', {
+            'form': form.id,
+            'data': {
+                'name': '', 'score': 'high', 'day': 'not-a-date',
+                'level': 'C', 'confirmed': 'yes', 'extra': True,
+            },
+        }, format='json')
+        assert invalid.status_code == 400
+        assert not FormSubmission.objects.filter(form=form).exists()
+
+        valid = member_client.post('/api/v1/common/form-submissions/', {
+            'form': form.id,
+            'data': {
+                'name': 'Ada', 'score': 95, 'day': '2026-07-27',
+                'level': 'A', 'confirmed': True,
+            },
+        }, format='json')
+        assert valid.status_code == 201, valid.json()
+
+    @pytest.mark.parametrize('field', [
+        {'key': 'code', 'type': 'text', 'pattern': '['},
+        {'key': 'name', 'type': 'text', 'min_length': 5, 'max_length': 2},
+        {'key': 'score', 'type': 'number', 'min': 10, 'max': 1},
+    ])
+    def test_form_definition_rejects_invalid_constraints(
+        self, admin_client, field
+    ):
+        response = admin_client.post('/api/v1/common/forms/', {
+            'name': 'Invalid constraints', 'fields': [field],
+        }, format='json')
+        assert response.status_code == 400

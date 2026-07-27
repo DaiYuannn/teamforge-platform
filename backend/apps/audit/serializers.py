@@ -27,7 +27,7 @@ class OperationLogListSerializer(serializers.ModelSerializer):
         )
         read_only_fields = fields
 
-    def get_is_success_display(self, obj):
+    def get_is_success_display(self, obj) -> str:
         """获取是否成功的显示文本"""
         return '成功' if obj.is_success else '失败'
 
@@ -58,6 +58,6 @@ class OperationLogSerializer(serializers.ModelSerializer):
         )
         read_only_fields = fields
 
-    def get_is_success_display(self, obj):
+    def get_is_success_display(self, obj) -> str:
         """获取是否成功的显示文本"""
         return '成功' if obj.is_success else '失败'

@@ -147,8 +147,8 @@ function getStageState(index: number): 'complete' | 'current' | 'upcoming' {
 .stage-item[data-state='complete'] .stage-dot,
 .stage-item[data-state='current'] .stage-dot {
   color: #fff;
-  background: var(--color-primary);
-  border-color: var(--color-primary);
+  background: var(--color-primary-fill);
+  border-color: var(--color-primary-fill);
 }
 
 .stage-item[data-state='current'] .stage-dot { box-shadow: 0 0 0 3px var(--color-primary-soft); }
@@ -159,13 +159,13 @@ function getStageState(index: number): 'complete' | 'current' | 'upcoming' {
 .abnormal-state {
   min-height: 42px;
   padding: 8px 10px;
-  color: #7f3030;
+  color: var(--danger-text);
   background: var(--danger-light);
   border-left: 3px solid var(--color-danger);
 }
 
 .abnormal-state strong { color: var(--color-danger); font-size: 13px; }
-.abnormal-state p { color: #744343; font-size: 11px; line-height: 1.45; text-align: right; }
+.abnormal-state p { color: var(--danger-text); font-size: 11px; line-height: 1.45; text-align: right; }
 
 @media screen and (max-width: 520px) {
   .progress-heading { align-items: flex-end; }

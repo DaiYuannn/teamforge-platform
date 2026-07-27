@@ -2,13 +2,14 @@
 from decimal import Decimal
 
 from django.db.models import Count, Q, Sum
+from django.db.models.functions import TruncMonth
 from django.http import FileResponse
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.viewsets import ModelViewSet
 
-from common.permissions import IsInternalTeamMember
+from common.permissions import IsInternalTeamMember, user_has_custom_permission
 from common.response import error_response, success_response
 from .custom_report_models import CustomReport
 from .custom_report_serializers import (
@@ -34,7 +35,11 @@ class CustomReportViewSet(ModelViewSet):
 
     def get_queryset(self):
         queryset = super().get_queryset()
-        if self.request.user.global_role in ('teacher', 'sys_admin'):
+        if (
+            self.request.user.global_role in ('teacher', 'sys_admin')
+            or user_has_custom_permission(self.request.user, 'report.view')
+            or user_has_custom_permission(self.request.user, 'report.manage')
+        ):
             return queryset
         return queryset.filter(created_by=self.request.user)
 
@@ -56,6 +61,7 @@ class CustomReportViewSet(ModelViewSet):
         if (
             instance.created_by_id != request.user.id
             and request.user.global_role not in ('teacher', 'sys_admin')
+            and not user_has_custom_permission(request.user, 'report.manage')
         ):
             return error_response(message='只能修改自己创建的报表', code=403)
         serializer = self.get_serializer(
@@ -74,6 +80,7 @@ class CustomReportViewSet(ModelViewSet):
         if (
             instance.created_by_id != request.user.id
             and request.user.global_role not in ('teacher', 'sys_admin')
+            and not user_has_custom_permission(request.user, 'report.manage')
         ):
             return error_response(message='只能删除自己创建的报表', code=403)
         instance.delete()
@@ -111,13 +118,18 @@ def _generate_report_data(report, *, user):
     group_by = config.get('group_by', '')
     chart_type = config.get('chart_type', 'table')
     result = {
+        'report_type': report.report_type,
         'data_source': data_source,
         'group_by': group_by,
         'chart_type': chart_type,
         'filters': filters,
         'summary': {},
         'groups': [],
+        'value_key': 'count',
     }
+    trend_queryset = None
+    trend_date_field = 'created_at'
+    trend_value_field = None
 
     if data_source == 'task':
         from apps.tasks.models import Task
@@ -127,6 +139,7 @@ def _generate_report_data(report, *, user):
             qs = qs.filter(project_id=filters['project_id'])
         if filters.get('status'):
             qs = qs.filter(status=filters['status'])
+        trend_queryset = qs
         result['summary'] = {
             'total': qs.count(),
             'done': qs.filter(status=Task.Status.DONE).count(),
@@ -163,6 +176,10 @@ def _generate_report_data(report, *, user):
             qs = qs.filter(project_id=filters['project_id'])
         if filters.get('category'):
             qs = qs.filter(category=filters['category'])
+        trend_queryset = qs
+        trend_date_field = 'expense_date'
+        trend_value_field = 'amount'
+        result['value_key'] = 'total'
         total = qs.aggregate(total=Sum('amount'))['total'] or Decimal('0')
         result['summary'] = {'total_amount': float(total), 'count': qs.count()}
         grouping = 'project__name' if group_by == 'project' else 'category'
@@ -189,6 +206,7 @@ def _generate_report_data(report, *, user):
             qs = qs.filter(project_id=filters['project_id'])
         if filters.get('level'):
             qs = qs.filter(level=filters['level'])
+        trend_queryset = qs
         result['summary'] = {
             'total': qs.count(),
             'awarded': qs.filter(is_awarded=True).count(),
@@ -211,6 +229,7 @@ def _generate_report_data(report, *, user):
         qs = Project.objects.all()
         if filters.get('status'):
             qs = qs.filter(status=filters['status'])
+        trend_queryset = qs
         result['summary'] = {
             'total': qs.count(),
             'active': qs.filter(status=Project.Status.ACTIVE).count(),
@@ -239,6 +258,44 @@ def _generate_report_data(report, *, user):
             ]
     else:
         result['summary'] = {'message': '未知数据源'}
+
+    if report.report_type == CustomReport.ReportType.TREND and trend_queryset is not None:
+        annotations = {'count': Count('id')}
+        if trend_value_field:
+            annotations['total'] = Sum(trend_value_field)
+        rows = (
+            trend_queryset
+            .annotate(period=TruncMonth(trend_date_field))
+            .values('period')
+            .annotate(**annotations)
+            .order_by('period')
+        )
+        result['groups'] = [{
+            'key': row['period'].strftime('%Y-%m') if row['period'] else 'unknown',
+            'label': row['period'].strftime('%Y-%m') if row['period'] else 'Unknown',
+            'count': row['count'],
+            **({'total': float(row['total'] or 0)} if trend_value_field else {}),
+        } for row in rows]
+        result['group_by'] = 'month'
+    elif report.report_type == CustomReport.ReportType.COMPARISON:
+        value_key = result['value_key']
+        values = [float(group.get(value_key, 0) or 0) for group in result['groups']]
+        aggregate = sum(values)
+        average = aggregate / len(values) if values else 0
+        ranked = sorted(
+            zip(result['groups'], values), key=lambda item: item[1], reverse=True,
+        )
+        result['groups'] = [{
+            **group,
+            'rank': index,
+            'share_percent': round(value / aggregate * 100, 2) if aggregate else 0,
+            'delta_from_average': round(value - average, 2),
+        } for index, (group, value) in enumerate(ranked, start=1)]
+        result['comparison'] = {
+            'average': round(average, 2),
+            'maximum': max(values) if values else 0,
+            'minimum': min(values) if values else 0,
+        }
 
     return result
 

@@ -105,7 +105,7 @@
         </el-table-column>
       </el-table>
 
-      <el-pagination
+      <AccessiblePagination
         v-model:current-page="queryParams.page"
         v-model:page-size="queryParams.page_size"
         :total="total"
@@ -154,7 +154,7 @@
         accent="#76559B"
       />
 
-      <el-pagination
+      <AccessiblePagination
         v-if="total > queryParams.page_size"
         v-model:current-page="queryParams.page"
         :total="total"
@@ -309,9 +309,9 @@ watch(
   align-items: center;
   gap: 8px;
   padding: 10px 12px;
-  color: #7f3030;
+  color: var(--danger-text);
   background: var(--danger-light);
-  border: 1px solid #efcfcd;
+  border: 1px solid var(--danger-border);
   border-radius: var(--radius-sm);
 }
 

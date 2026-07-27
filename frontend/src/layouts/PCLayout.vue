@@ -1,12 +1,12 @@
 <template>
   <div class="pc-layout">
     <!-- 侧边栏 -->
-    <el-aside :width="sidebarCollapsed ? '72px' : '248px'" class="pc-sidebar" aria-label="主导航">
+    <el-aside :width="sidebarCollapsed ? '72px' : '220px'" class="pc-sidebar" aria-label="主导航">
       <div class="logo">
         <div class="logo-icon-wrapper">
           <el-icon size="22"><Monitor /></el-icon>
         </div>
-        <span v-show="!sidebarCollapsed" class="logo-text">团队管理平台</span>
+        <span v-show="!sidebarCollapsed" class="logo-text">{{ t('团队管理平台') }}</span>
       </div>
       <el-menu
         :default-active="activeMenu"
@@ -25,7 +25,7 @@
         >
           <template #title>
             <el-icon><component :is="group.icon" /></el-icon>
-            <span>{{ group.title }}</span>
+            <span>{{ t(group.title) }}</span>
           </template>
           <el-menu-item
             v-for="item in group.items"
@@ -34,7 +34,7 @@
             class="sidebar-menu-item"
           >
             <el-icon><component :is="item.icon" /></el-icon>
-            <template #title>{{ item.title }}</template>
+            <template #title>{{ t(item.title) }}</template>
           </el-menu-item>
         </el-sub-menu>
       </el-menu>
@@ -67,14 +67,16 @@
         <div class="header-right">
           <!-- 全局搜索 -->
           <el-input
+            v-if="canUseGlobalSearch"
             v-model="searchQuery"
-            placeholder="搜索项目/任务/成员..."
+            :placeholder="t('搜索项目/任务/成员...')"
             :prefix-icon="Search"
             class="header-search"
             clearable
             @focus="showSearchDialog = true"
             @keyup.enter="handleGlobalSearch"
           />
+          <AccountThemeToggle />
           <!-- 通知铃铛组件 -->
           <NotificationBell />
           <!-- 用户信息下拉 -->
@@ -86,13 +88,13 @@
                 :size="32"
                 :show-name="false"
               />
-              <span class="user-name">{{ userInfo?.name || '用户' }}</span>
+              <span class="user-name">{{ userInfo?.name || t('用户') }}</span>
               <el-icon><ArrowDown /></el-icon>
             </span>
             <template #dropdown>
               <el-dropdown-menu>
-                <el-dropdown-item command="profile">个人中心</el-dropdown-item>
-                <el-dropdown-item command="logout" divided>退出登录</el-dropdown-item>
+                <el-dropdown-item command="profile">{{ t('个人中心') }}</el-dropdown-item>
+                <el-dropdown-item command="logout" divided>{{ t('退出登录') }}</el-dropdown-item>
               </el-dropdown-menu>
             </template>
           </el-dropdown>
@@ -134,42 +136,58 @@
           <template v-else>
             <div v-if="searchResults.projects.length" class="search-group">
               <h4>项目 ({{ searchResults.projects.length }})</h4>
-              <div v-for="item in searchResults.projects" :key="'p'+item.id" class="search-item" @click="goTo(item.url)">
+              <button v-for="item in searchResults.projects" :key="'p'+item.id" type="button" class="search-item" @click="goTo(item.url)">
                 <el-icon><Folder /></el-icon>
                 <span>{{ item.name }}</span>
                 <el-tag size="small" :type="item.status === 'active' ? 'success' : 'info'">{{ item.status === 'active' ? '进行中' : '已归档' }}</el-tag>
-              </div>
+              </button>
             </div>
             <div v-if="searchResults.tasks.length" class="search-group">
               <h4>任务 ({{ searchResults.tasks.length }})</h4>
-              <div v-for="item in searchResults.tasks" :key="'t'+item.id" class="search-item" @click="goTo(item.url)">
+              <button v-for="item in searchResults.tasks" :key="'t'+item.id" type="button" class="search-item" @click="goTo(item.url)">
                 <el-icon><Tickets /></el-icon>
                 <span>{{ item.title }}</span>
                 <el-tag size="small">{{ item.status_display }}</el-tag>
-              </div>
+              </button>
             </div>
             <div v-if="searchResults.members.length" class="search-group">
               <h4>成员 ({{ searchResults.members.length }})</h4>
-              <div v-for="item in searchResults.members" :key="'m'+item.id" class="search-item" @click="goTo(item.url)">
+              <button v-for="item in searchResults.members" :key="'m'+item.id" type="button" class="search-item" @click="goTo(item.url)">
                 <el-icon><User /></el-icon>
                 <span>{{ item.name }}</span>
                 <el-tag size="small" type="info">{{ item.global_role_display }}</el-tag>
-              </div>
+              </button>
             </div>
             <div v-if="searchResults.files.length" class="search-group">
               <h4>文件 ({{ searchResults.files.length }})</h4>
-              <div v-for="item in searchResults.files" :key="'f'+item.id" class="search-item" @click="goTo(item.url)">
+              <button v-for="item in searchResults.files" :key="'f'+item.id" type="button" class="search-item" @click="goTo(item.url)">
                 <el-icon><Document /></el-icon>
                 <span>{{ item.name }}</span>
                 <el-tag size="small" :type="item.level === 'sensitive' ? 'danger' : item.level === 'internal' ? 'warning' : 'success'">{{ item.level_display }}</el-tag>
-              </div>
+              </button>
             </div>
             <div v-if="searchResults.competitions.length" class="search-group">
               <h4>比赛 ({{ searchResults.competitions.length }})</h4>
-              <div v-for="item in searchResults.competitions" :key="'c'+item.id" class="search-item" @click="goTo(item.url)">
+              <button v-for="item in searchResults.competitions" :key="'c'+item.id" type="button" class="search-item" @click="goTo(item.url)">
                 <el-icon><Trophy /></el-icon>
                 <span>{{ item.name }}</span>
-              </div>
+              </button>
+            </div>
+            <div v-if="searchResults.knowledge.length" class="search-group">
+              <h4>知识 ({{ searchResults.knowledge.length }})</h4>
+              <button v-for="item in searchResults.knowledge" :key="'k'+item.id" type="button" class="search-item" @click="goTo(item.url)">
+                <el-icon><Collection /></el-icon>
+                <span>{{ item.title }}</span>
+                <el-tag size="small" type="info">{{ item.project_name }}</el-tag>
+              </button>
+            </div>
+            <div v-if="searchResults.discussions.length" class="search-group">
+              <h4>讨论 ({{ searchResults.discussions.length }})</h4>
+              <button v-for="item in searchResults.discussions" :key="'d'+item.id" type="button" class="search-item" @click="goTo(item.url)">
+                <el-icon><ChatDotRound /></el-icon>
+                <span>{{ item.title }}</span>
+                <el-tag size="small" type="info">{{ item.project_name }}</el-tag>
+              </button>
             </div>
           </template>
         </template>
@@ -181,27 +199,35 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessageBox } from 'element-plus'
-import { Search, Folder, Tickets, User, Document, Trophy, Monitor, Fold, Expand, ArrowDown } from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { Search, Folder, Tickets, User, Document, Trophy, Collection, ChatDotRound, Monitor, Fold, Expand, ArrowDown } from '@element-plus/icons-vue'
 import { useAppStore } from '@/stores/app'
 import { useUserStore } from '@/stores/user'
 import NotificationBell from '@/components/NotificationBell.vue'
 import AvatarWithName from '@/components/AvatarWithName.vue'
+import AccountThemeToggle from '@/components/AccountThemeToggle.vue'
 import { get } from '@/api/request'
 import {
   findNavigationGroup,
   findNavigationItem,
+  getFavoriteNavigationItems,
   getVisibleNavigationGroups,
 } from '@/config/navigation'
+import { parseSearchTarget } from '@/utils/globalSearch'
+import { useI18n } from '@/i18n'
 
 const route = useRoute()
 const router = useRouter()
 const appStore = useAppStore()
 const userStore = useUserStore()
+const { t } = useI18n()
 
 // 侧边栏折叠状态
 const sidebarCollapsed = computed(() => appStore.sidebarCollapsed)
 const userInfo = computed(() => userStore.userInfo)
+const canUseGlobalSearch = computed(() => !['external', 'exited'].includes(
+  userStore.userInfo?.membership_status || 'active',
+))
 
 // 切换侧边栏
 function toggleSidebar(): void {
@@ -222,11 +248,11 @@ const navigationGroups = computed(() => {
     if (rightIndex < 0) return -1
     return leftIndex - rightIndex
   })
-  const favoritePaths = new Set(userStore.preferences?.favorite_routes || [])
-  const favoriteItems = ordered.flatMap((group) => group.items)
-    .filter((item, index, list) =>
-      favoritePaths.has(item.path) && list.findIndex((candidate) => candidate.path === item.path) === index
-    )
+  const favoriteItems = getFavoriteNavigationItems(
+    userStore.preferences?.favorite_routes || [],
+    userStore.role,
+    userStore.userInfo?.membership_status,
+  )
   return favoriteItems.length
     ? [{ key: 'favorites', title: '常用入口', icon: 'Star', items: favoriteItems }, ...ordered]
     : ordered
@@ -239,10 +265,10 @@ const activeMenu = computed(() => activeNavigationItem.value?.path || route.path
 const defaultOpeneds = computed(() => [activeNavigationGroup.value?.key || 'workspace'])
 
 // 当前页面标题
-const currentTitle = computed(() =>
+const currentTitle = computed(() => t(
   (route.meta.title as string) || activeNavigationItem.value?.title || '团队管理平台',
-)
-const currentGroupTitle = computed(() => activeNavigationGroup.value?.title || '团队工作区')
+))
+const currentGroupTitle = computed(() => t(activeNavigationGroup.value?.title || '团队工作区'))
 
 // 下拉菜单命令处理
 async function handleCommand(command: string): Promise<void> {
@@ -272,6 +298,8 @@ interface SearchResult {
   members: Array<{ id: number; name: string; global_role_display: string; url: string }>
   files: Array<{ id: number; name: string; level_display: string; level: string; url: string }>
   competitions: Array<{ id: number; name: string; url: string }>
+  knowledge: Array<{ id: number; title: string; project_name: string; url: string }>
+  discussions: Array<{ id: number; title: string; project_name: string; url: string }>
   total: number
   query: string
 }
@@ -283,6 +311,7 @@ const searchResults = ref<SearchResult | null>(null)
 let searchTimer: ReturnType<typeof setTimeout> | null = null
 
 async function handleGlobalSearch(): Promise<void> {
+  if (!canUseGlobalSearch.value) return
   if (!searchQuery.value.trim()) {
     searchResults.value = null
     return
@@ -293,7 +322,7 @@ async function handleGlobalSearch(): Promise<void> {
     const res = await get<SearchResult>('/dashboard/search/', { q: searchQuery.value, limit: 5 })
     searchResults.value = res
   } catch {
-    // 错误已处理
+    ElMessage.error('全局搜索失败，请稍后重试')
   } finally {
     searching.value = false
   }
@@ -308,12 +337,7 @@ function debouncedSearch(): void {
 
 function goTo(url: string): void {
   showSearchDialog.value = false
-  if (url.includes('?')) {
-    const [path, query] = url.split('?')
-    router.push({ path, query: { focus: query.split('=')[1] } })
-  } else {
-    router.push(url)
-  }
+  router.push(parseSearchTarget(url))
 }
 </script>
 
@@ -382,14 +406,14 @@ function goTo(url: string): void {
       background: transparent;
     }
     &::-webkit-scrollbar-thumb {
-      background: rgba(24, 34, 31, 0.14);
+      background: var(--scrollbar-thumb);
       border-radius: 2px;
       &:hover {
-        background: rgba(24, 34, 31, 0.24);
+        background: var(--scrollbar-thumb-hover);
       }
     }
     scrollbar-width: thin;
-    scrollbar-color: rgba(24, 34, 31, 0.14) transparent;
+    scrollbar-color: var(--scrollbar-thumb) transparent;
   }
 
   :deep(.el-sub-menu__title) {
@@ -512,7 +536,7 @@ function goTo(url: string): void {
           box-shadow: 0 0 0 1px var(--border-color, #dce3e0) inset;
         }
         &.is-focus {
-          background: #fff;
+          background: var(--el-fill-color-blank, var(--bg-card));
           box-shadow: 0 0 0 1px var(--primary-color, #176b73) inset;
         }
       }
@@ -520,7 +544,7 @@ function goTo(url: string): void {
 
     .header-icon {
       cursor: pointer;
-      color: #606266;
+      color: var(--text-regular, #52605b);
       &:hover {
         color: var(--primary-color, #176b73);
       }
@@ -640,9 +664,15 @@ function goTo(url: string): void {
 
   .search-item {
     display: flex;
+    width: 100%;
     align-items: center;
     gap: 8px;
     padding: 8px 12px;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    background: transparent;
+    border: 0;
     border-radius: 6px;
     cursor: pointer;
     transition: background 0.2s;
@@ -650,6 +680,11 @@ function goTo(url: string): void {
 
     &:hover {
       background: var(--el-fill-color-light);
+    }
+
+    &:focus-visible {
+      outline: 2px solid var(--el-color-primary);
+      outline-offset: -2px;
     }
 
     .el-icon {

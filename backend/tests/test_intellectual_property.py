@@ -65,6 +65,18 @@ def make_application(project, main_writer=None, **extra):
 @pytest.mark.permission
 @pytest.mark.django_db
 class TestIPApplicationPermissions:
+    def test_teacher_can_delete_application(
+        self, teacher_client, make_project
+    ):
+        application = make_application(make_project())
+
+        response = teacher_client.delete(f'{APPLICATION_URL}{application.id}/')
+
+        assert response.status_code == 200, response.json()
+        assert not IntellectualPropertyApplication.objects.filter(
+            pk=application.id
+        ).exists()
+
     def test_project_leader_can_create_but_other_member_cannot(
         self, leader_client, make_project, make_user
     ):

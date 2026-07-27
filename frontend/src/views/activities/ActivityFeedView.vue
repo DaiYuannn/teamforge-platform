@@ -125,7 +125,7 @@
       </div>
 
       <div class="pagination-wrapper">
-        <el-pagination
+        <AccessiblePagination
           v-model:current-page="page"
           :page-size="pageSize"
           :total="total"
@@ -536,13 +536,13 @@ onMounted(() => {
   background-color: var(--color-primary-soft);
 }
 .level-2 {
-  background-color: #bad3d3;
+  background-color: color-mix(in srgb, var(--color-primary-fill) 38%, var(--color-surface));
 }
 .level-3 {
-  background-color: #5d969b;
+  background-color: color-mix(in srgb, var(--color-primary-fill) 68%, var(--color-surface));
 }
 .level-4 {
-  background-color: var(--color-primary);
+  background-color: var(--color-primary-fill);
 }
 .level-future {
   background-color: transparent;

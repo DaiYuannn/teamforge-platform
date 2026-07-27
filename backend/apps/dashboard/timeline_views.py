@@ -8,11 +8,15 @@ from collections import defaultdict
 
 from django.utils import timezone
 from django.db.models import Q, Count
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import OpenApiParameter, extend_schema
+from rest_framework import serializers
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
 
 from common.permissions import IsInternalTeamMember
 from common.response import success_response
+from common.schema import success_response_schema
 from apps.projects.models import Project, ProjectStageLog
 from apps.tasks.models import Task
 from apps.finance.models import FinanceExpense
@@ -23,6 +27,214 @@ from apps.intellectual_property.models import (
     IntellectualPropertyApplication,
     IPReturnRecord,
 )
+from .portal_serializers import PortalSettingsSerializer
+
+
+class TimelineEventSerializer(serializers.Serializer):
+    id = serializers.CharField()
+    type = serializers.CharField()
+    title = serializers.CharField()
+    description = serializers.CharField()
+    timestamp = serializers.CharField(allow_null=True)
+    date = serializers.DateField(allow_null=True)
+    project_id = serializers.IntegerField(allow_null=True)
+    project_name = serializers.CharField(allow_blank=True)
+    project_code = serializers.CharField(allow_blank=True)
+    operator_name = serializers.CharField(allow_blank=True)
+    metadata = serializers.JSONField()
+
+
+class TimelineDataSerializer(serializers.Serializer):
+    total = serializers.IntegerField()
+    events = TimelineEventSerializer(many=True)
+
+
+class CompetitionMatrixLevelSerializer(serializers.Serializer):
+    key = serializers.CharField()
+    name = serializers.CharField()
+
+
+class CompetitionMatrixCellSerializer(serializers.Serializer):
+    level_display = serializers.CharField()
+    total = serializers.IntegerField()
+    awarded = serializers.IntegerField()
+    promoted = serializers.IntegerField()
+
+
+class CompetitionMatrixTotalSerializer(serializers.Serializer):
+    total = serializers.IntegerField()
+    awarded = serializers.IntegerField()
+    promoted = serializers.IntegerField()
+
+
+class CompetitionMatrixRowSerializer(serializers.Serializer):
+    project_id = serializers.IntegerField()
+    project_name = serializers.CharField()
+    project_code = serializers.CharField()
+    current_stage = serializers.CharField()
+    current_stage_display = serializers.CharField()
+    status = serializers.CharField()
+    cells = serializers.DictField(child=CompetitionMatrixCellSerializer())
+
+
+class CompetitionMatrixDataSerializer(serializers.Serializer):
+    levels = CompetitionMatrixLevelSerializer(many=True)
+    matrix = CompetitionMatrixRowSerializer(many=True)
+    level_totals = serializers.DictField(child=CompetitionMatrixTotalSerializer())
+
+
+class CompetitionFunnelItemSerializer(serializers.Serializer):
+    level = serializers.CharField()
+    level_display = serializers.CharField()
+    total = serializers.IntegerField()
+    promoted = serializers.IntegerField()
+    awarded = serializers.IntegerField()
+    ongoing = serializers.IntegerField()
+    completed = serializers.IntegerField()
+    promotion_rate = serializers.FloatField()
+    award_rate = serializers.FloatField()
+
+
+class CompetitionFunnelDataSerializer(serializers.Serializer):
+    funnel = CompetitionFunnelItemSerializer(many=True)
+    total_competitions = serializers.IntegerField()
+    total_promoted = serializers.IntegerField()
+    total_awarded = serializers.IntegerField()
+
+
+class ProjectCalendarEventSerializer(serializers.Serializer):
+    type = serializers.CharField()
+    label = serializers.CharField()
+    level = serializers.CharField(required=False)
+    level_display = serializers.CharField(required=False)
+
+
+class ProjectCalendarDaySerializer(serializers.Serializer):
+    date = serializers.DateField()
+    count = serializers.IntegerField()
+    events = ProjectCalendarEventSerializer(many=True)
+
+
+class ProjectCalendarDataSerializer(serializers.Serializer):
+    year = serializers.IntegerField()
+    calendar = ProjectCalendarDaySerializer(many=True)
+
+
+class ProjectGanttStageSerializer(serializers.Serializer):
+    stage = serializers.CharField()
+    stage_display = serializers.CharField(allow_blank=True)
+    date = serializers.DateField(allow_null=True)
+    operator = serializers.CharField()
+
+
+class ProjectGanttMilestoneSerializer(serializers.Serializer):
+    date = serializers.DateField()
+    label = serializers.CharField()
+    level = serializers.CharField()
+    level_display = serializers.CharField()
+    is_awarded = serializers.BooleanField()
+    award_level = serializers.CharField(allow_blank=True)
+
+
+class ProjectGanttItemSerializer(serializers.Serializer):
+    project_id = serializers.IntegerField()
+    project_name = serializers.CharField()
+    project_code = serializers.CharField()
+    start_date = serializers.DateField(allow_null=True)
+    planned_end_date = serializers.DateField(allow_null=True)
+    actual_end_date = serializers.DateField(allow_null=True)
+    current_stage = serializers.CharField()
+    current_stage_display = serializers.CharField()
+    status = serializers.CharField()
+    status_display = serializers.CharField()
+    priority = serializers.CharField()
+    leader_name = serializers.CharField(allow_blank=True)
+    stages = ProjectGanttStageSerializer(many=True)
+    milestones = ProjectGanttMilestoneSerializer(many=True)
+
+
+class ProjectGanttDataSerializer(serializers.Serializer):
+    total = serializers.IntegerField()
+    projects = ProjectGanttItemSerializer(many=True)
+
+
+class PublicPortalStatsSerializer(serializers.Serializer):
+    total_projects = serializers.IntegerField()
+    awarded_projects = serializers.IntegerField()
+    closed_projects = serializers.IntegerField()
+    total_competitions = serializers.IntegerField()
+    awarded_competitions = serializers.IntegerField()
+    total_ip = serializers.IntegerField()
+
+
+class PublicPortalProjectStatsSerializer(serializers.Serializer):
+    total_projects = serializers.IntegerField()
+    active_projects = serializers.IntegerField()
+    completed_projects = serializers.IntegerField()
+
+
+class PublicPortalAnnouncementSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    title = serializers.CharField()
+    content = serializers.CharField()
+    category = serializers.CharField()
+    category_display = serializers.CharField()
+    is_pinned = serializers.BooleanField()
+    author_name = serializers.CharField(allow_blank=True)
+    published_at = serializers.DateTimeField(allow_null=True)
+
+
+class PublicPortalAwardSerializer(serializers.Serializer):
+    competition_name = serializers.CharField()
+    level = serializers.CharField()
+    level_display = serializers.CharField()
+    award_level = serializers.CharField(allow_blank=True)
+
+
+class PublicPortalProjectSerializer(serializers.Serializer):
+    project_id = serializers.IntegerField()
+    project_name = serializers.CharField()
+    project_code = serializers.CharField()
+    intro = serializers.CharField(allow_blank=True)
+    leader_name = serializers.CharField(allow_blank=True)
+    start_date = serializers.DateField(allow_null=True)
+    awards = PublicPortalAwardSerializer(many=True)
+    is_featured = serializers.BooleanField()
+    image_url = serializers.CharField(allow_blank=True)
+
+
+class PublicPortalIPSerializer(serializers.Serializer):
+    ip_id = serializers.IntegerField()
+    title = serializers.CharField()
+    ip_type = serializers.CharField()
+    ip_type_display = serializers.CharField()
+    application_code = serializers.CharField()
+    authorized_date = serializers.DateField(allow_null=True)
+    intro = serializers.CharField(allow_blank=True)
+    is_featured = serializers.BooleanField()
+    image_url = serializers.CharField(allow_blank=True)
+
+
+class PublicPortalMemberSerializer(serializers.Serializer):
+    user_id = serializers.IntegerField()
+    name = serializers.CharField()
+    global_role = serializers.CharField()
+    global_role_display = serializers.CharField()
+    grade = serializers.CharField(allow_blank=True)
+    major = serializers.CharField(allow_blank=True)
+    project_count = serializers.IntegerField()
+    summary = serializers.CharField(allow_blank=True)
+    is_featured = serializers.BooleanField()
+
+
+class PublicPortalDataSerializer(serializers.Serializer):
+    stats = PublicPortalStatsSerializer()
+    project_statistics = PublicPortalProjectStatsSerializer()
+    announcements = PublicPortalAnnouncementSerializer(many=True)
+    awarded_projects = PublicPortalProjectSerializer(many=True)
+    ip_results = PublicPortalIPSerializer(many=True)
+    core_members = PublicPortalMemberSerializer(many=True)
+    settings = PortalSettingsSerializer()
 
 
 def _fmt_dt(dt):
@@ -55,6 +267,37 @@ class TimelineEventView(APIView):
     """
     permission_classes = [IsInternalTeamMember]
 
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name='project_id', type=OpenApiTypes.INT,
+                location=OpenApiParameter.QUERY, required=False,
+            ),
+            OpenApiParameter(
+                name='start_date', type=OpenApiTypes.DATE,
+                location=OpenApiParameter.QUERY, required=False,
+            ),
+            OpenApiParameter(
+                name='end_date', type=OpenApiTypes.DATE,
+                location=OpenApiParameter.QUERY, required=False,
+            ),
+            OpenApiParameter(
+                name='event_type', type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY, required=False,
+                description='Comma-separated timeline event types.',
+            ),
+            OpenApiParameter(
+                name='limit', type=OpenApiTypes.INT,
+                location=OpenApiParameter.QUERY, default=200,
+                description='Maximum returned events, capped at 500.',
+            ),
+        ],
+        responses={
+            200: success_response_schema(
+                'TimelineResponse', TimelineDataSerializer(),
+            ),
+        },
+    )
     def get(self, request):
         project_id = request.query_params.get('project_id')
         start_date = request.query_params.get('start_date')
@@ -390,6 +633,13 @@ class CompetitionMatrixView(APIView):
     """
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        responses={
+            200: success_response_schema(
+                'CompetitionMatrixResponse', CompetitionMatrixDataSerializer(),
+            ),
+        },
+    )
     def get(self, request):
         levels = ['school', 'city', 'province', 'national']
         level_names = {
@@ -443,6 +693,13 @@ class CompetitionFunnelView(APIView):
     """
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        responses={
+            200: success_response_schema(
+                'CompetitionFunnelResponse', CompetitionFunnelDataSerializer(),
+            ),
+        },
+    )
     def get(self, request):
         levels = ['school', 'city', 'province', 'national']
         level_names = {
@@ -494,6 +751,23 @@ class ProjectCalendarView(APIView):
     """
     permission_classes = [IsInternalTeamMember]
 
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name='year', type=OpenApiTypes.INT,
+                location=OpenApiParameter.QUERY, required=False,
+            ),
+            OpenApiParameter(
+                name='project_id', type=OpenApiTypes.INT,
+                location=OpenApiParameter.QUERY, required=False,
+            ),
+        ],
+        responses={
+            200: success_response_schema(
+                'ProjectCalendarResponse', ProjectCalendarDataSerializer(),
+            ),
+        },
+    )
     def get(self, request):
         import datetime
         now = timezone.now()
@@ -591,6 +865,23 @@ class ProjectGanttView(APIView):
     """
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name='project_id', type=OpenApiTypes.INT,
+                location=OpenApiParameter.QUERY, required=False,
+            ),
+            OpenApiParameter(
+                name='status', type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY, required=False,
+            ),
+        ],
+        responses={
+            200: success_response_schema(
+                'ProjectGanttResponse', ProjectGanttDataSerializer(),
+            ),
+        },
+    )
     def get(self, request):
         project_id = request.query_params.get('project_id')
         status = request.query_params.get('status')
@@ -669,6 +960,13 @@ class PublicPortalView(APIView):
     """
     permission_classes = []  # 公开访问
 
+    @extend_schema(
+        responses={
+            200: success_response_schema(
+                'PublicPortalResponse', PublicPortalDataSerializer(),
+            ),
+        },
+    )
     def get(self, request):
         from apps.users.models import User
         from apps.notifications.models import Announcement

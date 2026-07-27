@@ -1,6 +1,6 @@
 <template>
   <div class="page-container sensitive-center-page">
-    <PageHeader title="敏感资料管理" subtitle="资料脱敏、访问授权与审批工作区">
+    <PageHeader title="敏感资料" subtitle="资料目录、我的访问申请与访问审批工作区">
       <template #meta>
         <span class="page-meta">安全访问全程受授权时限控制</span>
       </template>
@@ -56,14 +56,14 @@
         </div>
       </el-tab-pane>
 
-      <el-tab-pane label="资料查看申请" name="requests">
+      <el-tab-pane label="我的访问申请" name="requests">
         <template #label>
-          <span class="tab-label"><el-icon><View /></el-icon>查看申请</span>
+          <span class="tab-label"><el-icon><View /></el-icon>我的访问申请</span>
         </template>
         <div class="pane-heading">
           <div>
-            <h2>资料查看申请</h2>
-            <span>{{ myRequestsList.length }} 条申请记录</span>
+            <h2>我的访问申请</h2>
+            <span>{{ myRequestsTotal }} 条申请记录</span>
           </div>
           <el-button type="primary" :icon="Plus" @click="handleApply">申请查看</el-button>
         </div>
@@ -166,19 +166,32 @@
           </article>
           <el-empty v-if="myRequestsList.length === 0 && !requestsLoading" description="暂无访问申请" />
         </div>
+        <footer v-if="myRequestsTotal > 0" class="pagination-wrapper">
+          <AccessiblePagination
+            v-model:current-page="myRequestsPage"
+            v-model:page-size="myRequestsPageSize"
+            :total="myRequestsTotal"
+            :page-sizes="[10, 20, 50]"
+            :layout="isMobile ? 'prev, pager, next' : 'total, sizes, prev, pager, next'"
+            :pager-count="isMobile ? 5 : 7"
+            background
+            @size-change="handleMyRequestsPageSizeChange"
+            @current-change="loadMyRequests"
+          />
+        </footer>
       </el-tab-pane>
 
-      <el-tab-pane label="待我审批" name="pending">
+      <el-tab-pane v-if="canApprove" label="访问审批队列" name="pending">
         <template #label>
-          <span class="tab-label"><el-icon><CircleCheck /></el-icon>待我审批</span>
+          <span class="tab-label"><el-icon><CircleCheck /></el-icon>访问审批队列</span>
         </template>
-        <div v-permission="['sens_approver', 'sys_admin', 'teacher']">
+        <div>
           <div class="pane-heading pending-heading">
             <div>
-              <h2>待我审批</h2>
-              <span>{{ pendingList.length }} 项待处理</span>
+              <h2>访问审批队列</h2>
+              <span>{{ pendingTotal }} 项待处理</span>
             </div>
-            <el-tag v-if="pendingList.length" type="warning" size="small" effect="plain">需要处理</el-tag>
+            <el-tag v-if="pendingTotal" type="warning" size="small" effect="plain">需要处理</el-tag>
           </div>
 
           <div v-if="!isMobile" class="table-shell">
@@ -234,6 +247,19 @@
             </article>
             <el-empty v-if="pendingList.length === 0 && !pendingLoading" description="暂无待审批申请" />
           </div>
+          <footer v-if="pendingTotal > 0" class="pagination-wrapper">
+            <AccessiblePagination
+              v-model:current-page="pendingPage"
+              v-model:page-size="pendingPageSize"
+              :total="pendingTotal"
+              :page-sizes="[10, 20, 50]"
+              :layout="isMobile ? 'prev, pager, next' : 'total, sizes, prev, pager, next'"
+              :pager-count="isMobile ? 5 : 7"
+              background
+              @size-change="handlePendingPageSizeChange"
+              @current-change="loadPending"
+            />
+          </footer>
         </div>
       </el-tab-pane>
     </el-tabs>
@@ -327,11 +353,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted, onUnmounted } from 'vue'
+import { computed, ref, reactive, onMounted, onUnmounted, watch } from 'vue'
+import { useRoute, useRouter, type LocationQueryRaw } from 'vue-router'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
 import { CircleCheck, CircleClose, Download, Files, Plus, View } from '@element-plus/icons-vue'
 import {
   downloadSensitiveAttachment,
+  getAccessRequest,
   getSensitiveData,
   getMyAccessRequests,
   getPendingApproveRequests,
@@ -339,17 +367,32 @@ import {
   approveAccessRequest,
   rejectAccessRequest,
 } from '@/api/sensitive'
-import { getMembers } from '@/api/members'
 import { getProjects } from '@/api/projects'
 import { downloadBlob, formatDate } from '@/utils/format'
 import { SENSITIVE_DATA_TYPE_MAP, ACCESS_REQUEST_STATUS_MAP } from '@/utils/constants'
 import { useDevice } from '@/composables/useDevice'
+import { useUserStore } from '@/stores/user'
 import PageHeader from '@/components/PageHeader.vue'
 import SensitiveViewDialog from './SensitiveViewDialog.vue'
+import {
+  canApproveSensitive,
+  normalizeSensitiveWorkspaceTab,
+  type SensitiveWorkspaceTab,
+} from './sensitiveWorkspace'
 import type { Project, SensitiveData, SensitiveAccessRequest } from '@/types'
 
 const { isMobile } = useDevice()
-const activeTab = ref('my-data')
+const route = useRoute()
+const router = useRouter()
+const userStore = useUserStore()
+const canApprove = computed(() => canApproveSensitive(userStore.role))
+const activeTab = ref<SensitiveWorkspaceTab>(
+  normalizeSensitiveWorkspaceTab(route.query.tab, userStore.role),
+)
+const requestedId = computed(() => {
+  const value = Number(route.query.request_id)
+  return Number.isInteger(value) && value > 0 ? value : undefined
+})
 const myDataLoading = ref(false)
 const requestsLoading = ref(false)
 const pendingLoading = ref(false)
@@ -359,10 +402,15 @@ const optionsLoading = ref(false)
 const myDataList = ref<SensitiveData[]>([])
 const myRequestsList = ref<SensitiveAccessRequest[]>([])
 const pendingList = ref<SensitiveAccessRequest[]>([])
-const memberOptions = ref<any[]>([])
 const projectOptions = ref<Project[]>([])
 const sensitiveDataOptions = ref<SensitiveData[]>([])
 const downloadingRequestId = ref<number | null>(null)
+const myRequestsTotal = ref(0)
+const myRequestsPage = ref(1)
+const myRequestsPageSize = ref(userStore.itemsPerPage)
+const pendingTotal = ref(0)
+const pendingPage = ref(1)
+const pendingPageSize = ref(userStore.itemsPerPage)
 
 // 弹窗状态
 const applyDialogVisible = ref(false)
@@ -449,10 +497,10 @@ function getRemainingTime(expiresAt: string | undefined): string {
 
 // Tab 切换
 function handleTabChange(tab: string | number): void {
-  const tabName = String(tab)
-  if (tabName === 'my-data' && myDataList.value.length === 0) loadMyData()
-  if (tabName === 'requests' && myRequestsList.value.length === 0) loadMyRequests()
-  if (tabName === 'pending' && pendingList.value.length === 0) loadPending()
+  const tabName = normalizeSensitiveWorkspaceTab(String(tab), userStore.role)
+  const query: LocationQueryRaw = { ...route.query, tab: tabName }
+  if (tabName !== 'pending') delete query.request_id
+  void router.replace({ query })
 }
 
 // 加载我的资料
@@ -472,8 +520,17 @@ async function loadMyData(): Promise<void> {
 async function loadMyRequests(): Promise<void> {
   requestsLoading.value = true
   try {
-    const res: any = await getMyAccessRequests()
+    const res = await getMyAccessRequests({
+      page: myRequestsPage.value,
+      page_size: myRequestsPageSize.value,
+    })
     myRequestsList.value = Array.isArray(res) ? res : (res.results || [])
+    myRequestsTotal.value = Array.isArray(res) ? res.length : res.count
+    const maxPage = Math.max(1, Math.ceil(myRequestsTotal.value / myRequestsPageSize.value))
+    if (myRequestsPage.value > maxPage) {
+      myRequestsPage.value = maxPage
+      return await loadMyRequests()
+    }
   } catch {
     // 错误已由拦截器处理
   } finally {
@@ -483,10 +540,20 @@ async function loadMyRequests(): Promise<void> {
 
 // 加载待审批
 async function loadPending(): Promise<void> {
+  if (!canApprove.value) return
   pendingLoading.value = true
   try {
-    const res: any = await getPendingApproveRequests()
+    const res = await getPendingApproveRequests({
+      page: pendingPage.value,
+      page_size: pendingPageSize.value,
+    })
     pendingList.value = Array.isArray(res) ? res : (res.results || [])
+    pendingTotal.value = Array.isArray(res) ? res.length : res.count
+    const maxPage = Math.max(1, Math.ceil(pendingTotal.value / pendingPageSize.value))
+    if (pendingPage.value > maxPage) {
+      pendingPage.value = maxPage
+      return await loadPending()
+    }
   } catch {
     // 错误已由拦截器处理
   } finally {
@@ -494,16 +561,55 @@ async function loadPending(): Promise<void> {
   }
 }
 
+function handleMyRequestsPageSizeChange(): void {
+  myRequestsPage.value = 1
+  void loadMyRequests()
+}
+
+function handlePendingPageSizeChange(): void {
+  pendingPage.value = 1
+  void loadPending()
+}
+
+async function loadWorkspaceTab(tab: SensitiveWorkspaceTab): Promise<void> {
+  if (tab === 'my-data') await loadMyData()
+  if (tab === 'requests') await loadMyRequests()
+  if (tab === 'pending') await loadPending()
+}
+
+function clearRequestedId(): void {
+  const query = { ...route.query }
+  delete query.request_id
+  void router.replace({ query })
+}
+
+async function openRequestedApproval(): Promise<void> {
+  const id = requestedId.value
+  if (!id || activeTab.value !== 'pending' || !canApprove.value) return
+  try {
+    const request = pendingList.value.find((item) => item.id === id) || await getAccessRequest(id)
+    if (request.applicant === userStore.userInfo?.id) {
+      ElMessage.warning('不能审批自己提交的访问申请')
+      return
+    }
+    if (request.status !== 'pending') {
+      ElMessage.info('该访问申请已处理')
+      return
+    }
+    handleApprove(request)
+  } finally {
+    clearRequestedId()
+  }
+}
+
 // 加载选项数据
 async function loadOptions(): Promise<void> {
   optionsLoading.value = true
   try {
-    const [membersRes, projectsRes, sensitiveRes] = await Promise.all([
-      getMembers({ page: 1, page_size: 100 }),
+    const [projectsRes, sensitiveRes] = await Promise.all([
       getProjects({ page: 1, page_size: 100 }),
       getSensitiveData({ page: 1, page_size: 100 }),
     ])
-    memberOptions.value = (membersRes as any).results || []
     projectOptions.value = (projectsRes as any).results || []
     sensitiveDataOptions.value = (sensitiveRes as any).results || []
   } catch {
@@ -642,8 +748,26 @@ async function handleConfirmReject(): Promise<void> {
   }
 }
 
+watch(
+  [() => route.query.tab, () => userStore.role],
+  () => {
+    const tab = normalizeSensitiveWorkspaceTab(route.query.tab, userStore.role)
+    activeTab.value = tab
+    if (userStore.role && route.query.tab !== tab) {
+      void router.replace({ query: { ...route.query, tab } })
+    }
+    void loadWorkspaceTab(tab)
+  },
+  { immediate: true },
+)
+
+watch(
+  [requestedId, canApprove],
+  () => { void openRequestedApproval() },
+  { immediate: true },
+)
+
 onMounted(() => {
-  loadMyData()
   // 启动倒计时定时器（每秒更新）
   countdownTimer = setInterval(() => {
     now.value = Date.now()
@@ -753,6 +877,13 @@ onUnmounted(() => {
 
 .table-shell :deep(.el-table) {
   min-width: 950px;
+}
+
+.pagination-wrapper {
+  display: flex;
+  padding-top: 16px;
+  overflow-x: auto;
+  justify-content: flex-end;
 }
 
 .data-cell {

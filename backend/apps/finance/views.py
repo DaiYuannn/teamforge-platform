@@ -15,6 +15,7 @@ from common.permissions import (
     IsInternalTeamMember,
     IsProjectLeaderOrTeacherOrAdmin,
     IsTeacherOrAdmin,
+    user_has_custom_permission,
 )
 from .models import FinanceBudget, FinanceExpense, FinanceIncome, FinanceReceipt
 from .serializers import (
@@ -138,6 +139,9 @@ class FinanceExpenseViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelVie
         is_finance_manager = (
             request.user.global_role in ['teacher', 'sys_admin']
             or project.leader_id == request.user.id
+            or user_has_custom_permission(
+                request.user, 'finance.manage', project_id=project.id,
+            )
         )
         if not is_finance_manager:
             from apps.projects.models import ProjectMember
@@ -219,6 +223,9 @@ class FinanceExpenseViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelVie
             request.user.global_role in ['teacher', 'sys_admin']
             or expense.project.leader_id == request.user.id
             or expense.spender_id == request.user.id
+            or user_has_custom_permission(
+                request.user, 'finance.manage', project_id=expense.project_id,
+            )
         )
         if not can_submit:
             return error_response(
@@ -399,6 +406,9 @@ class FinanceReceiptViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelVie
         is_finance_manager = (
             request.user.global_role in ['teacher', 'sys_admin']
             or expense.project.leader_id == request.user.id
+            or user_has_custom_permission(
+                request.user, 'finance.manage', project_id=expense.project_id,
+            )
         )
         if not is_finance_manager and expense.spender_id != request.user.id:
             return error_response(
@@ -434,6 +444,9 @@ class FinanceReceiptViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelVie
         is_finance_manager = (
             request.user.global_role in ['teacher', 'sys_admin']
             or expense.project.leader_id == request.user.id
+            or user_has_custom_permission(
+                request.user, 'finance.manage', project_id=expense.project_id,
+            )
         )
         can_delete_own_draft = (
             instance.uploaded_by_id == request.user.id

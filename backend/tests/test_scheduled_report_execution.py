@@ -105,10 +105,12 @@ class TestScheduledReportExecution:
             },
         )
         with pytest.MonkeyPatch.context() as monkeypatch:
-            send_mock = lambda *args, **kwargs: pytest.fail('偏好关闭后不应创建邮件')
+            def fail_email_delivery(*args, **kwargs):
+                pytest.fail('偏好关闭后不应创建邮件')
+
             monkeypatch.setattr(
                 'apps.exports.scheduled_report_service.EmailMessage',
-                send_mock,
+                fail_email_delivery,
             )
             execution = execute_scheduled_report(
                 report_schedule,

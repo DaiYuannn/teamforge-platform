@@ -8,10 +8,13 @@ from decimal import Decimal
 
 from django.db.models import Count, Q
 from django.utils import timezone
+from drf_spectacular.utils import OpenApiParameter, extend_schema, inline_serializer
+from rest_framework import serializers
 from rest_framework.views import APIView
 
 from common.response import success_response, error_response
 from common.permissions import IsInternalTeamMember
+from common.schema import success_response_schema
 from apps.projects.models import Project, ProjectMember
 from apps.tasks.models import Task
 from apps.finance.models import FinanceBudget
@@ -34,6 +37,43 @@ class ProjectHealthScoreView(APIView):
     # 评分包含经费状态，外部协作者和已离队账号不得通过聚合结果旁路读取。
     permission_classes = [IsInternalTeamMember]
 
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name='project_id',
+                type=int,
+                location=OpenApiParameter.QUERY,
+                required=True,
+                description='待评分的项目 ID。',
+            ),
+        ],
+        responses={
+            200: success_response_schema(
+                'ProjectHealthScoreResponse',
+                inline_serializer(
+                    name='ProjectHealthScoreData',
+                    fields={
+                        'project_id': serializers.IntegerField(),
+                        'project_name': serializers.CharField(),
+                        'overall_score': serializers.FloatField(),
+                        'grade': serializers.ChoiceField(choices=['A', 'B', 'C', 'D']),
+                        'category_scores': serializers.DictField(
+                            child=inline_serializer(
+                                name='ProjectHealthCategoryScore',
+                                fields={
+                                    'label': serializers.CharField(),
+                                    'score': serializers.FloatField(),
+                                    'weight': serializers.FloatField(),
+                                    'detail': serializers.CharField(),
+                                },
+                            ),
+                        ),
+                        'analyzed_at': serializers.DateTimeField(),
+                    },
+                ),
+            ),
+        },
+    )
     def get(self, request):
         project_id = request.query_params.get('project_id')
         if not project_id:

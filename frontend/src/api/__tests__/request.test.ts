@@ -1,7 +1,21 @@
 import { describe, expect, it } from 'vitest'
-import service, { isApiResponse, isPublicAuthRequest, unwrapResponseData } from '@/api/request'
+import service, {
+  API_BASE_URL,
+  isApiResponse,
+  isPublicAuthRequest,
+  unwrapResponseData,
+  clearTokens,
+  getAccessToken,
+  getRefreshToken,
+  setTokens,
+} from '@/api/request'
 
 describe('API response compatibility', () => {
+  it('uses the same-origin API prefix when no build-time base URL is provided', () => {
+    expect(API_BASE_URL).toBe('/api/v1')
+    expect(service.defaults.baseURL).toBe('/api/v1')
+  })
+
   it('unwraps the standard API response envelope', () => {
     const project = { id: 1, code: 'P-001', name: '示例项目' }
 
@@ -43,10 +57,29 @@ describe('public authentication requests', () => {
   it('keeps login and refresh requests anonymous even with query strings', () => {
     expect(isPublicAuthRequest('/auth/login/')).toBe(true)
     expect(isPublicAuthRequest('/auth/refresh/?source=retry')).toBe(true)
+    expect(isPublicAuthRequest('/auth/password-reset/request/')).toBe(true)
   })
 
   it('continues attaching authentication to protected APIs', () => {
     expect(isPublicAuthRequest('/users/me/')).toBe(false)
     expect(isPublicAuthRequest('/finance/overview/')).toBe(false)
+  })
+})
+
+describe('token persistence', () => {
+  it('keeps ordinary sessions in sessionStorage', () => {
+    setTokens('session-access', 'session-refresh', false)
+    expect(sessionStorage.getItem('access_token')).toBe('session-access')
+    expect(localStorage.getItem('access_token')).toBeNull()
+    expect(getAccessToken()).toBe('session-access')
+    expect(getRefreshToken()).toBe('session-refresh')
+    clearTokens()
+  })
+
+  it('keeps remembered sessions in localStorage', () => {
+    setTokens('local-access', 'local-refresh', true)
+    expect(localStorage.getItem('access_token')).toBe('local-access')
+    expect(sessionStorage.getItem('access_token')).toBeNull()
+    clearTokens()
   })
 })

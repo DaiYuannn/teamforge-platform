@@ -133,7 +133,7 @@ class Project(SoftDeleteMixin, models.Model):
         return self.get_current_stage_display()
 
     @property
-    def is_archived(self):
+    def is_archived(self) -> bool:
         """是否已归档"""
         return self.status == self.Status.CLOSED and self.archived_at is not None
 

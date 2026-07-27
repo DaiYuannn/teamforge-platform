@@ -6,6 +6,12 @@ import time
 import redis
 from django.conf import settings
 from django.http import StreamingHttpResponse
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import (
+    OpenApiParameter,
+    OpenApiResponse,
+    extend_schema,
+)
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.renderers import BaseRenderer, JSONRenderer
 from rest_framework.views import APIView
@@ -91,6 +97,34 @@ class NotificationSSEView(APIView):
     permission_classes = [IsAuthenticated]
     renderer_classes = [JSONRenderer, EventStreamRenderer]
 
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name='last_id',
+                type=int,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description='最后收到的通知 ID，用于断线重连补发。',
+            ),
+            OpenApiParameter(
+                name='Last-Event-ID',
+                type=int,
+                location=OpenApiParameter.HEADER,
+                required=False,
+                description='SSE 标准重连游标；last_id query 参数优先。',
+            ),
+        ],
+        responses={
+            (200, 'text/event-stream'): OpenApiResponse(
+                response=OpenApiTypes.STR,
+                description=(
+                    'UTF-8 SSE 长连接。事件类型包括 connected、notification、'
+                    'notification_state、heartbeat、fallback 和 stream_closed；'
+                    '每条事件的 data 行为 JSON 对象。'
+                ),
+            ),
+        },
+    )
     def get(self, request):
         requested_last_id = (
             request.query_params.get('last_id')

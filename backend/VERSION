@@ -1,6 +1,6 @@
 # 团队管理软件 版本信息文件
 # 格式: KEY=VALUE
-VERSION=2.0.0
-CODENAME=Team-Workspace
-BUILD_DATE=2026-07-26
+VERSION=2.1.0
+CODENAME=Collaboration-Studio
+BUILD_DATE=2026-07-27
 DJANGO_VERSION=5.0

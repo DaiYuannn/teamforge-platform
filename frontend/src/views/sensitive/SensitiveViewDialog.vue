@@ -334,14 +334,14 @@ onUnmounted(() => {
   font: inherit;
   font-weight: 600;
   background: var(--color-primary-soft);
-  border: 1px dashed rgba(23, 107, 115, 0.42);
+  border: 1px dashed color-mix(in srgb, var(--color-primary) 65%, transparent);
   border-radius: var(--radius-sm);
   cursor: pointer;
   transition: background var(--transition-fast), border-color var(--transition-fast);
 }
 
 .reveal-button:hover:not(:disabled) {
-  background: #dcecea;
+  background: var(--color-surface-strong);
   border-color: var(--color-primary);
 }
 

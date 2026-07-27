@@ -2,6 +2,7 @@
 任务序列化器
 """
 from rest_framework import serializers
+from drf_spectacular.utils import extend_schema_field
 
 from .models import Task, TaskLog
 from apps.users.models import User
@@ -32,6 +33,7 @@ def _visible_attachment_queryset(task, request):
 
 
 class TaskAttachmentMixin:
+    @extend_schema_field(FileAssetListSerializer(many=True))
     def get_attachment_files(self, obj):
         request = self.context.get('request')
         queryset = _visible_attachment_queryset(obj, request)

@@ -47,6 +47,12 @@ class TestTranslations:
         data = extract_data(api_client.get('/api/v1/common/i18n/translations/'))
         assert 'locale_middleware_enabled' in data
         assert isinstance(data['locale_middleware_enabled'], bool)
+        assert data['locale_middleware_enabled'] is True
+
+    def test_translations_returns_real_catalogs(self, api_client):
+        data = extract_data(api_client.get('/api/v1/common/i18n/translations/'))
+        assert data['catalogs']['en']['登录'] == 'Sign In'
+        assert data['catalogs']['en']['项目管理'] == 'Projects'
 
 
 @pytest.mark.api

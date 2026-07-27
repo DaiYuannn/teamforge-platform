@@ -11,7 +11,7 @@ from django.conf import settings
 from django.conf.urls.static import static
 from rest_framework_simplejwt.views import TokenRefreshView
 
-from apps.users.views import LoginView
+from apps.users.views import LoginView, PasswordResetRequestView, PasswordResetConfirmView
 from common.authentication import ActiveMemberTokenRefreshSerializer
 
 urlpatterns = [
@@ -19,6 +19,16 @@ urlpatterns = [
 
     # SimpleJWT token 路由
     path('api/v1/auth/login/', LoginView.as_view(), name='token_obtain_pair'),
+    path(
+        'api/v1/auth/password-reset/request/',
+        PasswordResetRequestView.as_view(),
+        name='password_reset_request',
+    ),
+    path(
+        'api/v1/auth/password-reset/confirm/',
+        PasswordResetConfirmView.as_view(),
+        name='password_reset_confirm',
+    ),
     path(
         'api/v1/auth/refresh/',
         TokenRefreshView.as_view(

@@ -33,15 +33,28 @@ if [ ! -f env/backend.prod.env ]; then
     fi
 fi
 
+COMPOSE=(docker compose --env-file env/backend.prod.env -f docker-compose.prod.yml)
+
 # 2. 构建生产镜像
 echo -e "${GREEN}>> 构建生产镜像...${NC}"
-docker compose -f docker-compose.prod.yml build
+"${COMPOSE[@]}" build
 
-# 3. 启动生产服务
-echo -e "${GREEN}>> 启动生产服务...${NC}"
-docker compose -f docker-compose.prod.yml up -d
+# 3. 启动基础服务与后端
+echo -e "${GREEN}>> 启动 PostgreSQL、Redis 与后端...${NC}"
+"${COMPOSE[@]}" up -d postgres redis backend
+
+# 4. 初始化数据库与静态资源
+echo -e "${GREEN}>> 执行数据库迁移...${NC}"
+"${COMPOSE[@]}" exec -T backend python manage.py migrate --noinput
+
+echo -e "${GREEN}>> 收集静态资源...${NC}"
+"${COMPOSE[@]}" exec -T backend python manage.py collectstatic --noinput
+
+# 5. 启动全部生产服务
+echo -e "${GREEN}>> 启动全部生产服务...${NC}"
+"${COMPOSE[@]}" up -d
 
 echo -e "${GREEN}================ 生产环境已启动 ================${NC}"
 echo -e "应用入口: http://localhost"
-echo -e "查看日志: docker compose -f docker-compose.prod.yml logs -f"
+echo -e "查看日志: docker compose --env-file env/backend.prod.env -f docker-compose.prod.yml logs -f"
 echo -e "${GREEN}Celery Worker/Beat 已随生产服务启动${NC}"

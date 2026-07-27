@@ -7,6 +7,10 @@ P12: 用户偏好设置测试
 import pytest
 
 from apps.users.models import UserPreference
+from apps.users.preference_views import (
+    FAVORITE_ROUTE_CHOICES,
+    MAX_FAVORITE_ROUTES,
+)
 
 
 def extract_data(response):
@@ -42,6 +46,7 @@ class TestUserPreference:
         assert data['notification_sound'] is True
         assert data['items_per_page'] == 20
         assert data['dashboard_layout'] == {}
+        assert data['language'] == 'zh-CN'
         # 不应自动创建记录
         assert not UserPreference.objects.filter(user=member_client.user).exists()
 
@@ -60,6 +65,19 @@ class TestUserPreference:
         pref = UserPreference.objects.get(user=member_client.user)
         assert pref.theme_color == 'green'
         assert pref.items_per_page == 50
+
+    def test_language_preference_persists_and_validates(self, member_client):
+        response = member_client.patch(
+            '/api/v1/users/preference/', {'language': 'en'}, format='json'
+        )
+        assert response.status_code == 200, response.json()
+        assert extract_data(response)['language'] == 'en'
+        assert UserPreference.objects.get(user=member_client.user).language == 'en'
+
+        invalid = member_client.patch(
+            '/api/v1/users/preference/', {'language': 'fr'}, format='json'
+        )
+        assert invalid.status_code == 400
 
     def test_update_existing_preference(self, member_client):
         """更新已存在的偏好记录"""
@@ -133,6 +151,34 @@ class TestUserPreference:
         # 用户 B 仍是默认蓝色
         assert data['theme_color'] == 'blue'
 
+    def test_favorite_routes_and_theme_mode_are_isolated_per_user(
+        self, member_client, make_user, api_client
+    ):
+        response = member_client.patch(
+            '/api/v1/users/preference/',
+            {
+                'favorite_routes': ['/projects', '/tasks'],
+                'theme_mode': 'dark',
+            },
+            format='json',
+        )
+        assert response.status_code == 200, response.json()
+
+        user_b = make_user(email='preference-user-b@test.com', global_role='member')
+        from rest_framework_simplejwt.tokens import RefreshToken
+        refresh = RefreshToken.for_user(user_b)
+        api_client.credentials(HTTP_AUTHORIZATION=f'Bearer {refresh.access_token}')
+
+        response = api_client.get('/api/v1/users/preference/')
+        assert response.status_code == 200
+        data = extract_data(response)
+        assert data['favorite_routes'] == []
+        assert data['theme_mode'] == UserPreference.DEFAULT_THEME_MODE
+
+        preference = UserPreference.objects.get(user=member_client.user)
+        assert preference.favorite_routes == ['/projects', '/tasks']
+        assert preference.theme_mode == 'dark'
+
     def test_persistence_across_requests(self, member_client):
         """偏好设置持久化，再次 GET 能取回"""
         member_client.put('/api/v1/users/preference/', {
@@ -147,6 +193,60 @@ class TestUserPreference:
         assert data['theme_color'] == 'orange'
         assert data['notification_sound'] is False
         assert data['items_per_page'] == 10
+
+    def test_favorite_routes_and_theme_mode_persist_across_requests(
+        self, member_client
+    ):
+        response = member_client.patch(
+            '/api/v1/users/preference/',
+            {
+                'favorite_routes': ['/todo', '/files'],
+                'theme_mode': 'light',
+            },
+            format='json',
+        )
+        assert response.status_code == 200, response.json()
+
+        data = extract_data(member_client.get('/api/v1/users/preference/'))
+        assert data['favorite_routes'] == ['/todo', '/files']
+        assert data['theme_mode'] == 'light'
+
+    def test_accepts_static_navigation_routes_as_favorites(self, member_client):
+        favorite_routes = [
+            '/notifications',
+            '/analytics-studio',
+            '/admin/engineering',
+        ]
+
+        response = member_client.patch(
+            '/api/v1/users/preference/',
+            {'favorite_routes': favorite_routes},
+            format='json',
+        )
+
+        assert response.status_code == 200, response.json()
+        assert extract_data(response)['favorite_routes'] == favorite_routes
+        preference = UserPreference.objects.get(user=member_client.user)
+        assert preference.favorite_routes == favorite_routes
+
+    @pytest.mark.parametrize('favorite_routes', [
+        ['/tasks', '/tasks'],
+        ['/tasks/123'],
+        ['/user/profile'],
+        ['/tasks '],
+        list(FAVORITE_ROUTE_CHOICES[:MAX_FAVORITE_ROUTES + 1]),
+    ])
+    def test_rejects_invalid_favorite_routes(
+        self, member_client, favorite_routes
+    ):
+        response = member_client.patch(
+            '/api/v1/users/preference/',
+            {'favorite_routes': favorite_routes},
+            format='json',
+        )
+
+        assert response.status_code == 400, response.json()
+        assert not UserPreference.objects.filter(user=member_client.user).exists()
 
     def test_unauthenticated_cannot_access(self, api_client):
         """未认证用户无法访问偏好设置"""

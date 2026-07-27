@@ -1,12 +1,13 @@
 # ============================================================
 # 团队管理平台 - 生产环境 Docker Compose
-# 启动: docker compose -f docker-compose.prod.yml up -d
-#        (或运行 start-prod.sh / start-prod.ps1)
+# 推荐启动: bash start-prod.sh 或 .\start-prod.ps1
+# 手动部署时必须通过 --env-file env/backend.prod.env 加载插值变量，
+# 并在启动其余业务服务前执行 migrate 与 collectstatic。
 #
 # 服务:
 #   postgres       数据库（不暴露端口）
 #   redis          缓存/消息队列（不暴露端口）
-#   backend        Django + gunicorn（migrate + collectstatic 由 entrypoint 执行）
+#   backend        Django + gunicorn（初始化由生产部署脚本执行）
 #   celery-worker  定时报表与异步任务执行器
 #   celery-beat    定时报表调度器
 #   frontend       前端构建器（构建 dist 输出到共享卷，完成后退出）
@@ -23,13 +24,13 @@ services:
       - env/backend.prod.env
     environment:
       POSTGRES_DB: ${DB_NAME:-team_management}
-      # 密码从 env/backend.prod.env 中的 DB_PASSWORD 读取，不在此写死
+      # Compose 命令通过 --env-file env/backend.prod.env 提供这些插值变量
       POSTGRES_USER: ${DB_USER:-postgres}
       POSTGRES_PASSWORD: ${DB_PASSWORD}
     volumes:
       - pg_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d team_management"]
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -62,8 +63,8 @@ services:
       - env/backend.prod.env
     environment:
       DJANGO_SETTINGS_MODULE: config.settings.prod
-    # 生产环境使用镜像内构建产物，不挂载源码
-    # entrypoint 会先执行 migrate + collectstatic，再启动 gunicorn
+    # 生产环境使用镜像内构建产物，不挂载源码。
+    # start-prod 脚本会在启动其余业务服务前执行 migrate 与 collectstatic。
     command: gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 2 --worker-class gevent --worker-connections 256 --timeout 0 --graceful-timeout 30
     volumes:
       - media_data:/app/media
@@ -96,8 +97,6 @@ services:
       DJANGO_SETTINGS_MODULE: config.settings.prod
     volumes:
       - media_data:/app/media
-    # 清空 entrypoint，celery 不需要 migrate/collectstatic
-    entrypoint: []
     command: celery -A config worker -l info
     depends_on:
       redis:
@@ -118,7 +117,6 @@ services:
       - env/backend.prod.env
     environment:
       DJANGO_SETTINGS_MODULE: config.settings.prod
-    entrypoint: []
     command: celery -A config beat -l info
     depends_on:
       redis:

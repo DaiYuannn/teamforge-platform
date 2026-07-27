@@ -77,6 +77,32 @@ export interface CustomReportPayload {
   config: CustomReport['config']
 }
 
+export interface GeneratedReportData {
+  report_type: 'summary' | 'comparison' | 'trend'
+  data_source: ReportDataSource
+  group_by: string
+  chart_type: string
+  filters: Record<string, unknown>
+  summary: Record<string, string | number>
+  value_key: 'count' | 'total'
+  comparison?: { average: number; maximum: number; minimum: number }
+  groups: Array<{
+    key: string | number | null
+    label: string
+    count: number
+    total?: number
+    rank?: number
+    share_percent?: number
+    delta_from_average?: number
+  }>
+}
+
+export interface GeneratedReport {
+  report: CustomReport
+  generated_at: string
+  data: GeneratedReportData
+}
+
 export interface SchedulePayload {
   report: number
   recipient_ids: number[]
@@ -95,8 +121,14 @@ export const getCustomReports = () =>
 export const createCustomReport = (payload: CustomReportPayload) =>
   post<CustomReport>('/exports/custom-reports/', payload)
 
+export const updateCustomReport = (id: number, payload: Partial<CustomReportPayload>) =>
+  patch<CustomReport>(`/exports/custom-reports/${id}/`, payload)
+
 export const deleteCustomReport = (id: number) =>
   del<void>(`/exports/custom-reports/${id}/`)
+
+export const generateCustomReport = (id: number) =>
+  post<GeneratedReport>(`/exports/custom-reports/${id}/generate/`)
 
 export const getScheduledReports = () =>
   get<PaginatedResponse<ScheduledReport>>('/exports/scheduled-reports/', { page: 1, page_size: 100 })

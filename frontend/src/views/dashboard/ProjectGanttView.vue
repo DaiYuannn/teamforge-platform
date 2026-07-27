@@ -150,6 +150,12 @@ import { PROJECT_STATUS_MAP } from '@/utils/constants'
 import { formatDate } from '@/utils/format'
 import EmptyState from '@/components/EmptyState.vue'
 import { useDevice } from '@/composables/useDevice'
+import {
+  createEChartsTooltipStyle,
+  readEChartsThemePalette,
+  useEChartsTheme,
+  type EChartsThemePalette,
+} from '@/composables/useEChartsTheme'
 
 const { isMobile } = useDevice()
 
@@ -169,35 +175,31 @@ const projectOptions = ref<Project[]>([])
 const chartRef = ref<HTMLElement>()
 let chart: echarts.ECharts | null = null
 
-// 状态颜色映射
-const STATUS_COLOR_MAP: Record<string, string> = {
-  active: '#176b73',
-  paused: '#a66116',
-  closed: '#4c6475',
-}
-
-// 里程碑级别颜色映射
-const MILESTONE_COLOR_MAP: Record<string, string> = {
-  national: '#b64242',
-  provincial: '#a66116',
-  municipal: '#315c86',
-  school: '#237a55',
-  enterprise: '#76559b',
-}
-
 // 获取状态 Tag 类型
 function getStatusTagType(status: string): string {
   return PROJECT_STATUS_MAP[status]?.type || 'info'
 }
 
 // 获取状态颜色
-function getStatusColor(status: string): string {
-  return STATUS_COLOR_MAP[status] || '#176b73'
+function getStatusColor(status: string, palette: EChartsThemePalette): string {
+  const colors: Record<string, string> = {
+    active: palette.primaryFill,
+    paused: palette.warningFill,
+    closed: palette.infoFill,
+  }
+  return colors[status] || palette.primaryFill
 }
 
 // 获取里程碑颜色
-function getMilestoneColor(level: string): string {
-  return MILESTONE_COLOR_MAP[level] || '#b64242'
+function getMilestoneColor(level: string, palette: EChartsThemePalette): string {
+  const colors: Record<string, string> = {
+    national: palette.danger,
+    provincial: palette.warning,
+    municipal: palette.sensitive,
+    school: palette.success,
+    enterprise: palette.ip,
+  }
+  return colors[level] || palette.danger
 }
 
 // 图表高度（根据项目数量动态计算）
@@ -246,6 +248,7 @@ function renderChart(): void {
   }
 
   const projects = ganttProjects.value
+  const palette = readEChartsThemePalette()
 
   // y 轴类别（项目名称）
   const categories = projects.map((p) => p.project_name)
@@ -287,7 +290,7 @@ function renderChart(): void {
     return {
       value: [idx, startTs, endTs, p.current_stage_display || ''],
       itemStyle: {
-        color: getStatusColor(p.status),
+        color: getStatusColor(p.status, palette),
         borderRadius: 4,
       },
       project: p,
@@ -303,8 +306,8 @@ function renderChart(): void {
         milestoneData.push({
           value: [dayjs(m.date).valueOf(), idx],
           itemStyle: {
-            color: m.is_awarded ? getMilestoneColor(m.award_level || m.level) : '#ffffff',
-            borderColor: getMilestoneColor(m.level),
+            color: m.is_awarded ? getMilestoneColor(m.award_level || m.level, palette) : palette.surface,
+            borderColor: getMilestoneColor(m.level, palette),
             borderWidth: 2,
           },
           milestone: m,
@@ -362,7 +365,7 @@ function renderChart(): void {
           textAlign: 'left',
           textVerticalAlign: 'middle',
           fontSize: 11,
-          fill: '#ffffff',
+          fill: palette.textOnFill,
           fontWeight: 'bold',
         },
         silent: true,
@@ -377,6 +380,7 @@ function renderChart(): void {
 
   chart.setOption({
     tooltip: {
+      ...createEChartsTooltipStyle(palette),
       formatter: (params: any) => {
         // 甘特条 tooltip
         if (params.seriesType === 'custom') {
@@ -429,12 +433,12 @@ function renderChart(): void {
       max: maxTime === -Infinity ? undefined : maxTime,
       axisLabel: {
         fontSize: 12,
-        color: '#46524e',
+        color: palette.textRegular,
         formatter: (val: number) => {
           return dayjs(val).format('YYYY-MM-DD')
         },
       },
-      splitLine: { show: true, lineStyle: { type: 'dashed', color: '#e6ebe9' } },
+      splitLine: { show: true, lineStyle: { type: 'dashed', color: palette.borderLight } },
     },
     yAxis: {
       type: 'category',
@@ -442,7 +446,7 @@ function renderChart(): void {
       inverse: true,
       axisLabel: {
         fontSize: 12,
-        color: '#18221f',
+        color: palette.text,
         width: 160,
         overflow: 'truncate',
       },
@@ -481,10 +485,10 @@ function renderChart(): void {
             formatter: '今日',
             position: 'insideEndTop',
             fontSize: 11,
-            color: '#b64242',
+            color: palette.danger,
           },
           lineStyle: {
-            color: '#b64242',
+            color: palette.danger,
             type: 'dashed',
             width: 1.5,
           },
@@ -503,6 +507,8 @@ function renderChart(): void {
 }
 
 // 窗口大小变化时重绘
+useEChartsTheme(renderChart)
+
 function handleResize(): void {
   chart?.resize()
 }

@@ -5,11 +5,14 @@
 from decimal import Decimal
 
 from django.db.models import Sum, Count, Q
+from drf_spectacular.utils import OpenApiParameter, extend_schema, inline_serializer
+from rest_framework import serializers
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
 from common.response import success_response
 from common.project_access import scope_project_queryset
+from common.schema import success_response_schema
 from .models import Contribution
 
 
@@ -24,6 +27,64 @@ class ContributionStatisticsView(APIView):
     """
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        parameters=[
+            OpenApiParameter('project', int, OpenApiParameter.QUERY, required=False),
+            OpenApiParameter('period', str, OpenApiParameter.QUERY, required=False),
+        ],
+        responses={
+            200: success_response_schema(
+                'ContributionStatisticsResponse',
+                inline_serializer(
+                    name='ContributionStatisticsData',
+                    fields={
+                        'total': serializers.IntegerField(),
+                        'approved_count': serializers.IntegerField(),
+                        'total_score': serializers.FloatField(),
+                        'by_type': serializers.DictField(
+                            child=inline_serializer(
+                                name='ContributionTypeStatistics',
+                                fields={
+                                    'label': serializers.CharField(),
+                                    'count': serializers.IntegerField(),
+                                    'score': serializers.FloatField(),
+                                },
+                            ),
+                        ),
+                        'by_status': serializers.DictField(
+                            child=inline_serializer(
+                                name='ContributionStatusStatistics',
+                                fields={
+                                    'label': serializers.CharField(),
+                                    'count': serializers.IntegerField(),
+                                },
+                            ),
+                        ),
+                        'by_member': inline_serializer(
+                            name='ContributionMemberStatistics',
+                            fields={
+                                'user_id': serializers.IntegerField(),
+                                'user_name': serializers.CharField(),
+                                'contribution_score': serializers.FloatField(),
+                                'contribution_count': serializers.IntegerField(),
+                            },
+                            many=True,
+                        ),
+                        'by_project': inline_serializer(
+                            name='ContributionProjectStatistics',
+                            fields={
+                                'project_id': serializers.IntegerField(allow_null=True),
+                                'project_name': serializers.CharField(),
+                                'contribution_score': serializers.FloatField(),
+                                'contribution_count': serializers.IntegerField(),
+                            },
+                            many=True,
+                        ),
+                    },
+                ),
+            ),
+        },
+    )
     def get(self, request):
         params = request.query_params
         project_id = params.get('project')

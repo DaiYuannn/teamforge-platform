@@ -3,6 +3,7 @@
 - ProjectViewSet: 项目 CRUD + 阶段推进 + 负责人打卡 + 成员管理
 - ProjectMemberViewSet: 项目成员管理
 """
+from drf_spectacular.utils import extend_schema
 from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.viewsets import ModelViewSet
@@ -13,6 +14,7 @@ from django.db.models import Count, Q
 from common.response import success_response, error_response
 from common.mixins import MultiSerializerMixin, MultiPermissionMixin
 from common.permissions import IsInternalTeamMember
+from common.permissions import user_has_custom_permission
 from common.project_access import is_external_collaborator, scope_project_queryset
 from .models import Project, ProjectMember, ProjectMembershipEvent, ProjectStageLog
 from .serializers import (
@@ -192,6 +194,10 @@ class ProjectViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet):
             message='打卡更新成功',
         )
 
+    @extend_schema(methods=['GET'], operation_id='projects_project_members_list')
+    @extend_schema(methods=['POST'], operation_id='projects_project_members_add')
+    @extend_schema(methods=['PATCH'], operation_id='projects_project_members_update')
+    @extend_schema(methods=['DELETE'], operation_id='projects_project_members_remove')
     @action(detail=True, methods=['get', 'post', 'patch', 'delete'])
     def members(self, request, pk=None):
         """
@@ -201,6 +207,13 @@ class ProjectViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet):
         DELETE /api/v1/projects/{id}/members/?user_id=1 - 移除成员
         """
         project = self.get_object()
+        can_manage_members = (
+            project.leader_id == request.user.id
+            or request.user.global_role in ['sys_admin', 'teacher']
+            or user_has_custom_permission(
+                request.user, 'project.manage', project_id=project.id,
+            )
+        )
 
         if request.method == 'GET':
             members = project.members.select_related('user', 'handover_to__user').all()
@@ -218,8 +231,7 @@ class ProjectViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet):
 
         elif request.method == 'POST':
             # 仅项目负责人/老师/管理员可添加成员
-            if not (project.leader_id == request.user.id or
-                    request.user.global_role in ['sys_admin', 'teacher']):
+            if not can_manage_members:
                 return error_response(message='权限不足', code=1003,
                                       http_status=status.HTTP_403_FORBIDDEN)
 
@@ -253,8 +265,7 @@ class ProjectViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet):
             )
 
         elif request.method == 'PATCH':
-            if not (project.leader_id == request.user.id or
-                    request.user.global_role in ['sys_admin', 'teacher']):
+            if not can_manage_members:
                 return error_response(message='权限不足', code=1003,
                                       http_status=status.HTTP_403_FORBIDDEN)
             member_id = request.data.get('member_id')
@@ -304,8 +315,7 @@ class ProjectViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet):
 
         elif request.method == 'DELETE':
             # 仅项目负责人/老师/管理员可移除成员
-            if not (project.leader_id == request.user.id or
-                    request.user.global_role in ['sys_admin', 'teacher']):
+            if not can_manage_members:
                 return error_response(message='权限不足', code=1003,
                                       http_status=status.HTTP_403_FORBIDDEN)
 

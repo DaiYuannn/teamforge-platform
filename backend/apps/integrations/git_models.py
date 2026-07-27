@@ -5,6 +5,12 @@ Git 集成模型
 放在独立文件中，避免迁移冲突。通过 apps/integrations/models.py 导入。
 """
 from django.db import models
+from django.utils import timezone
+
+from common.encryption import get_field_cipher
+
+
+ENCRYPTED_PREFIX = 'enc:v1:'
 
 
 class GitRepository(models.Model):
@@ -33,6 +39,11 @@ class GitRepository(models.Model):
     )
     # 是否启用
     is_active = models.BooleanField('是否启用', default=True)
+    connection_status = models.CharField(max_length=20, default='unchecked')
+    last_checked_at = models.DateTimeField(null=True, blank=True)
+    last_synced_at = models.DateTimeField(null=True, blank=True)
+    last_error = models.TextField(blank=True, default='')
+    remote_commit = models.CharField(max_length=64, blank=True, default='')
     # 创建时间
     created_at = models.DateTimeField('创建时间', auto_now_add=True)
     # 更新时间
@@ -46,3 +57,29 @@ class GitRepository(models.Model):
 
     def __str__(self):
         return f'{self.url}({self.branch})'
+
+    def save(self, *args, **kwargs):
+        if self.token and not self.token.startswith(ENCRYPTED_PREFIX):
+            self.token = ENCRYPTED_PREFIX + get_field_cipher().encrypt(self.token)
+        super().save(*args, **kwargs)
+
+    def get_token(self):
+        if not self.token:
+            return ''
+        if not self.token.startswith(ENCRYPTED_PREFIX):
+            return self.token
+        return get_field_cipher().decrypt(self.token[len(ENCRYPTED_PREFIX):])
+
+    def record_connection(self, *, connected, commit='', error='', synced=False):
+        now = timezone.now()
+        self.connection_status = 'connected' if connected else 'error'
+        self.last_checked_at = now
+        self.last_error = error
+        fields = ['connection_status', 'last_checked_at', 'last_error', 'updated_at']
+        if commit:
+            self.remote_commit = commit
+            fields.append('remote_commit')
+        if synced and connected:
+            self.last_synced_at = now
+            fields.append('last_synced_at')
+        self.save(update_fields=fields)

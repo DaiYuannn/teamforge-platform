@@ -8,10 +8,13 @@
 import os
 
 from django.conf import settings
+from drf_spectacular.utils import extend_schema, inline_serializer
+from rest_framework import serializers
 from rest_framework.views import APIView
 
 from common.permissions import IsTeacherOrAdmin
 from common.response import success_response
+from common.schema import success_response_schema
 
 
 class SecurityScanView(APIView):
@@ -23,6 +26,33 @@ class SecurityScanView(APIView):
 
     permission_classes = [IsTeacherOrAdmin]
 
+    @extend_schema(
+        responses={
+            200: success_response_schema(
+                'SecurityScanResponse',
+                inline_serializer(
+                    name='SecurityScanData',
+                    fields={
+                        'checks': inline_serializer(
+                            name='SecurityCheck',
+                            many=True,
+                            fields={
+                                'item': serializers.CharField(),
+                                'title': serializers.CharField(),
+                                'passed': serializers.BooleanField(),
+                                'severity': serializers.CharField(),
+                                'detail': serializers.CharField(required=False),
+                            },
+                        ),
+                        'total': serializers.IntegerField(),
+                        'passed': serializers.IntegerField(),
+                        'failed': serializers.IntegerField(),
+                        'score': serializers.FloatField(),
+                    },
+                ),
+            ),
+        },
+    )
     def get(self, request):
         checks = []
 

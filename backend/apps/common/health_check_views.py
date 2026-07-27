@@ -9,10 +9,13 @@ from django.core.cache import cache
 from django.db import connections, DEFAULT_DB_ALIAS
 from django.core.files.storage import default_storage
 from django.utils import timezone
+from drf_spectacular.utils import extend_schema, inline_serializer
+from rest_framework import serializers
 from rest_framework.permissions import AllowAny
 from rest_framework.views import APIView
 
 from common.response import success_response
+from common.schema import success_response_schema
 
 
 def _check_database():
@@ -112,6 +115,26 @@ class HealthCheckView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []  # 完全无需认证
 
+    @extend_schema(
+        auth=[],
+        responses={
+            200: success_response_schema(
+                'HealthCheckResponse',
+                inline_serializer(
+                    name='HealthCheckData',
+                    fields={
+                        'status': serializers.ChoiceField(
+                            choices=['healthy', 'degraded', 'unhealthy'],
+                        ),
+                        'checks': serializers.DictField(
+                            child=serializers.JSONField(),
+                        ),
+                        'timestamp': serializers.DateTimeField(),
+                    },
+                ),
+            ),
+        },
+    )
     def get(self, request):
         checks = {
             'database': _check_database(),

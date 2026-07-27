@@ -383,19 +383,32 @@ def test_generic_approval_rejects_self_and_matches_current_step_reviewer(
 
 @pytest.mark.api
 @pytest.mark.django_db
-def test_system_metadata_is_teacher_or_admin_only(make_user):
+def test_system_metadata_role_boundaries(make_user):
     member = client_for(make_user(email='metadata-member@test.com'))
     teacher = client_for(make_user(
         email='metadata-teacher@test.com',
         global_role='teacher',
     ))
-    urls = (
+    admin = client_for(make_user(
+        email='metadata-admin@test.com',
+        global_role='sys_admin',
+        is_staff=True,
+        is_superuser=True,
+    ))
+    teacher_or_admin_urls = (
         '/api/v1/common/security-scan/',
+        '/api/v1/common/api-docs/',
+    )
+    admin_only_urls = (
         '/api/v1/common/openapi/schema/',
         '/api/v1/common/openapi/endpoints/',
-        '/api/v1/common/api-docs/',
         '/api/v1/common/accessibility/report/',
     )
-    for url in urls:
+    for url in teacher_or_admin_urls:
         assert member.get(url).status_code == 403
         assert teacher.get(url).status_code == 200
+        assert admin.get(url).status_code == 200
+    for url in admin_only_urls:
+        assert member.get(url).status_code == 403
+        assert teacher.get(url).status_code == 403
+        assert admin.get(url).status_code == 200

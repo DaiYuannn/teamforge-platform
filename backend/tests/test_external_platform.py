@@ -3,6 +3,7 @@ N44: 外部平台集成测试
 - /api/v1/integrations/external-platforms/   外部平台 CRUD
 """
 import pytest
+from unittest.mock import Mock, patch
 
 from apps.integrations.external_models import ExternalPlatform
 
@@ -30,6 +31,9 @@ class TestExternalPlatform:
         p = ExternalPlatform.objects.get(name='钉钉')
         assert p.platform_type == 'dingtalk'
         assert p.is_active is True
+        assert p.api_key != 'secret'
+        assert p.api_key.startswith('enc:v1:')
+        assert p.get_api_key() == 'secret'
 
     def test_list_platforms(self, admin_client):
         """列出外部平台"""
@@ -80,3 +84,38 @@ class TestExternalPlatform:
         items = data.get('results', data) if isinstance(data, dict) else data
         # 返回数据不应包含明文 api_key
         assert all('topsecret' not in str(item) for item in items)
+
+    @patch('apps.integrations.connection_services.socket.getaddrinfo')
+    @patch('apps.integrations.connection_services.requests.request')
+    def test_connection_and_sync_persist_real_remote_state(
+        self, request_mock, address_mock, admin_client
+    ):
+        address_mock.return_value = [(None, None, None, None, ('93.184.216.34', 443))]
+        response = Mock()
+        response.status_code = 200
+        response.headers = {'content-type': 'application/json'}
+        response.json.return_value = {'items': [{'id': 1}]}
+        response.text = ''
+        response.raise_for_status.return_value = None
+        request_mock.return_value = response
+        platform = ExternalPlatform.objects.create(
+            name='Remote API', platform_type='jira',
+            api_url='https://example.com/api/', api_key='remote-secret',
+            config={'health_path': 'health', 'sync_path': 'issues'},
+        )
+
+        checked = admin_client.post(
+            f'/api/v1/integrations/external-platforms/{platform.id}/test-connection/'
+        )
+        synced = admin_client.post(
+            f'/api/v1/integrations/external-platforms/{platform.id}/sync/'
+        )
+
+        assert checked.status_code == 200, checked.json()
+        assert synced.status_code == 200, synced.json()
+        platform.refresh_from_db()
+        assert platform.connection_status == 'connected'
+        assert platform.last_checked_at is not None
+        assert platform.last_synced_at is not None
+        assert platform.remote_metadata['payload']['items'][0]['id'] == 1
+        assert request_mock.call_args.kwargs['headers']['Authorization'] == 'Bearer remote-secret'

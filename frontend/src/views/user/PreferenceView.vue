@@ -52,6 +52,54 @@
               <span class="form-tip">支持任意六位十六进制颜色，保存后随当前账户同步。</span>
             </div>
           </el-form-item>
+
+          <el-form-item label="明暗模式">
+            <el-radio-group
+              v-model="form.theme_mode"
+              class="theme-mode-group"
+              aria-label="明暗模式"
+              @change="previewThemePreference"
+            >
+              <el-radio-button
+                v-for="item in themeModeOptions"
+                :key="item.value"
+                :value="item.value"
+              >
+                {{ item.label }}
+              </el-radio-button>
+            </el-radio-group>
+          </el-form-item>
+
+          <el-form-item v-if="form.theme_mode === 'schedule'" label="深色时段">
+            <div class="theme-schedule-row">
+              <el-time-select
+                v-model="form.schedule_start"
+                start="00:00"
+                step="00:30"
+                end="23:30"
+                placeholder="开始时间"
+                aria-label="深色模式开始时间"
+                @change="previewThemePreference"
+              />
+              <span>至</span>
+              <el-time-select
+                v-model="form.schedule_end"
+                start="00:00"
+                step="00:30"
+                end="23:30"
+                placeholder="结束时间"
+                aria-label="深色模式结束时间"
+                @change="previewThemePreference"
+              />
+            </div>
+          </el-form-item>
+          <el-form-item label="语言">
+            <el-segmented
+              v-model="form.language"
+              :options="languageOptions"
+              @change="setLocale"
+            />
+          </el-form-item>
         </el-form>
         </section>
 
@@ -106,22 +154,55 @@
           </el-form-item>
 
           <el-form-item label="常用入口">
-            <el-select
-              v-model="form.favorite_routes"
-              multiple
-              collapse-tags
-              collapse-tags-tooltip
-              placeholder="选择当前账户的常用入口"
-              class="preference-select"
-            >
-              <el-option
-                v-for="item in favoriteRouteOptions"
-                :key="item.value"
-                :label="item.label"
-                :value="item.value"
-              />
-            </el-select>
-            <span class="form-tip">保存后侧边栏顶部会出现“常用入口”</span>
+            <div class="favorite-route-control">
+              <el-select
+                v-model="form.favorite_routes"
+                multiple
+                collapse-tags
+                collapse-tags-tooltip
+                :multiple-limit="MAX_FAVORITE_ROUTES"
+                placeholder="选择当前账户的常用入口"
+                class="preference-select"
+              >
+                <el-option
+                  v-for="item in favoriteRouteOptions"
+                  :key="item.value"
+                  :label="item.label"
+                  :value="item.value"
+                  :disabled="!(form.favorite_routes || []).includes(item.value) && (form.favorite_routes || []).length >= MAX_FAVORITE_ROUTES"
+                />
+              </el-select>
+              <div v-if="selectedFavoriteRoutes.length" class="favorite-route-list">
+                <div v-for="(item, index) in selectedFavoriteRoutes" :key="item.path" class="favorite-route-item">
+                  <el-icon><component :is="item.icon" /></el-icon>
+                  <span>{{ item.title }}</span>
+                  <el-button
+                    text
+                    circle
+                    :icon="ArrowUp"
+                    :disabled="index === 0"
+                    :aria-label="`上移${item.title}`"
+                    @click="moveFavoriteRoute(index, -1)"
+                  />
+                  <el-button
+                    text
+                    circle
+                    :icon="ArrowDown"
+                    :disabled="index === selectedFavoriteRoutes.length - 1"
+                    :aria-label="`下移${item.title}`"
+                    @click="moveFavoriteRoute(index, 1)"
+                  />
+                  <el-button
+                    text
+                    circle
+                    :icon="Close"
+                    :aria-label="`移除${item.title}`"
+                    @click="removeFavoriteRoute(item.path)"
+                  />
+                </div>
+              </div>
+              <span class="form-tip">最多 8 个；排序会同步到首页和侧边栏，仅对当前账户生效。</span>
+            </div>
           </el-form-item>
 
           <el-form-item label="菜单分组顺序">
@@ -302,23 +383,36 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onBeforeUnmount, onMounted } from 'vue'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
-import { Check, Brush, Monitor, Bell, RefreshLeft, Lock, Grid, ArrowUp, ArrowDown, View } from '@element-plus/icons-vue'
+import { Check, Brush, Monitor, Bell, RefreshLeft, Lock, Grid, ArrowUp, ArrowDown, Close, View } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { getUserPreference, type UserPreferenceData } from '@/api/users'
 import { changePassword } from '@/api/auth'
 import { getMyPortalConsent, updateMyPortalConsent } from '@/api/dashboard'
 import { useUserStore } from '@/stores/user'
+import { useAppStore } from '@/stores/app'
 import { useRouter } from 'vue-router'
 import { useDevice } from '@/composables/useDevice'
 import {
+  MAX_FAVORITE_ROUTES,
+  getFavoriteNavigationItems,
+  getFavoriteNavigationOptions,
+} from '@/config/navigation'
+import {
   DEFAULT_PRIMARY_COLOR,
+  DEFAULT_SCHEDULE_END,
+  DEFAULT_SCHEDULE_START,
+  DEFAULT_THEME_MODE,
   PRIMARY_COLOR_OPTIONS,
   applyPrimaryColor,
   isReadablePrimaryColor,
   normalizePrimaryColor,
+  normalizeThemePreference,
+  type ThemePreference,
 } from '@/utils/theme'
+import { setLocale } from '@/i18n'
 
 const { isMobile } = useDevice()
+const userStore = useUserStore()
 const formLabelWidth = computed(() => (isMobile.value ? 'auto' : '124px'))
 const formLabelPosition = computed(() => (isMobile.value ? 'top' : 'right'))
 
@@ -326,6 +420,12 @@ const formLabelPosition = computed(() => (isMobile.value ? 'top' : 'right'))
 
 const themeColorOptions = PRIMARY_COLOR_OPTIONS
 const predefinedColors = PRIMARY_COLOR_OPTIONS.map((item) => item.value)
+const themeModeOptions = [
+  { value: 'light', label: '浅色' },
+  { value: 'dark', label: '深色' },
+  { value: 'system', label: '跟随系统' },
+  { value: 'schedule', label: '定时' },
+] as const
 
 const landingOptions = [
   { value: 'dashboard', label: '首页驾驶舱' },
@@ -335,19 +435,14 @@ const landingOptions = [
 ]
 
 const itemsPerPageOptions: number[] = [10, 20, 50]
-const favoriteRouteOptions = [
-  { value: '/dashboard', label: '首页驾驶舱' },
-  { value: '/todo', label: '待办事项' },
-  { value: '/projects', label: '项目管理' },
-  { value: '/tasks', label: '任务管理' },
-  { value: '/competitions', label: '比赛管理' },
-  { value: '/files', label: '文件管理' },
-  { value: '/team', label: '团队组织' },
-  { value: '/finance', label: '经费管理' },
-  { value: '/contributions', label: '我的贡献' },
-  { value: '/intellectual-property', label: '成果与知识产权' },
-  { value: '/reports', label: '定时报表' },
+const languageOptions = [
+  { value: 'zh-CN', label: '简体中文' },
+  { value: 'en', label: 'English' },
 ]
+const favoriteRouteOptions = computed(() =>
+  getFavoriteNavigationOptions(userStore.role, userStore.userInfo?.membership_status)
+    .map((item) => ({ value: item.path, label: item.title })),
+)
 const sidebarGroupOptions = [
   { value: 'workspace', label: '工作台' },
   { value: 'execution', label: '项目执行' },
@@ -389,9 +484,13 @@ const savingPortalConsent = ref(false)
 const form = reactive<UserPreferenceData>({
   dashboard_layout: {},
   primary_color: DEFAULT_PRIMARY_COLOR,
+  theme_mode: DEFAULT_THEME_MODE,
+  schedule_start: DEFAULT_SCHEDULE_START,
+  schedule_end: DEFAULT_SCHEDULE_END,
   default_landing: 'dashboard',
   sidebar_collapsed: false,
   notification_sound: true,
+  language: 'zh-CN',
   items_per_page: 20,
   default_scope: 'mine',
   sidebar_order: [],
@@ -401,7 +500,15 @@ const form = reactive<UserPreferenceData>({
 })
 const dashboardCards = ref<string[]>([...defaultDashboardCards])
 const savedPrimaryColor = ref<string | null>(null)
+const savedThemePreference = ref<ThemePreference | null>(null)
 const normalizedFormColor = computed(() => normalizePrimaryColor(form.primary_color))
+const selectedFavoriteRoutes = computed(() =>
+  getFavoriteNavigationItems(
+    form.favorite_routes || [],
+    userStore.role,
+    userStore.userInfo?.membership_status,
+  ),
+)
 
 function selectPrimaryColor(color: string): void {
   if (!isReadablePrimaryColor(color)) return
@@ -414,6 +521,24 @@ function previewPrimaryColor(color: string | null): void {
     form.primary_color = color.toLowerCase()
     applyPrimaryColor(form.primary_color)
   }
+}
+
+function formThemePreference(): ThemePreference {
+  return normalizeThemePreference({
+    theme_mode: form.theme_mode,
+    schedule_start: form.schedule_start,
+    schedule_end: form.schedule_end,
+  })
+}
+
+function syncThemeForm(preference: ThemePreference): void {
+  form.theme_mode = preference.theme_mode
+  form.schedule_start = preference.schedule_start
+  form.schedule_end = preference.schedule_end
+}
+
+function previewThemePreference(): void {
+  appStore.applyThemeSettings(formThemePreference())
 }
 
 function normalizeDashboardCards(layout: Record<string, unknown> | undefined): string[] {
@@ -463,6 +588,19 @@ function moveSidebarGroup(index: number, offset: -1 | 1): void {
   sidebarGroups.value = next
 }
 
+function moveFavoriteRoute(index: number, offset: -1 | 1): void {
+  const routes = form.favorite_routes || []
+  const targetIndex = index + offset
+  if (targetIndex < 0 || targetIndex >= routes.length) return
+  const next = [...routes]
+  ;[next[index], next[targetIndex]] = [next[targetIndex], next[index]]
+  form.favorite_routes = next
+}
+
+function removeFavoriteRoute(path: string): void {
+  form.favorite_routes = (form.favorite_routes || []).filter((item) => item !== path)
+}
+
 // ============ 数据加载 ============
 
 async function loadPreference(): Promise<void> {
@@ -474,12 +612,22 @@ async function loadPreference(): Promise<void> {
     form.primary_color = normalizePrimaryColor(data.primary_color || data.theme_color)
     savedPrimaryColor.value = form.primary_color
     applyPrimaryColor(form.primary_color)
+    const themePreference = normalizeThemePreference(data)
+    syncThemeForm(themePreference)
+    savedThemePreference.value = themePreference
+    appStore.applyThemeSettings(themePreference)
     form.default_landing = data.default_landing || 'dashboard'
     form.sidebar_collapsed = data.sidebar_collapsed ?? false
     form.notification_sound = data.notification_sound ?? true
+    form.language = data.language === 'en' ? 'en' : 'zh-CN'
+    setLocale(form.language)
     form.items_per_page = data.items_per_page || 20
     form.default_scope = data.default_scope === 'team' ? 'team' : 'mine'
-    form.favorite_routes = Array.isArray(data.favorite_routes) ? data.favorite_routes : []
+    form.favorite_routes = getFavoriteNavigationItems(
+      Array.isArray(data.favorite_routes) ? data.favorite_routes : [],
+      userStore.role,
+      userStore.userInfo?.membership_status,
+    ).slice(0, MAX_FAVORITE_ROUTES).map((item) => item.path)
     const configuredOrder = Array.isArray(data.sidebar_order) ? data.sidebar_order : []
     sidebarGroups.value = [...sidebarGroupOptions].sort((left, right) => {
       const leftIndex = configuredOrder.indexOf(left.value)
@@ -506,6 +654,10 @@ async function loadPreference(): Promise<void> {
     const rollbackColor = savedPrimaryColor.value || userStore.primaryColor
     form.primary_color = rollbackColor
     userStore.syncPrimaryColor(rollbackColor)
+    if (savedThemePreference.value) {
+      syncThemeForm(savedThemePreference.value)
+      appStore.applyThemeSettings(savedThemePreference.value)
+    }
   } finally {
     loading.value = false
   }
@@ -536,14 +688,22 @@ async function handleSave(): Promise<void> {
     ElMessage.warning('主色过浅，请选择能清晰显示白色文字的较深颜色')
     return
   }
+  if (form.theme_mode === 'schedule' && form.schedule_start === form.schedule_end) {
+    ElMessage.warning('深色模式的开始和结束时间不能相同')
+    return
+  }
   saving.value = true
   try {
     form.primary_color = requestedColor.toLowerCase()
     const preference = await userStore.savePreference({
       primary_color: form.primary_color,
+      theme_mode: form.theme_mode,
+      schedule_start: form.schedule_start,
+      schedule_end: form.schedule_end,
       default_landing: form.default_landing,
       sidebar_collapsed: form.sidebar_collapsed,
       notification_sound: form.notification_sound,
+      language: form.language,
       items_per_page: form.items_per_page,
       dashboard_layout: { cards: dashboardCards.value },
       default_scope: form.default_scope,
@@ -564,11 +724,18 @@ async function handleSave(): Promise<void> {
     })
     form.primary_color = normalizePrimaryColor(preference.primary_color)
     savedPrimaryColor.value = form.primary_color
+    const savedTheme = normalizeThemePreference(preference)
+    syncThemeForm(savedTheme)
+    savedThemePreference.value = savedTheme
     ElMessage.success('偏好设置已保存')
   } catch {
     const rollbackColor = savedPrimaryColor.value || userStore.primaryColor
     form.primary_color = rollbackColor
     userStore.syncPrimaryColor(rollbackColor)
+    if (savedThemePreference.value) {
+      syncThemeForm(savedThemePreference.value)
+      appStore.applyThemeSettings(savedThemePreference.value)
+    }
   } finally {
     saving.value = false
   }
@@ -606,7 +773,7 @@ const pwdRules: FormRules = {
 }
 
 const router = useRouter()
-const userStore = useUserStore()
+const appStore = useAppStore()
 
 async function handleChangePassword(): Promise<void> {
   if (!pwdFormRef.value) return
@@ -638,12 +805,18 @@ async function handleChangePassword(): Promise<void> {
 
 onMounted(() => {
   savedPrimaryColor.value = userStore.primaryColor
+  savedThemePreference.value = {
+    theme_mode: appStore.themeMode,
+    schedule_start: appStore.scheduleStart,
+    schedule_end: appStore.scheduleEnd,
+  }
   void loadPreference()
 })
 
 onBeforeUnmount(() => {
   if (savedPrimaryColor.value && userStore.isLoggedIn) {
     userStore.syncPrimaryColor(savedPrimaryColor.value)
+    if (savedThemePreference.value) appStore.applyThemeSettings(savedThemePreference.value)
   }
 })
 </script>
@@ -716,6 +889,24 @@ onBeforeUnmount(() => {
   }
 }
 
+.theme-mode-group {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  width: min(100%, 440px);
+
+  :deep(.el-radio-button__inner) {
+    width: 100%;
+  }
+}
+
+.theme-schedule-row {
+  display: grid;
+  grid-template-columns: minmax(112px, 1fr) auto minmax(112px, 1fr);
+  align-items: center;
+  gap: 10px;
+  width: min(100%, 340px);
+}
+
 .theme-color-card {
   position: relative;
   display: flex;
@@ -773,6 +964,34 @@ onBeforeUnmount(() => {
 
 .preference-select {
   width: min(100%, 380px);
+}
+
+.favorite-route-control {
+  display: grid;
+  gap: 8px;
+  width: min(100%, 440px);
+
+  .form-tip { margin-left: 0; }
+}
+
+.favorite-route-list {
+  display: grid;
+  gap: 5px;
+}
+
+.favorite-route-item {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) 32px 32px 32px;
+  align-items: center;
+  min-height: 38px;
+  gap: 2px;
+  padding: 1px 4px 1px 10px;
+  background: var(--color-surface-subtle);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-sm);
+
+  > .el-icon { color: var(--color-primary); }
+  > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
 }
 
 .sidebar-order-list {
@@ -914,6 +1133,10 @@ onBeforeUnmount(() => {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     width: 100%;
+  }
+
+  .theme-mode-group {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .settings-section :deep(.el-radio-button__inner) {

@@ -122,6 +122,10 @@ class UserPreference(models.Model):
 
     DEFAULT_THEME = 'blue'
     DEFAULT_PRIMARY_COLOR = '#176b73'
+    DEFAULT_THEME_MODE = 'system'
+    DEFAULT_SCHEDULE_START = '19:00'
+    DEFAULT_SCHEDULE_END = '07:00'
+    DEFAULT_LANGUAGE = 'zh-CN'
 
     # 保留主题键以兼容旧客户端；界面实际使用受控的主色值。
     THEME_CHOICES = [
@@ -137,6 +141,13 @@ class UserPreference(models.Model):
         'orange': '#9a6238',
     }
     PRIMARY_COLOR_PATTERN = r'^#[0-9A-Fa-f]{6}$'
+    SCHEDULE_TIME_PATTERN = r'^(?:[01]\d|2[0-3]):[0-5]\d$'
+
+    class ThemeMode(models.TextChoices):
+        LIGHT = 'light', '浅色'
+        DARK = 'dark', '深色'
+        SYSTEM = 'system', '跟随系统'
+        SCHEDULE = 'schedule', '定时切换'
 
     # 默认着陆页可选项
     LANDING_CHOICES = [
@@ -170,12 +181,46 @@ class UserPreference(models.Model):
             )
         ],
     )
+    theme_mode = models.CharField(
+        '明暗模式',
+        max_length=20,
+        choices=ThemeMode.choices,
+        default=DEFAULT_THEME_MODE,
+    )
+    schedule_start = models.CharField(
+        '深色模式开始时间',
+        max_length=5,
+        default=DEFAULT_SCHEDULE_START,
+        validators=[
+            RegexValidator(
+                regex=SCHEDULE_TIME_PATTERN,
+                message='深色模式开始时间必须为 HH:MM 格式的有效时间',
+            )
+        ],
+    )
+    schedule_end = models.CharField(
+        '深色模式结束时间',
+        max_length=5,
+        default=DEFAULT_SCHEDULE_END,
+        validators=[
+            RegexValidator(
+                regex=SCHEDULE_TIME_PATTERN,
+                message='深色模式结束时间必须为 HH:MM 格式的有效时间',
+            )
+        ],
+    )
     # 默认着陆页
     default_landing = models.CharField('默认着陆页', max_length=50, default='dashboard')
     # 侧边栏默认是否折叠
     sidebar_collapsed = models.BooleanField('侧边栏默认折叠', default=False)
     # 是否开启通知声音
     notification_sound = models.BooleanField('通知声音', default=True)
+    language = models.CharField(
+        '界面语言',
+        max_length=10,
+        choices=[('zh-CN', '简体中文'), ('en', 'English')],
+        default=DEFAULT_LANGUAGE,
+    )
     # 每页显示条数
     items_per_page = models.IntegerField('每页显示条数', default=20)
     # 默认数据范围：优先显示与当前账户有关的数据，或显示团队全部数据
@@ -233,6 +278,12 @@ class UserPreference(models.Model):
             return None
         return primary_color.lower()
 
+    @classmethod
+    def normalize_schedule_time(cls, value):
+        if not isinstance(value, str):
+            return None
+        return value if re.fullmatch(cls.SCHEDULE_TIME_PATTERN, value) else None
+
     @property
     def safe_primary_color(self):
         return self.normalize_primary_color(self.primary_color) or self.DEFAULT_PRIMARY_COLOR
@@ -245,12 +296,31 @@ class UserPreference(models.Model):
         ):
             self.primary_color = self.primary_color_for_theme(self.theme_color)
 
+        errors = {}
         normalized = self.normalize_primary_color(self.primary_color)
         if normalized is None:
-            raise ValidationError({
-                'primary_color': '主色必须是完整的六位十六进制颜色，例如 #176b73'
-            })
-        self.primary_color = normalized
+            errors['primary_color'] = (
+                '主色必须是完整的六位十六进制颜色，例如 #176b73'
+            )
+        else:
+            self.primary_color = normalized
+
+        if self.theme_mode not in self.ThemeMode.values:
+            errors['theme_mode'] = '明暗模式必须为 light、dark、system 或 schedule'
+
+        for field_name in ('schedule_start', 'schedule_end'):
+            value = getattr(self, field_name)
+            if self.normalize_schedule_time(value) is None:
+                errors[field_name] = '必须为 HH:MM 格式的有效时间'
+
+        if (
+            self.theme_mode == self.ThemeMode.SCHEDULE
+            and self.schedule_start == self.schedule_end
+        ):
+            errors['schedule_end'] = '定时模式的开始时间和结束时间不能相同'
+
+        if errors:
+            raise ValidationError(errors)
         super().save(*args, **kwargs)
 
 

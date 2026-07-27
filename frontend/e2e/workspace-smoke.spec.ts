@@ -49,7 +49,22 @@ test('核心工作台入口可用且使用中文业务标签', async ({ page }) 
   await page.goto('/notifications')
   await expect(page.getByRole('heading', { name: '通知中心' })).toBeVisible()
   const notificationList = page.locator('.content-panel:visible, .mobile-list:visible')
-  await expect(notificationList.getByText('定时报表已生成', { exact: true })).toBeVisible()
+  await expect(notificationList.getByText('定时报表已生成', { exact: true }).first()).toBeVisible()
+})
+
+test('v2.1 分析、平台与工程工作台可直接访问', async ({ page }) => {
+  await login(page, 'admin@demo.com', 'admin123456')
+
+  const workspaces = [
+    ['/analytics-studio', '分析工作台'],
+    ['/admin/platform-capabilities', '平台能力中心'],
+    ['/admin/engineering', '工程控制台'],
+  ] as const
+
+  for (const [route, heading] of workspaces) {
+    await page.goto(route)
+    await expect(page.getByRole('heading', { name: heading, exact: true })).toBeVisible()
+  }
 })
 
 test('项目时间线不回退显示英文事件代码', async ({ page }) => {

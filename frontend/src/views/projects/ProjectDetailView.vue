@@ -5,6 +5,12 @@
         <el-button class="back-button" :icon="ArrowLeft" text @click="$router.back()">返回项目列表</el-button>
         <div class="summary-actions">
           <el-button
+            :icon="Operation"
+            @click="openProjectOperations"
+          >
+            协作工作台
+          </el-button>
+          <el-button
             v-if="canManageProjectWorkflow"
             :icon="EditPen"
             :disabled="!project || project.status === 'closed'"
@@ -776,6 +782,7 @@ import {
   FolderOpened,
   DocumentChecked,
   Medal,
+  Operation,
   Sort,
   Tickets,
   Trophy,
@@ -1461,6 +1468,10 @@ function openProjectTasks(taskId?: number): void {
       ...(taskId ? { task_id: String(taskId) } : {}),
     },
   })
+}
+
+function openProjectOperations(): void {
+  router.push({ name: 'ProjectOperations', params: { id: projectId } })
 }
 
 function openProjectCompetitions(): void {

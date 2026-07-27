@@ -11,6 +11,19 @@ export function refreshToken(refresh: string): Promise<RefreshTokenResult> {
   return post<RefreshTokenResult>('/auth/refresh/', { refresh })
 }
 
+export function requestPasswordReset(email: string): Promise<void> {
+  return post<void>('/auth/password-reset/request/', { email })
+}
+
+export function confirmPasswordReset(data: {
+  uid: string
+  token: string
+  new_password: string
+  confirm_password: string
+}): Promise<void> {
+  return post<void>('/auth/password-reset/confirm/', data)
+}
+
 /** 退出登录（后端无 logout 路由，仅在前端清除 Token） */
 export function logout(): Promise<void> {
   clearTokens()

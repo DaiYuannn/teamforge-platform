@@ -5,6 +5,7 @@
         <p class="workbench-date">{{ todayLabel }}</p>
         <div class="title-line">
           <h1>工作台</h1>
+          <span v-if="activeDashboard">{{ activeDashboard.name }}</span>
           <span v-if="lastUpdatedLabel">{{ lastUpdatedLabel }}</span>
         </div>
       </div>
@@ -92,6 +93,8 @@
       <span>部分数据暂未加载：{{ partialErrorLabel }}</span>
       <el-button link type="primary" :loading="isRefreshing" @click="loadAll">重新加载</el-button>
     </div>
+
+    <QuickEntryPanel />
 
     <section v-if="initialLoading" class="workspace-panel loading-panel" aria-label="工作台加载中">
       <el-skeleton :rows="12" animated />
@@ -362,6 +365,7 @@ import * as echarts from 'echarts'
 import { ElMessage } from 'element-plus'
 import { Brush, Calendar, Stamp, TrendCharts, WarningFilled } from '@element-plus/icons-vue'
 import { getDashboardData } from '@/api/dashboard'
+import { getCustomDashboards, type CustomDashboard } from '@/api/analytics'
 import { getAllLatestSchedules } from '@/api/members'
 import { getContributions } from '@/api/contributions'
 import { getIPApplications } from '@/api/intellectualProperty'
@@ -370,8 +374,14 @@ import { getUnifiedTodos, type UnifiedTodoItem } from '@/api/todo'
 import { formatDate, formatMoneyWithComma, formatRelativeTime } from '@/utils/format'
 import { CONTRIBUTION_TYPE_MAP, IP_STATUS_MAP, NOTIFICATION_CATEGORY_MAP } from '@/utils/constants'
 import { useDevice } from '@/composables/useDevice'
+import {
+  createEChartsTooltipStyle,
+  readEChartsThemePalette,
+  useEChartsTheme,
+} from '@/composables/useEChartsTheme'
 import type { Contribution, DashboardData } from '@/types'
 import EmptyState from '@/components/EmptyState.vue'
+import QuickEntryPanel from '@/components/QuickEntryPanel.vue'
 import { useUserStore } from '@/stores/user'
 import {
   PRIMARY_COLOR_OPTIONS,
@@ -388,11 +398,17 @@ interface CompetitionEvent { id?: string | number; title: string; description?: 
 
 const router = useRouter()
 const userStore = useUserStore()
+const activeDashboard = ref<CustomDashboard | null>(null)
+const effectiveDashboardCards = computed(() => (
+  activeDashboard.value?.config.widgets?.length
+    ? activeDashboard.value.config.widgets
+    : userStore.dashboardCards
+))
 function dashboardCardVisible(card: string): boolean {
-  return userStore.dashboardCards.includes(card)
+  return effectiveDashboardCards.value.includes(card as any)
 }
 function dashboardCardOrder(card: string): number {
-  const index = userStore.dashboardCards.indexOf(card)
+  const index = effectiveDashboardCards.value.indexOf(card as any)
   return index < 0 ? 99 : index
 }
 const { isMobile } = useDevice()
@@ -430,9 +446,7 @@ const todoLabels: Record<string, string> = {
   ip_todo: '知识产权',
 }
 const riskLabels: Record<string, string> = { stale_project: '项目停滞', overdue_task: '任务逾期', upcoming_competition: '比赛临近' }
-const chartColors = { primary: '#176B73', success: '#237A55', warning: '#A66116', danger: '#B64242', muted: '#93A09B' }
 const chartPrimaryColor = computed(() => userStore.primaryColor)
-const tooltipStyle = { backgroundColor: '#FFFFFF', borderColor: '#DCE3E0', borderWidth: 1, padding: [8, 10], textStyle: { color: '#18221F', fontSize: 12 } }
 const todayLabel = new Intl.DateTimeFormat('zh-CN', { month: 'long', day: 'numeric', weekday: 'long' }).format(new Date())
 
 const dashboardUnavailable = computed(() => !dashboardData.value && loadErrors.value.has('dashboard'))
@@ -583,7 +597,20 @@ async function saveTheme(): Promise<void> {
   }
 }
 
-async function loadDashboard(): Promise<void> { dashboardData.value = await getDashboardData() }
+async function loadDashboard(): Promise<void> {
+  try {
+    const response = await getCustomDashboards()
+    const dashboards = Array.isArray(response) ? response : response.results
+    activeDashboard.value = dashboards.find((item) => item.is_default) || null
+  } catch {
+    activeDashboard.value = null
+  }
+  dashboardData.value = await getDashboardData(
+    activeDashboard.value?.config.project_id
+      ? { project_id: activeDashboard.value.config.project_id }
+      : undefined,
+  )
+}
 async function loadWorkStatus(): Promise<void> {
   const list = extractList(await getAllLatestSchedules())
   workStatus.available = list.filter((item: any) => !item.is_saturated && toAmount(item.available_hours ?? item.work_hours) > 0).length
@@ -617,26 +644,29 @@ function renderChart(): void {
   if (!hasOverviewChartData.value) { overviewChart?.dispose(); overviewChart = null; chartResizeObserver?.disconnect(); return }
   const chart = ensureChart()
   if (!chart) return
+  const palette = readEChartsThemePalette()
+  const tooltipStyle = { ...createEChartsTooltipStyle(palette), padding: [8, 10] }
   chart.clear()
   if (chartMode.value === 'project') {
     chart.setOption({
-      animationDuration: 280, color: [chartPrimaryColor.value, chartColors.success, chartColors.muted],
+      animationDuration: 280, color: [palette.primary, palette.success, palette.info],
       tooltip: { trigger: 'item', formatter: '{b}: <b>{c}</b> ({d}%)', ...tooltipStyle },
-      legend: { bottom: 0, left: 'center', itemWidth: 10, itemHeight: 10, textStyle: { color: '#5F6C67', fontSize: 12 } },
-      series: [{ type: 'pie', radius: ['46%', '70%'], center: ['50%', '44%'], label: { show: false }, emphasis: { scaleSize: 4 }, itemStyle: { borderColor: '#FFFFFF', borderWidth: 2 }, data: projectChartData.value }],
+      legend: { bottom: 0, left: 'center', itemWidth: 10, itemHeight: 10, textStyle: { color: palette.textMuted, fontSize: 12 } },
+      series: [{ type: 'pie', radius: ['46%', '70%'], center: ['50%', '44%'], label: { show: false }, emphasis: { scaleSize: 4 }, itemStyle: { borderColor: palette.surface, borderWidth: 2 }, data: projectChartData.value }],
     })
     return
   }
-  const colors: Record<string, string> = { todo: chartColors.muted, doing: chartPrimaryColor.value, done: chartColors.success, overdue: chartColors.danger }
+  const colors: Record<string, string> = { todo: palette.info, doing: palette.primary, done: palette.success, overdue: palette.danger }
   chart.setOption({
-    animationDuration: 280, tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, ...tooltipStyle },
+    animationDuration: 280, tooltip: { trigger: 'item', formatter: '{b}: <b>{c}</b>', confine: true, ...tooltipStyle },
     grid: { left: 12, right: 12, top: 20, bottom: 8, containLabel: true },
-    xAxis: { type: 'category', data: taskChartData.value.map((item) => item.name), axisTick: { show: false }, axisLine: { lineStyle: { color: '#DCE3E0' } }, axisLabel: { color: '#5F6C67', fontSize: 12, interval: 0 } },
-    yAxis: { type: 'value', minInterval: 1, axisLabel: { color: '#7C8984', fontSize: 12 }, splitLine: { lineStyle: { color: '#E8EDEB', type: 'dashed' } } },
-    series: [{ type: 'bar', barMaxWidth: 38, label: { show: true, position: 'top', color: '#5F6C67', fontSize: 12 }, data: taskChartData.value.map((item) => ({ value: item.value, itemStyle: { color: colors[item.key], borderRadius: [3, 3, 0, 0] } })) }],
+    xAxis: { type: 'category', data: taskChartData.value.map((item) => item.name), axisTick: { show: false }, axisLine: { lineStyle: { color: palette.border } }, axisLabel: { color: palette.textRegular, fontSize: 12, interval: 0 } },
+    yAxis: { type: 'value', minInterval: 1, axisLabel: { color: palette.textMuted, fontSize: 12 }, splitLine: { lineStyle: { color: palette.borderLight, type: 'dashed' } } },
+    series: [{ type: 'bar', barMaxWidth: 38, emphasis: { disabled: true }, label: { show: true, position: 'top', color: palette.textRegular, fontSize: 12 }, data: taskChartData.value.map((item) => ({ value: item.value, itemStyle: { color: colors[item.key], borderRadius: [3, 3, 0, 0] } })) }],
   })
 }
 
+useEChartsTheme(renderChart)
 watch([chartMode, isMobile, chartPrimaryColor], async () => { await nextTick(); renderChart() })
 onMounted(() => { loadAll(); window.addEventListener('resize', renderChart) })
 onUnmounted(() => { window.removeEventListener('resize', renderChart); chartResizeObserver?.disconnect(); overviewChart?.dispose() })

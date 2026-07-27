@@ -3,6 +3,7 @@
 """
 from rest_framework import serializers
 from django.contrib.auth.password_validation import validate_password
+from drf_spectacular.utils import extend_schema_field
 
 from .models import User, UserPreference, UserLifecycleEvent
 
@@ -15,9 +16,13 @@ def _serialize_preferences(user):
             'dashboard_layout': {},
             'theme_color': UserPreference.DEFAULT_THEME,
             'primary_color': UserPreference.DEFAULT_PRIMARY_COLOR,
+            'theme_mode': UserPreference.DEFAULT_THEME_MODE,
+            'schedule_start': UserPreference.DEFAULT_SCHEDULE_START,
+            'schedule_end': UserPreference.DEFAULT_SCHEDULE_END,
             'default_landing': 'dashboard',
             'sidebar_collapsed': False,
             'notification_sound': True,
+            'language': UserPreference.DEFAULT_LANGUAGE,
             'items_per_page': 20,
             'default_scope': 'mine',
             'sidebar_order': [],
@@ -33,9 +38,13 @@ def _serialize_preferences(user):
             else UserPreference.DEFAULT_THEME
         ),
         'primary_color': preference.safe_primary_color,
+        'theme_mode': preference.theme_mode,
+        'schedule_start': preference.schedule_start,
+        'schedule_end': preference.schedule_end,
         'default_landing': preference.default_landing,
         'sidebar_collapsed': preference.sidebar_collapsed,
         'notification_sound': preference.notification_sound,
+        'language': preference.language,
         'items_per_page': preference.items_per_page,
         'default_scope': preference.default_scope,
         'sidebar_order': preference.sidebar_order or [],
@@ -43,6 +52,25 @@ def _serialize_preferences(user):
         'saved_filters': preference.saved_filters or {},
         'notification_preferences': preference.notification_preferences or {},
     }
+
+
+class UserPreferencesPayloadSerializer(serializers.Serializer):
+    dashboard_layout = serializers.JSONField()
+    theme_color = serializers.CharField()
+    primary_color = serializers.CharField()
+    theme_mode = serializers.ChoiceField(choices=UserPreference.ThemeMode.choices)
+    schedule_start = serializers.RegexField(UserPreference.SCHEDULE_TIME_PATTERN)
+    schedule_end = serializers.RegexField(UserPreference.SCHEDULE_TIME_PATTERN)
+    default_landing = serializers.CharField()
+    sidebar_collapsed = serializers.BooleanField()
+    notification_sound = serializers.BooleanField()
+    language = serializers.ChoiceField(choices=['zh-CN', 'en'])
+    items_per_page = serializers.IntegerField()
+    default_scope = serializers.CharField()
+    sidebar_order = serializers.ListField(child=serializers.CharField())
+    favorite_routes = serializers.ListField(child=serializers.CharField())
+    saved_filters = serializers.JSONField()
+    notification_preferences = serializers.JSONField()
 
 
 class UserLifecycleEventSerializer(serializers.ModelSerializer):
@@ -75,6 +103,7 @@ class UserSerializer(serializers.ModelSerializer):
         )
         read_only_fields = ('id', 'date_joined', 'last_login')
 
+    @extend_schema_field(UserPreferencesPayloadSerializer)
     def get_preferences(self, obj):
         return _serialize_preferences(obj)
 
@@ -175,6 +204,7 @@ class MyProfileSerializer(serializers.ModelSerializer):
             'is_active', 'date_joined', 'last_login',
         )
 
+    @extend_schema_field(UserPreferencesPayloadSerializer)
     def get_preferences(self, obj):
         return _serialize_preferences(obj)
 
@@ -183,3 +213,4 @@ class LoginSerializer(serializers.Serializer):
     """登录序列化器"""
     email = serializers.EmailField(required=True)
     password = serializers.CharField(required=True, write_only=True)
+    remember_me = serializers.BooleanField(required=False, default=False)

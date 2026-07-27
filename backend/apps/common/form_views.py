@@ -7,11 +7,123 @@ from rest_framework import serializers, status
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
+from django.utils.dateparse import parse_date
+import re
 
 from common.response import success_response, error_response
 from common.mixins import MultiSerializerMixin
 from common.permissions import IsTeacherOrAdminOrReadOnly
 from .form_models import CustomForm, FormSubmission
+
+
+FORM_FIELD_TYPES = {'text', 'textarea', 'number', 'date', 'select', 'switch'}
+
+
+def validate_form_fields(fields):
+    if not isinstance(fields, list):
+        raise serializers.ValidationError('fields must be a list')
+    normalized = []
+    seen = set()
+    for index, raw in enumerate(fields):
+        if not isinstance(raw, dict):
+            raise serializers.ValidationError(f'Field {index + 1} must be an object')
+        field = dict(raw)
+        key = str(field.get('key') or field.get('name') or '').strip()
+        field_type = field.get('type')
+        if not key or not re.fullmatch(r'[A-Za-z][A-Za-z0-9_]{0,63}', key):
+            raise serializers.ValidationError(f'Field {index + 1} has an invalid key')
+        if key in seen:
+            raise serializers.ValidationError(f'Duplicate field key: {key}')
+        if field_type not in FORM_FIELD_TYPES:
+            raise serializers.ValidationError(f'Unsupported type for field {key}')
+        if field_type == 'select':
+            options = field.get('options')
+            if not isinstance(options, list) or not options:
+                raise serializers.ValidationError(f'Select field {key} requires options')
+            if any(isinstance(option, (dict, list)) for option in options):
+                raise serializers.ValidationError(f'Select field {key} has invalid options')
+        if field_type in {'text', 'textarea'}:
+            try:
+                min_length = int(field.get('min_length', 0))
+                max_length = int(field.get('max_length', 1000000))
+            except (TypeError, ValueError) as exc:
+                raise serializers.ValidationError(
+                    f'Text field {key} has invalid length limits'
+                ) from exc
+            if min_length < 0 or max_length < min_length:
+                raise serializers.ValidationError(
+                    f'Text field {key} has invalid length limits'
+                )
+            if field.get('pattern'):
+                try:
+                    re.compile(str(field['pattern']))
+                except re.error as exc:
+                    raise serializers.ValidationError(
+                        f'Text field {key} has an invalid pattern'
+                    ) from exc
+        if field_type == 'number':
+            try:
+                minimum = float(field.get('min', '-inf'))
+                maximum = float(field.get('max', 'inf'))
+            except (TypeError, ValueError) as exc:
+                raise serializers.ValidationError(
+                    f'Number field {key} has invalid limits'
+                ) from exc
+            if maximum < minimum:
+                raise serializers.ValidationError(
+                    f'Number field {key} has invalid limits'
+                )
+        field['key'] = key
+        seen.add(key)
+        normalized.append(field)
+    return normalized
+
+
+def validate_submission_data(form, data):
+    if not isinstance(data, dict):
+        raise serializers.ValidationError({'data': 'Submission data must be an object'})
+    fields = validate_form_fields(form.fields)
+    definitions = {field['key']: field for field in fields}
+    errors = {}
+    unknown = sorted(set(data) - set(definitions))
+    if unknown:
+        errors['_unknown'] = f'Unknown fields: {", ".join(unknown)}'
+    for key, field in definitions.items():
+        value = data.get(key)
+        empty = value is None or value == ''
+        if field.get('required') and empty:
+            errors[key] = 'This field is required'
+            continue
+        if empty:
+            continue
+        field_type = field['type']
+        if field_type in {'text', 'textarea'}:
+            if not isinstance(value, str):
+                errors[key] = 'Must be text'
+                continue
+            if field.get('min_length') is not None and len(value) < int(field['min_length']):
+                errors[key] = f'Minimum length is {field["min_length"]}'
+            if field.get('max_length') is not None and len(value) > int(field['max_length']):
+                errors[key] = f'Maximum length is {field["max_length"]}'
+            if field.get('pattern') and not re.fullmatch(str(field['pattern']), value):
+                errors[key] = 'Invalid format'
+        elif field_type == 'number':
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                errors[key] = 'Must be a number'
+                continue
+            if field.get('min') is not None and value < float(field['min']):
+                errors[key] = f'Minimum value is {field["min"]}'
+            if field.get('max') is not None and value > float(field['max']):
+                errors[key] = f'Maximum value is {field["max"]}'
+        elif field_type == 'date' and (not isinstance(value, str) or parse_date(value) is None):
+            errors[key] = 'Must be an ISO date'
+        elif field_type == 'select' and value not in field.get('options', []):
+            errors[key] = 'Must be one of the configured options'
+        elif field_type == 'switch' and not isinstance(value, bool):
+            errors[key] = 'Must be true or false'
+    if errors:
+        raise serializers.ValidationError({'data': errors})
+    return data
 
 
 # ============ 序列化器 ============
@@ -28,6 +140,9 @@ class CustomFormSerializer(serializers.ModelSerializer):
         )
         read_only_fields = ('id', 'created_by', 'created_at', 'updated_at')
 
+    def validate_fields(self, value):
+        return validate_form_fields(value)
+
 
 class CustomFormCreateSerializer(serializers.ModelSerializer):
     """表单创建序列化器"""
@@ -36,6 +151,9 @@ class CustomFormCreateSerializer(serializers.ModelSerializer):
         model = CustomForm
         fields = ('id', 'name', 'description', 'fields', 'is_active')
         read_only_fields = ('id',)
+
+    def validate_fields(self, value):
+        return validate_form_fields(value)
 
 
 class FormSubmissionSerializer(serializers.ModelSerializer):
@@ -47,6 +165,13 @@ class FormSubmissionSerializer(serializers.ModelSerializer):
         model = FormSubmission
         fields = ('id', 'form', 'form_name', 'user', 'user_name', 'data', 'created_at')
         read_only_fields = ('id', 'user', 'created_at')
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        form = attrs.get('form') or getattr(self.instance, 'form', None)
+        if form:
+            attrs['data'] = validate_submission_data(form, attrs.get('data', {}))
+        return attrs
 
 
 # ============ ViewSet ============

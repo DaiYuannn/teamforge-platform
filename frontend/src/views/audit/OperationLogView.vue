@@ -138,7 +138,7 @@
 
       <!-- 分页 -->
       <div class="pagination-wrapper">
-        <el-pagination
+        <AccessiblePagination
           v-model:current-page="queryParams.page"
           v-model:page-size="queryParams.page_size"
           :total="total"

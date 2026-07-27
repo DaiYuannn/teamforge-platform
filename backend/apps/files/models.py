@@ -9,11 +9,84 @@ import hashlib
 
 from django.db import models
 from django.conf import settings
+from django.core.exceptions import ValidationError
 
 from apps.projects.models import Project
+from apps.common.soft_delete import SoftDeleteMixin, SoftDeleteManager
 
 
-class FileAsset(models.Model):
+class FileFolder(models.Model):
+    """项目内的文件夹，支持有限层级的树形组织。"""
+
+    project = models.ForeignKey(
+        Project,
+        on_delete=models.CASCADE,
+        related_name='file_folders',
+        verbose_name='所属项目',
+    )
+    name = models.CharField('文件夹名称', max_length=100)
+    parent = models.ForeignKey(
+        'self',
+        on_delete=models.CASCADE,
+        related_name='children',
+        verbose_name='上级文件夹',
+        null=True,
+        blank=True,
+    )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        related_name='created_file_folders',
+        verbose_name='创建人',
+        null=True,
+        blank=True,
+    )
+    created_at = models.DateTimeField('创建时间', auto_now_add=True)
+    updated_at = models.DateTimeField('更新时间', auto_now=True)
+
+    class Meta:
+        db_table = 'file_folders'
+        verbose_name = '文件夹'
+        verbose_name_plural = verbose_name
+        ordering = ['name', 'id']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['project', 'parent', 'name'],
+                condition=models.Q(parent__isnull=False),
+                name='uniq_nested_file_folder_name',
+            ),
+            models.UniqueConstraint(
+                fields=['project', 'name'],
+                condition=models.Q(parent__isnull=True),
+                name='uniq_root_file_folder_name',
+            ),
+        ]
+
+    def __str__(self):
+        return self.name
+
+    def clean(self):
+        if self.parent_id and self.parent.project_id != self.project_id:
+            raise ValidationError({'parent': '上级文件夹必须属于同一项目'})
+        ancestor = self.parent
+        visited = {self.pk} if self.pk else set()
+        depth = 1
+        while ancestor is not None:
+            if ancestor.pk in visited:
+                raise ValidationError({'parent': '文件夹不能移动到自身或子文件夹中'})
+            visited.add(ancestor.pk)
+            depth += 1
+            if depth > 8:
+                raise ValidationError({'parent': '文件夹层级不能超过 8 层'})
+            ancestor = ancestor.parent
+
+    def save(self, *args, **kwargs):
+        self.name = self.name.strip()
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
+
+class FileAsset(SoftDeleteMixin, models.Model):
     """
     文件资源模型
     支持三级权限控制
@@ -25,6 +98,9 @@ class FileAsset(models.Model):
         INTERNAL = 'internal', '内部'
         SENSITIVE = 'sensitive', '敏感'
 
+    objects = SoftDeleteManager()
+    all_objects = models.Manager()
+
     # 关联项目（可为空，表示公共文件）
     project = models.ForeignKey(
         Project,
@@ -32,6 +108,14 @@ class FileAsset(models.Model):
         related_name='files',
         verbose_name='所属项目',
         null=True, blank=True,
+    )
+    folder = models.ForeignKey(
+        FileFolder,
+        on_delete=models.SET_NULL,
+        related_name='files',
+        verbose_name='所在文件夹',
+        null=True,
+        blank=True,
     )
     # 文件名称
     name = models.CharField('文件名称', max_length=255)
@@ -127,6 +211,15 @@ class FileAsset(models.Model):
             self.file_hash = new_hash
             # 使用查询集更新，避免再次触发 save 逻辑
             type(self).objects.filter(pk=self.pk).update(file_hash=new_hash)
+
+    def soft_delete(self, user=None):
+        """文件进入回收站时立即撤销所有公开分享。"""
+        super().soft_delete(user)
+        from .share_models import FileShareLink
+
+        FileShareLink.objects.filter(file_id=self.pk, is_active=True).update(
+            is_active=False,
+        )
 
 
 class FileVersion(models.Model):

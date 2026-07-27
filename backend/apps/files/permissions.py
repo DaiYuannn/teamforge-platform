@@ -13,6 +13,38 @@ from common.project_access import (
 )
 
 
+def scope_file_queryset(queryset, user, *, include_sensitive=False):
+    """Apply the same visibility rules used by file list and search APIs."""
+    if not user or not user.is_authenticated or not getattr(user, 'is_active', False):
+        return queryset.none()
+    if is_exited_member(user):
+        return queryset.none()
+
+    if user.global_role in ['sys_admin', 'teacher']:
+        visible = queryset
+    elif is_external_collaborator(user):
+        visible = queryset.filter(
+            project__members__user=user,
+            project__members__status='active',
+        )
+    else:
+        from django.db.models import Q
+
+        visible = queryset.filter(
+            Q(level='public')
+            | Q(
+                level='internal',
+                project__members__user=user,
+                project__members__status='active',
+            )
+            | Q(level='internal', project__leader=user)
+        )
+
+    if not include_sensitive:
+        visible = visible.exclude(level='sensitive')
+    return visible.distinct()
+
+
 def user_can_access_file(user, obj, *, allow_sensitive=False):
     """不依赖 HTTP 方法的文件读取权限判断，供下载与分享创建共用。"""
     if not user or not user.is_authenticated:

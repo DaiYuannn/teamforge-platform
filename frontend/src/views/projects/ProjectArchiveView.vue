@@ -93,7 +93,16 @@
       </el-table>
 
       <div v-else-if="archiveList.length" class="archive-mobile-list">
-        <article v-for="project in archiveList" :key="project.id" class="archive-mobile-row" @click="handleViewDetail(project)">
+        <article
+          v-for="project in archiveList"
+          :key="project.id"
+          class="archive-mobile-row"
+          role="button"
+          tabindex="0"
+          @click="handleViewDetail(project)"
+          @keydown.enter="handleViewDetail(project)"
+          @keydown.space.prevent="handleViewDetail(project)"
+        >
           <div class="mobile-row-head">
             <div>
               <strong>{{ project.name }}</strong>
@@ -113,7 +122,7 @@
       </div>
       <EmptyState v-else-if="!loading" text="暂无归档项目" description="项目获奖、结项或关闭后会显示在这里。" icon="FolderOpened" compact />
 
-      <el-pagination
+      <AccessiblePagination
         v-if="total > 0"
         v-model:current-page="queryParams.page"
         v-model:page-size="queryParams.page_size"
@@ -263,9 +272,9 @@ onMounted(loadData)
   align-items: center;
   gap: 8px;
   padding: 10px 12px;
-  color: #7f3030;
+  color: var(--danger-text);
   background: var(--danger-light);
-  border: 1px solid #efcfcd;
+  border: 1px solid var(--danger-border);
   border-radius: var(--radius-sm);
 }
 
@@ -310,6 +319,7 @@ onMounted(loadData)
 .row-arrow { color: var(--color-text-muted); }
 
 .archive-mobile-row { position: relative; padding: 14px 28px 14px 0; border-bottom: 1px solid var(--color-border-light); }
+.archive-mobile-row:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
 .mobile-row-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .mobile-row-head > div { display: flex; flex-direction: column; min-width: 0; }
 .mobile-row-head strong { color: var(--color-text); font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }

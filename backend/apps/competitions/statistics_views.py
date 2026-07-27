@@ -8,11 +8,14 @@
   - 晋级率
 """
 from django.db.models import Count, Q
+from drf_spectacular.utils import OpenApiParameter, extend_schema, inline_serializer
+from rest_framework import serializers
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
 from common.response import success_response
 from common.project_access import scope_project_queryset
+from common.schema import success_response_schema
 from .models import Competition
 
 
@@ -24,6 +27,48 @@ class CompetitionStatisticsView(APIView):
     """
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name='project',
+                type=int,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description='按项目 ID 筛选。',
+            ),
+        ],
+        responses={
+            200: success_response_schema(
+                'CompetitionStatisticsResponse',
+                inline_serializer(
+                    name='CompetitionStatisticsData',
+                    fields={
+                        'total': serializers.IntegerField(),
+                        'awarded_count': serializers.IntegerField(),
+                        'promoted_count': serializers.IntegerField(),
+                        'by_level': serializers.DictField(
+                            child=serializers.IntegerField(),
+                        ),
+                        'by_status': serializers.DictField(
+                            child=serializers.IntegerField(),
+                        ),
+                        'award_rate': serializers.FloatField(),
+                        'promotion_rate': serializers.FloatField(),
+                        'award_by_level': serializers.DictField(
+                            child=inline_serializer(
+                                name='CompetitionLevelAwardStatistics',
+                                fields={
+                                    'total': serializers.IntegerField(),
+                                    'awarded': serializers.IntegerField(),
+                                    'rate': serializers.FloatField(),
+                                },
+                            ),
+                        ),
+                    },
+                ),
+            ),
+        },
+    )
     def get(self, request):
         params = request.query_params
         project_id = params.get('project')

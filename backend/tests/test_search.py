@@ -7,6 +7,8 @@ M07: 全局搜索 API 测试
 """
 import pytest
 
+from apps.files.models import FileAsset
+
 
 def extract_data(response):
     data = response.json()
@@ -91,6 +93,139 @@ class TestGlobalSearch:
         assert resp.status_code == 200
         data = extract_data(resp)
         assert len(data['projects']) <= 3
+
+    @pytest.mark.parametrize('limit', ['bad', '0', '-1', '21'])
+    def test_search_rejects_invalid_limit(self, member_client, limit):
+        resp = member_client.get(f'/api/v1/dashboard/search/?q=test&limit={limit}')
+        assert resp.status_code == 400
+
+    def test_search_never_exposes_sensitive_file_metadata(
+        self,
+        admin_client,
+        make_file,
+    ):
+        make_file(name='global-search-secret.pdf', level=FileAsset.Level.SENSITIVE)
+
+        resp = admin_client.get('/api/v1/dashboard/search/?q=global-search-secret')
+
+        assert resp.status_code == 200
+        assert extract_data(resp)['files'] == []
+
+    def test_search_applies_internal_file_membership_boundary(
+        self,
+        member_client,
+        make_file,
+    ):
+        make_file(name='unrelated-internal-plan.pdf', level=FileAsset.Level.INTERNAL)
+
+        resp = member_client.get('/api/v1/dashboard/search/?q=unrelated-internal-plan')
+
+        assert resp.status_code == 200
+        assert extract_data(resp)['files'] == []
+
+    def test_root_project_scope_supports_forced_external_user(
+        self,
+        api_client,
+        make_project,
+        make_user,
+    ):
+        from apps.projects.models import ProjectMember
+
+        external = make_user(
+            email='forced-external-search@test.com',
+            membership_status='external',
+        )
+        visible = make_project(name='external-scope-visible')
+        make_project(name='external-scope-hidden')
+        ProjectMember.objects.create(
+            project=visible,
+            user=external,
+            role_in_project=ProjectMember.RoleInProject.EXTERNAL,
+            status=ProjectMember.Status.ACTIVE,
+        )
+        api_client.force_authenticate(user=external)
+
+        resp = api_client.get(
+            '/api/v1/dashboard/search/?q=external-scope&search_type=projects'
+        )
+
+        assert resp.status_code == 200
+        assert [row['id'] for row in extract_data(resp)['projects']] == [visible.id]
+
+    def test_search_result_urls_follow_navigation_contract(
+        self,
+        member_client,
+        make_task,
+        make_file,
+        make_project,
+        make_user,
+    ):
+        from apps.competitions.models import Competition
+        from apps.projects.discussion_models import DiscussionTopic
+        from apps.projects.knowledge_models import KnowledgeArticle
+
+        task = make_task(title='navigation-contract-task')
+        file_asset = make_file(name='navigation-contract-file.pdf')
+        project = make_project(name='navigation-contract-project')
+        author = make_user(email='navigation-contract-author@test.com')
+        competition = Competition.objects.create(
+            project=project,
+            name='navigation-contract-competition',
+        )
+        article = KnowledgeArticle.objects.create(
+            project=project,
+            author=author,
+            title='navigation-contract-article',
+            content='test',
+        )
+        global_article = KnowledgeArticle.objects.create(
+            author=author,
+            title='navigation-contract-global-article',
+            content='test',
+        )
+        discussion = DiscussionTopic.objects.create(
+            project=project,
+            author=author,
+            title='navigation-contract-discussion',
+            content='test',
+        )
+
+        task_resp = member_client.get(
+            '/api/v1/dashboard/search/?q=navigation-contract-task&search_type=tasks'
+        )
+        file_resp = member_client.get(
+            '/api/v1/dashboard/search/?q=navigation-contract-file&search_type=files'
+        )
+        competition_resp = member_client.get(
+            '/api/v1/dashboard/search/'
+            '?q=navigation-contract-competition&search_type=competitions'
+        )
+        article_resp = member_client.get(
+            '/api/v1/dashboard/search/'
+            '?q=navigation-contract-article&search_type=knowledge'
+        )
+        global_article_resp = member_client.get(
+            '/api/v1/dashboard/search/'
+            '?q=navigation-contract-global-article&search_type=knowledge'
+        )
+        discussion_resp = member_client.get(
+            '/api/v1/dashboard/search/'
+            '?q=navigation-contract-discussion&search_type=discussions'
+        )
+
+        assert extract_data(task_resp)['tasks'][0]['url'] == f'/tasks?task_id={task.id}'
+        assert extract_data(file_resp)['files'][0]['url'] == f'/files?file_id={file_asset.id}'
+        assert extract_data(competition_resp)['competitions'][0]['url'] == (
+            f'/competitions?competition_id={competition.id}'
+        )
+        assert extract_data(article_resp)['knowledge'][0]['url'] == (
+            f'/projects/{project.id}/operations?tab=knowledge&article_id={article.id}'
+        )
+        assert extract_data(global_article_resp)['knowledge'][0]['url'] == '/projects'
+        assert extract_data(discussion_resp)['discussions'][0]['url'] == (
+            f'/projects/{project.id}/operations?tab=discussions'
+            f'&discussion_id={discussion.id}'
+        )
 
     def test_search_result_structure(self, member_client, make_project):
         """搜索结果结构完整"""

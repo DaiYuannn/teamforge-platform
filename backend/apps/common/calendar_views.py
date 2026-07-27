@@ -8,11 +8,20 @@
 from datetime import datetime, timezone as dt_timezone
 
 from django.utils import timezone
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import (
+    OpenApiParameter,
+    OpenApiResponse,
+    extend_schema,
+    inline_serializer,
+)
+from rest_framework import serializers
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 from rest_framework.response import Response
 
 from common.response import success_response
+from common.schema import success_response_schema
 
 
 def _escape_ical(text):
@@ -47,6 +56,35 @@ class CalendarFeedView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name='output',
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                enum=['json', 'ical'],
+                default='json',
+                description='Use "ical" to return the raw calendar feed.',
+            ),
+        ],
+        responses={
+            (200, 'application/json'): success_response_schema(
+                'CalendarFeedResponse',
+                inline_serializer(
+                    name='CalendarFeedData',
+                    fields={
+                        'format': serializers.CharField(),
+                        'event_count': serializers.IntegerField(),
+                        'calendar': serializers.CharField(),
+                    },
+                ),
+            ),
+            (200, 'text/calendar'): OpenApiResponse(
+                response=OpenApiTypes.STR,
+                description='RFC 5545 iCalendar feed.',
+            ),
+        },
+    )
     def get(self, request):
         from apps.tasks.models import Task
 

@@ -9,10 +9,14 @@
 返回统一结构：type / title / url / priority / due_date / id
 """
 from django.db.models import Q
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import OpenApiParameter, extend_schema, inline_serializer
+from rest_framework import serializers
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
 from common.response import success_response
+from common.schema import success_response_schema
 
 
 # 任务状态：已完成 / 已取消 视为已结束，不再计入待办
@@ -32,6 +36,54 @@ class UnifiedTodoView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name='type',
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                enum=[
+                    'task', 'overdue_task', 'approval',
+                    'contribution_review', 'ip_todo',
+                ],
+                required=False,
+            ),
+        ],
+        responses={
+            200: success_response_schema(
+                'UnifiedTodoResponse',
+                inline_serializer(
+                    name='UnifiedTodoData',
+                    fields={
+                        'count': serializers.IntegerField(),
+                        'results': inline_serializer(
+                            name='UnifiedTodoItem',
+                            many=True,
+                            fields={
+                                'id': serializers.IntegerField(),
+                                'type': serializers.CharField(),
+                                'title': serializers.CharField(),
+                                'url': serializers.CharField(),
+                                'route_name': serializers.CharField(),
+                                'route_params': serializers.JSONField(),
+                                'route_query': serializers.JSONField(),
+                                'priority': serializers.CharField(),
+                                'due_date': serializers.DateTimeField(allow_null=True),
+                                'project_id': serializers.IntegerField(
+                                    required=False, allow_null=True,
+                                ),
+                                'project_name': serializers.CharField(required=False),
+                                'task_role': serializers.CharField(required=False),
+                                'applicant_id': serializers.IntegerField(required=False),
+                                'status': serializers.CharField(required=False),
+                                'status_display': serializers.CharField(required=False),
+                            },
+                        ),
+                    },
+                ),
+            ),
+        },
+    )
     def get(self, request):
         """获取当前用户的统一待办列表"""
         user = request.user

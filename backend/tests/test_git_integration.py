@@ -3,6 +3,8 @@ N45: Git 集成测试
 - /api/v1/integrations/git-repositories/   Git 仓库 CRUD
 """
 import pytest
+from subprocess import CompletedProcess
+from unittest.mock import patch
 
 from apps.integrations.git_models import GitRepository
 
@@ -32,6 +34,9 @@ class TestGitIntegration:
         repo = GitRepository.objects.get(url='https://github.com/org/repo.git')
         assert repo.created_by == admin_client.user
         assert repo.branch == 'main'
+        assert repo.token != 'ghp_token'
+        assert repo.token.startswith('enc:v1:')
+        assert repo.get_token() == 'ghp_token'
 
     def test_list_repos(self, admin_client, make_project):
         """列出 Git 仓库"""
@@ -90,3 +95,34 @@ class TestGitIntegration:
         assert resp.status_code in (200, 201)
         repo = GitRepository.objects.get(url='https://github.com/d/b.git')
         assert repo.branch == 'main'
+
+    @patch('apps.integrations.connection_services.socket.getaddrinfo')
+    @patch('apps.integrations.connection_services.subprocess.run')
+    def test_connection_and_sync_remote_branch(
+        self, run_mock, address_mock, admin_client, make_project
+    ):
+        address_mock.return_value = [(None, None, None, None, ('140.82.112.4', 443))]
+        commit = 'a' * 40
+        run_mock.return_value = CompletedProcess(
+            args=[], returncode=0,
+            stdout=f'{commit}\trefs/heads/main\n', stderr='',
+        )
+        repository = GitRepository.objects.create(
+            url='https://github.com/example/repository.git',
+            branch='main', token='git-secret', project=make_project(),
+        )
+
+        checked = admin_client.post(
+            f'/api/v1/integrations/git-repositories/{repository.id}/test-connection/'
+        )
+        synced = admin_client.post(
+            f'/api/v1/integrations/git-repositories/{repository.id}/sync/'
+        )
+
+        assert checked.status_code == 200, checked.json()
+        assert synced.status_code == 200, synced.json()
+        repository.refresh_from_db()
+        assert repository.connection_status == 'connected'
+        assert repository.remote_commit == commit
+        assert repository.last_synced_at is not None
+        assert run_mock.call_args.kwargs['env']['GIT_CONFIG_VALUE_0'] == 'Authorization: Bearer git-secret'

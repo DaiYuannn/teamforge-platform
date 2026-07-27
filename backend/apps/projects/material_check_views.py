@@ -4,10 +4,13 @@
 - 返回检查清单及状态(complete/incomplete/missing)
 """
 from django.db.models import Count
+from drf_spectacular.utils import OpenApiParameter, extend_schema, inline_serializer
+from rest_framework import serializers
 from rest_framework.views import APIView
 
 from common.response import success_response, error_response
 from common.permissions import IsInternalTeamMember
+from common.schema import success_response_schema
 from apps.projects.models import Project, ProjectMember
 from apps.tasks.models import Task
 from apps.finance.models import FinanceBudget
@@ -37,6 +40,47 @@ class MaterialCheckView(APIView):
     # 检查项会暴露预算计划是否存在，外部协作者不得访问。
     permission_classes = [IsInternalTeamMember]
 
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name='project_id',
+                type=int,
+                location=OpenApiParameter.QUERY,
+                required=True,
+                description='待检查的项目 ID。',
+            ),
+        ],
+        responses={
+            200: success_response_schema(
+                'ProjectMaterialCheckResponse',
+                inline_serializer(
+                    name='ProjectMaterialCheckData',
+                    fields={
+                        'project_id': serializers.IntegerField(),
+                        'project_name': serializers.CharField(),
+                        'overall_status': serializers.ChoiceField(
+                            choices=['complete', 'incomplete', 'missing'],
+                        ),
+                        'completed_count': serializers.IntegerField(),
+                        'total_count': serializers.IntegerField(),
+                        'completion_rate': serializers.FloatField(),
+                        'checklist': inline_serializer(
+                            name='ProjectMaterialChecklistItem',
+                            fields={
+                                'key': serializers.CharField(),
+                                'label': serializers.CharField(),
+                                'status': serializers.ChoiceField(
+                                    choices=['complete', 'incomplete', 'missing'],
+                                ),
+                                'detail': serializers.CharField(),
+                            },
+                            many=True,
+                        ),
+                    },
+                ),
+            ),
+        },
+    )
     def get(self, request):
         project_id = request.query_params.get('project_id')
         if not project_id:

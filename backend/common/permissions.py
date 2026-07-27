@@ -5,6 +5,76 @@ RBAC 权限基类模块
 from rest_framework.permissions import BasePermission, SAFE_METHODS
 
 
+PERMISSION_PREFIX_BY_PATH = {
+    'projects': 'project',
+    'tasks': 'task',
+    'finance': 'finance',
+    'exports': 'report',
+    'reports': 'report',
+    'members': 'member',
+    'users': 'member',
+}
+
+
+def permission_code_for_request(request, view=None, action=None):
+    """Map a business API path to the permission codes exposed by the role UI."""
+    parts = [part for part in request.path.split('/') if part]
+    try:
+        api_index = parts.index('v1')
+        resource = parts[api_index + 1]
+    except (ValueError, IndexError):
+        resource = parts[0] if parts else ''
+    prefix = PERMISSION_PREFIX_BY_PATH.get(resource)
+    if action is None:
+        action = 'create' if getattr(view, 'action', '') == 'create' else 'manage'
+    return f'{prefix}.{action}' if prefix else ''
+
+
+def _project_id_from(value):
+    if value is None:
+        return None
+    project = value if hasattr(value, 'leader_id') else getattr(value, 'project', None)
+    if project is not None:
+        return getattr(project, 'pk', None)
+    return getattr(value, 'project_id', None)
+
+
+def request_project_id(request):
+    """Resolve the target project without trusting it as an authorization result."""
+    data = getattr(request, 'data', None)
+    if hasattr(data, 'get'):
+        value = data.get('project') or data.get('project_id')
+        if value not in (None, ''):
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return None
+    return None
+
+
+def user_has_custom_permission(user, code, *, project_id=None, allow_project_scoped=False):
+    """Return whether an active assignment grants ``code`` globally or in a project."""
+    if not code or not user or not getattr(user, 'is_authenticated', False):
+        return False
+    try:
+        normalized_project_id = int(project_id) if project_id is not None else None
+    except (TypeError, ValueError):
+        normalized_project_id = None
+    assignments = user.role_assignments.select_related('role').only(
+        'project_id', 'role__permissions',
+    )
+    for assignment in assignments:
+        if code not in (assignment.role.permissions or []):
+            continue
+        if assignment.project_id is None:
+            return True
+        if normalized_project_id is not None and assignment.project_id == normalized_project_id:
+            return True
+        if normalized_project_id is None and allow_project_scoped:
+            return True
+    return False
+
+
 class RolePermission(BasePermission):
     """
     RBAC 权限基类
@@ -59,6 +129,26 @@ class IsTeacherOrAdmin(RolePermission):
     """老师或管理员权限"""
     required_roles = ['teacher', 'sys_admin']
 
+    def has_permission(self, request, view):
+        if super().has_permission(request, view):
+            return True
+        code = permission_code_for_request(request, view)
+        return user_has_custom_permission(
+            request.user,
+            code,
+            project_id=request_project_id(request),
+            allow_project_scoped=request_project_id(request) is None,
+        )
+
+    def has_object_permission(self, request, view, obj):
+        if request.user.global_role in self.required_roles:
+            return True
+        return user_has_custom_permission(
+            request.user,
+            permission_code_for_request(request, view),
+            project_id=_project_id_from(obj),
+        )
+
 
 class IsTeacherOrAdminOrReadOnly(BasePermission):
     """老师/管理员可维护，其他已认证内部用户只读。"""
@@ -112,6 +202,15 @@ class IsProjectLeaderOrTeacherOrAdmin(BasePermission):
             return True
         if request.user.global_role in ['teacher', 'sys_admin']:
             return True
+        code = permission_code_for_request(request, view)
+        project_id = request_project_id(request)
+        if user_has_custom_permission(
+            request.user,
+            code,
+            project_id=project_id,
+            allow_project_scoped=project_id is None,
+        ):
+            return True
         # 创建时尚无对象可供 DRF 校验，直接核对请求中的所属项目。
         if getattr(view, 'action', None) == 'create':
             project_id = request.data.get('project')
@@ -133,6 +232,12 @@ class IsProjectLeaderOrTeacherOrAdmin(BasePermission):
             return True
         # 老师可以操作任何项目
         if request.user.global_role == 'teacher':
+            return True
+        if user_has_custom_permission(
+            request.user,
+            permission_code_for_request(request, view),
+            project_id=_project_id_from(obj),
+        ):
             return True
         # 项目负责人不能借更新操作把对象转移到自己不负责的项目。
         requested_project_id = request.data.get('project') if hasattr(request.data, 'get') else None

@@ -1,10 +1,10 @@
 # API 接口文档
 
 > 团队管理软件后端接口文档
-> 版本：v1
+> 版本：v2.1.0
 > Base URL：`/api/v1`
 
-> v2.0 说明：本文保留基础模块的详细契约；以下“当前扩展端点”是新功能的权威入口。OpenAPI 仍以运行中的 `/api/v1/common/openapi/` 输出为准。系统不提供 2FA；OAuth 端点仅在服务端提供商被实际配置后可用。
+> v2.1 说明：本文保留基础模块的详细契约；以下“当前扩展端点”是新增能力的权威入口。机器可读契约以 `/api/v1/common/openapi/schema/` 返回的 OpenAPI 3.0.3 JSON 为准，接口索引位于 `/api/v1/common/openapi/endpoints/`。系统不提供 2FA；OAuth 端点仅在服务端提供商被实际配置后可用。
 
 ---
 
@@ -24,6 +24,21 @@
 | 自定义报表 | `/exports/custom-reports/` | 报表模板 CRUD 与生成 |
 | 实时通知 | `GET /notifications/sse/` | JWT 鉴权的 SSE，支持游标补发 |
 | 通知筛选 | `GET /notifications/?category=report` | 支持任务、项目、比赛、经费、报表等分类 |
+| 任务协作 | `/tasks/subtasks/`、`/tasks/dependencies/`、`/tasks/comments/` | 检查清单、依赖关系、评论与回复 |
+| 项目协作 | `/projects/milestones/`、`/projects/risks/`、`/projects/discussions/`、`/projects/knowledge/` | 里程碑、风险、讨论和知识沉淀 |
+| 项目复盘与模板 | `/projects/reviews/`、`/projects/templates/` | 复盘提交/审阅与结构化项目模板实例化 |
+| 项目智能分析 | `/projects/risk-prediction/`、`/projects/health-score/`、`/projects/smart-review/`、`/projects/material-check/` | 风险、健康度、复盘草案与材料完整度 |
+| 文件夹 | `/files/folders/` | 项目范围的树形目录 CRUD |
+| 文件移动与 Office 预览 | `POST /files/{id}/move/`、`GET /files/{id}/office-preview/` | 同项目移动及 DOCX/XLSX/PPTX 有界只读提取 |
+| 文件标签与分享 | `/files/tags/`、`/files/shares/` | 标签分配、分享创建与撤销；敏感文件禁止分享 |
+| 文件回收站 | `/recycle-bin/?type=file` | 软删除列表、恢复和管理员永久删除 |
+| 自定义看板与智能周报 | `/dashboard/custom/`、`GET /dashboard/weekly-report/` | 个人看板、默认看板与可导出周报 |
+| 平台角色与团队 | `/users/roles/`、`/teams/`、`/team-members/` | 自定义角色授权及多团队成员关系 |
+| 审批与表单 | `/approvals/`、`/common/forms/`、`/common/form-submissions/` | 审批流和结构化表单 |
+| 外部平台与 Git | `/integrations/external-platforms/`、`/integrations/git-repositories/` | 外部系统连接配置 |
+| 性能监控 | `GET /common/performance/metrics/`、`GET /common/performance/slow-queries/` | 当前进程有界真实采样，不伪造缓存命中率 |
+| OpenAPI | `GET /common/openapi/schema/`、`GET /common/openapi/endpoints/` | OpenAPI 3.0.3 原始文档与管理端索引 |
+| API 治理 | `GET /common/accessibility/report/` | API 可访问性检查；浏览器 WCAG 扫描由 Playwright + axe-core 执行 |
 
 ---
 
@@ -180,7 +195,7 @@ Authorization: Bearer <access_token>
 
 - **备注**：账号被禁用时返回 `code: 1002`，提示「账号已被禁用」；邮箱或密码错误返回 `code: 1001`。
 
-### POST /api/v1/auth/token/refresh/ - 刷新 token
+### POST /api/v1/auth/refresh/ - 刷新 token
 
 使用 refresh token 换取新的 access token。
 

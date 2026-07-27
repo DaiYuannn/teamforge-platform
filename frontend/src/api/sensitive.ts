@@ -1,6 +1,7 @@
 import { download, get, post } from './request'
 import type {
   PaginatedResponse,
+  PaginationParams,
   SensitiveAccessRequest,
   SensitiveAccessRequestCreateParams,
   SensitiveAccessRequestReviewParams,
@@ -44,6 +45,10 @@ export const getAccessRequests = (
 ): Promise<PaginatedResponse<SensitiveAccessRequest> | SensitiveAccessRequest[]> =>
   get(`${BASE}/requests/`, params)
 
+/** 获取单条访问申请（用于通知深链） */
+export const getAccessRequest = (id: number): Promise<SensitiveAccessRequest> =>
+  get(`${BASE}/requests/${id}/`)
+
 /** 创建访问申请 */
 export const createAccessRequest = (
   data: SensitiveAccessRequestCreateParams,
@@ -64,14 +69,14 @@ export const rejectAccessRequest = (
   post(`${BASE}/requests/${id}/reject/`, data)
 
 /** 获取我的访问申请 */
-export const getMyAccessRequests = (): Promise<
+export const getMyAccessRequests = (params?: PaginationParams): Promise<
   PaginatedResponse<SensitiveAccessRequest> | SensitiveAccessRequest[]
-> => get(`${BASE}/requests/my_requests/`)
+> => get(`${BASE}/requests/my_requests/`, params)
 
 /** 获取待我审批的访问申请 */
-export const getPendingApproveRequests = (): Promise<
+export const getPendingApproveRequests = (params?: PaginationParams): Promise<
   PaginatedResponse<SensitiveAccessRequest> | SensitiveAccessRequest[]
-> => get(`${BASE}/requests/pending_approve/`)
+> => get(`${BASE}/requests/pending_approve/`, params)
 
 /** 通过申请查看敏感资料明文 */
 export const viewAccessRequestData = (id: number) =>

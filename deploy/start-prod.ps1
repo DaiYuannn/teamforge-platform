@@ -30,17 +30,33 @@ if (-not (Test-Path "env\backend.prod.env")) {
     }
 }
 
+$ComposeArgs = @("--env-file", "env/backend.prod.env", "-f", "docker-compose.prod.yml")
+
 # 2. 构建生产镜像
 Write-Step "构建生产镜像..."
-docker compose -f docker-compose.prod.yml build
+docker compose @ComposeArgs build
 if ($LASTEXITCODE -ne 0) { Write-Host "构建失败" -ForegroundColor Red; exit 1 }
 
-# 3. 启动生产服务
-Write-Step "启动生产服务..."
-docker compose -f docker-compose.prod.yml up -d
-if ($LASTEXITCODE -ne 0) { Write-Host "启动失败" -ForegroundColor Red; exit 1 }
+# 3. 启动基础服务与后端
+Write-Step "启动 PostgreSQL、Redis 与后端..."
+docker compose @ComposeArgs up -d postgres redis backend
+if ($LASTEXITCODE -ne 0) { Write-Host "基础服务或后端启动失败" -ForegroundColor Red; exit 1 }
+
+# 4. 初始化数据库与静态资源
+Write-Step "执行数据库迁移..."
+docker compose @ComposeArgs exec -T backend python manage.py migrate --noinput
+if ($LASTEXITCODE -ne 0) { Write-Host "数据库迁移失败" -ForegroundColor Red; exit 1 }
+
+Write-Step "收集静态资源..."
+docker compose @ComposeArgs exec -T backend python manage.py collectstatic --noinput
+if ($LASTEXITCODE -ne 0) { Write-Host "静态资源收集失败" -ForegroundColor Red; exit 1 }
+
+# 5. 启动全部生产服务
+Write-Step "启动全部生产服务..."
+docker compose @ComposeArgs up -d
+if ($LASTEXITCODE -ne 0) { Write-Host "生产服务启动失败" -ForegroundColor Red; exit 1 }
 
 Write-Host "================ 生产环境已启动 ================" -ForegroundColor Green
 Write-Host "应用入口: http://localhost"
-Write-Host "查看日志: docker compose -f docker-compose.prod.yml logs -f"
+Write-Host "查看日志: docker compose --env-file env/backend.prod.env -f docker-compose.prod.yml logs -f"
 Write-Info "Celery Worker/Beat 已随生产服务启动"

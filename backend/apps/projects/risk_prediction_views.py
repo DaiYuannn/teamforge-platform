@@ -8,10 +8,13 @@ from decimal import Decimal
 
 from django.db.models import Count, Q, Sum
 from django.utils import timezone
+from drf_spectacular.utils import OpenApiParameter, extend_schema, inline_serializer
+from rest_framework import serializers
 from rest_framework.views import APIView
 
 from common.response import success_response, error_response
 from common.permissions import IsInternalTeamMember
+from common.schema import success_response_schema
 from apps.projects.models import Project, ProjectMember
 from apps.tasks.models import Task
 from apps.finance.models import FinanceBudget, FinanceExpense
@@ -34,6 +37,50 @@ class RiskPredictionView(APIView):
     # 风险因子含预算和支出数据，仅供在队/暂离内部成员查看。
     permission_classes = [IsInternalTeamMember]
 
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name='project_id',
+                type=int,
+                location=OpenApiParameter.QUERY,
+                required=True,
+                description='待分析的项目 ID。',
+            ),
+        ],
+        responses={
+            200: success_response_schema(
+                'ProjectRiskPredictionResponse',
+                inline_serializer(
+                    name='ProjectRiskPredictionData',
+                    fields={
+                        'project_id': serializers.IntegerField(),
+                        'project_name': serializers.CharField(),
+                        'risk_score': serializers.FloatField(),
+                        'risk_level': serializers.ChoiceField(
+                            choices=['low', 'medium', 'high', 'critical'],
+                        ),
+                        'risk_factors': inline_serializer(
+                            name='ProjectRiskPredictionFactor',
+                            fields={
+                                'category': serializers.CharField(),
+                                'label': serializers.CharField(),
+                                'severity': serializers.ChoiceField(
+                                    choices=['medium', 'high', 'critical'],
+                                ),
+                                'score': serializers.FloatField(),
+                                'detail': serializers.CharField(),
+                            },
+                            many=True,
+                        ),
+                        'recommendations': serializers.ListField(
+                            child=serializers.CharField(),
+                        ),
+                        'analyzed_at': serializers.DateTimeField(),
+                    },
+                ),
+            ),
+        },
+    )
     def get(self, request):
         project_id = request.query_params.get('project_id')
         if not project_id:

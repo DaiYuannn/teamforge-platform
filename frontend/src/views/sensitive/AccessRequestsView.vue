@@ -1,6 +1,6 @@
 <template>
   <div class="page-container access-requests-page">
-    <PageHeader title="资料查看申请" subtitle="敏感资料访问记录与授权状态">
+    <PageHeader title="我的访问申请" subtitle="敏感资料访问记录与授权状态">
       <template #meta>
         <span class="page-meta">共 {{ requestList.length }} 条申请</span>
       </template>

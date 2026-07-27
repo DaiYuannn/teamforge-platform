@@ -7,15 +7,105 @@ from decimal import Decimal
 
 from django.db.models import Count, Q, Sum
 from django.utils import timezone
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import OpenApiParameter, extend_schema
+from rest_framework import serializers
 from rest_framework.views import APIView
 
 from common.permissions import IsInternalTeamMember
 from common.response import success_response
+from common.schema import success_response_schema
 from apps.projects.models import Project, ProjectStageLog
 from apps.tasks.models import Task
 from apps.finance.models import FinanceExpense
 from apps.competitions.models import Competition
 from apps.contributions.models import Contribution
+
+
+class WeeklyReportSummarySerializer(serializers.Serializer):
+    report_period_start = serializers.DateTimeField()
+    report_period_end = serializers.DateTimeField()
+    weeks = serializers.IntegerField()
+    tasks_completed = serializers.IntegerField()
+    tasks_new = serializers.IntegerField()
+    tasks_pending = serializers.IntegerField()
+    tasks_overdue = serializers.IntegerField()
+    tasks_upcoming_deadline = serializers.IntegerField()
+    active_projects = serializers.IntegerField()
+    stage_changes = serializers.IntegerField()
+    weekly_expense = serializers.FloatField()
+    team_activities = serializers.IntegerField()
+
+
+class WeeklyReportTaskSerializer(serializers.Serializer):
+    task_id = serializers.IntegerField()
+    title = serializers.CharField()
+    status = serializers.CharField()
+    status_display = serializers.CharField()
+    project_id = serializers.IntegerField()
+    project_name = serializers.CharField(allow_blank=True)
+    assignee_id = serializers.IntegerField(allow_null=True)
+    assignee_name = serializers.CharField(allow_blank=True)
+    deadline = serializers.DateTimeField(allow_null=True)
+    completed_at = serializers.DateTimeField(allow_null=True)
+
+
+class WeeklyProjectProgressSerializer(serializers.Serializer):
+    project_id = serializers.IntegerField()
+    project_name = serializers.CharField()
+    project_code = serializers.CharField()
+    current_stage = serializers.CharField()
+    current_stage_display = serializers.CharField()
+    tasks_completed_this_week = serializers.IntegerField()
+    tasks_new_this_week = serializers.IntegerField()
+    last_update = serializers.DateTimeField(allow_null=True)
+
+
+class WeeklyStageChangeSerializer(serializers.Serializer):
+    project_name = serializers.CharField(allow_blank=True)
+    from_stage = serializers.CharField()
+    to_stage = serializers.CharField(allow_blank=True)
+    operator = serializers.CharField()
+    date = serializers.DateTimeField(allow_null=True)
+
+
+class WeeklyCompetitionEventSerializer(serializers.Serializer):
+    field = serializers.CharField()
+    label = serializers.CharField()
+    date = serializers.DateField()
+
+
+class WeeklyCompetitionSerializer(serializers.Serializer):
+    competition_id = serializers.IntegerField()
+    competition_name = serializers.CharField()
+    level = serializers.CharField()
+    level_display = serializers.CharField()
+    project_name = serializers.CharField(allow_blank=True)
+    events = WeeklyCompetitionEventSerializer(many=True)
+
+
+class WeeklyTeamActivitySerializer(serializers.Serializer):
+    user_id = serializers.IntegerField(allow_null=True)
+    user_name = serializers.CharField(allow_blank=True)
+    project_id = serializers.IntegerField(allow_null=True)
+    project_name = serializers.CharField(allow_blank=True)
+    contribution_type = serializers.CharField()
+    content = serializers.CharField(allow_blank=True)
+    created_at = serializers.DateTimeField()
+
+
+class WeeklyReportDataSerializer(serializers.Serializer):
+    summary = WeeklyReportSummarySerializer()
+    narrative = serializers.CharField()
+    completed_tasks = WeeklyReportTaskSerializer(many=True)
+    new_tasks = WeeklyReportTaskSerializer(many=True)
+    pending_tasks = WeeklyReportTaskSerializer(many=True)
+    overdue_tasks = WeeklyReportTaskSerializer(many=True)
+    upcoming_deadline_tasks = WeeklyReportTaskSerializer(many=True)
+    project_progress = WeeklyProjectProgressSerializer(many=True)
+    stage_changes = WeeklyStageChangeSerializer(many=True)
+    upcoming_competitions = WeeklyCompetitionSerializer(many=True)
+    team_activity = WeeklyTeamActivitySerializer(many=True)
 
 
 class WeeklyReportView(APIView):
@@ -30,6 +120,24 @@ class WeeklyReportView(APIView):
 
     permission_classes = [IsInternalTeamMember]
 
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name='project_id', type=OpenApiTypes.INT,
+                location=OpenApiParameter.QUERY, required=False,
+            ),
+            OpenApiParameter(
+                name='weeks', type=OpenApiTypes.INT,
+                location=OpenApiParameter.QUERY, default=1,
+                description='Number of weeks to include; values below 1 become 1.',
+            ),
+        ],
+        responses={
+            200: success_response_schema(
+                'WeeklyReportResponse', WeeklyReportDataSerializer(),
+            ),
+        },
+    )
     def get(self, request):
         project_id = request.query_params.get('project_id')
         weeks = request.query_params.get('weeks', '1')

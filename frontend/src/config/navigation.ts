@@ -32,6 +32,7 @@ export const NAVIGATION_GROUPS: readonly AppNavigationGroup[] = [
       { path: '/announcements', title: '公告管理', icon: 'Notification' },
       { path: '/activities', title: '团队动态', icon: 'ChatLineSquare' },
       { path: '/reports', title: '定时报表', icon: 'DataAnalysis' },
+      { path: '/analytics-studio', title: '分析工作台', icon: 'TrendCharts' },
     ],
   },
   {
@@ -66,13 +67,10 @@ export const NAVIGATION_GROUPS: readonly AppNavigationGroup[] = [
     icon: 'Medal',
     items: [
       { path: '/intellectual-property', title: '成果与知识产权', icon: 'Medal' },
-      { path: '/intellectual-property/todo', title: '待我处理', icon: 'Bell' },
+      { path: '/intellectual-property/todo', title: '知识产权待办', icon: 'Bell' },
       { path: '/contributions', title: '我的贡献', icon: 'Trophy' },
       { path: '/contributions/pending', title: '贡献审核', icon: 'CircleCheck' },
       { path: '/sensitive', title: '敏感资料', icon: 'Lock' },
-      { path: '/sensitive/my-data', title: '我的资料', icon: 'Files' },
-      { path: '/sensitive/requests', title: '查看申请', icon: 'View' },
-      { path: '/sensitive/pending', title: '资料审批', icon: 'CircleCheck', roles: ['sys_admin', 'sens_approver', 'teacher'] },
     ],
   },
   {
@@ -90,6 +88,17 @@ export const NAVIGATION_GROUPS: readonly AppNavigationGroup[] = [
         path: '/admin/integrations',
         title: '第三方集成',
         icon: 'Connection',
+        roles: ['sys_admin'],
+      },
+      {
+        path: '/admin/platform-capabilities',
+        title: '平台能力',
+        icon: 'Grid',
+      },
+      {
+        path: '/admin/engineering',
+        title: '工程控制台',
+        icon: 'Monitor',
         roles: ['sys_admin'],
       },
       {
@@ -174,6 +183,47 @@ export function getVisibleNavigationGroups(
       )
     }),
   })).filter((group) => group.items.length > 0)
+}
+
+export interface FavoriteNavigationOption extends AppNavigationItem {
+  groupKey: string
+  groupTitle: string
+}
+
+export const MAX_FAVORITE_ROUTES = 8
+export const FAVORITE_ROUTE_PATHS: readonly string[] = NAVIGATION_GROUPS
+  .flatMap((group) => group.items.map((item) => item.path))
+
+export function getFavoriteNavigationOptions(
+  role: string,
+  membershipStatus?: string,
+): FavoriteNavigationOption[] {
+  const allowedPaths = new Set(FAVORITE_ROUTE_PATHS)
+  return getVisibleNavigationGroups(role, membershipStatus).flatMap((group) =>
+    group.items.map((item) => ({
+      ...item,
+      groupKey: group.key,
+      groupTitle: group.title,
+    })).filter((item) => allowedPaths.has(item.path)),
+  )
+}
+
+export function getFavoriteNavigationItems(
+  paths: readonly string[],
+  role: string,
+  membershipStatus?: string,
+): FavoriteNavigationOption[] {
+  const optionsByPath = new Map(
+    getFavoriteNavigationOptions(role, membershipStatus)
+      .map((item) => [item.path, item]),
+  )
+  const seen = new Set<string>()
+  return paths.flatMap((path) => {
+    if (seen.has(path)) return []
+    seen.add(path)
+    const item = optionsByPath.get(path)
+    return item ? [item] : []
+  })
 }
 
 export function findNavigationItem(

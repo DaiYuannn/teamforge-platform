@@ -261,6 +261,28 @@ class TestFileShareLinkAPI:
         resp = api_client.get(f'{SHARE_URL}access/?token={link.token}')
         assert resp.status_code == 403
 
+    def test_access_and_download_share_one_atomic_limit(
+        self,
+        api_client,
+        make_file,
+        make_user,
+    ):
+        f = make_file()
+        link = FileShareLink.objects.create(
+            file=f,
+            created_by=make_user(),
+            token=FileShareLink.generate_token(),
+            max_views=1,
+        )
+
+        access = api_client.get(f'{SHARE_URL}access/?token={link.token}')
+        download = api_client.get(f'{SHARE_URL}download/?token={link.token}')
+
+        assert access.status_code == 200
+        assert download.status_code == 403
+        link.refresh_from_db()
+        assert link.view_count == 1
+
     def test_access_invalid_token(self, api_client):
         """访问无效令牌"""
         resp = api_client.get(f'{SHARE_URL}access/?token=invalidtoken')

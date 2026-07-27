@@ -6,6 +6,8 @@ GET /api/v1/exports/project-report/<project_id>/
 from urllib.parse import quote
 
 from django.http import FileResponse
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import OpenApiResponse, extend_schema
 from rest_framework.views import APIView
 
 from common.permissions import IsInternalTeamMember
@@ -22,6 +24,21 @@ class ProjectReportView(APIView):
 
     permission_classes = [IsInternalTeamMember]
 
+    @extend_schema(
+        responses={
+            (
+                200,
+                'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            ): OpenApiResponse(
+                response=OpenApiTypes.BINARY,
+                description='Generated project report in DOCX format.',
+            ),
+            (200, 'text/plain'): OpenApiResponse(
+                response=OpenApiTypes.BINARY,
+                description='Plain-text fallback when python-docx is unavailable.',
+            ),
+        },
+    )
     def get(self, request, project_id):
         try:
             file_stream = generate_project_report(project_id)

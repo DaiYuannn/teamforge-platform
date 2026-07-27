@@ -165,9 +165,9 @@ onMounted(loadData)
   align-items: center;
   gap: 8px;
   padding: 10px 12px;
-  color: #7f3030;
+  color: var(--danger-text);
   background: var(--danger-light);
-  border: 1px solid #efcfcd;
+  border: 1px solid var(--danger-border);
   border-radius: var(--radius-sm);
 }
 

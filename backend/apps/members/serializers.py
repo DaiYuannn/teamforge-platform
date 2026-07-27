@@ -3,6 +3,7 @@
 包含技能标签、成员技能、灵活工时、成员详情等序列化器
 """
 from rest_framework import serializers
+from drf_spectacular.utils import extend_schema_field
 
 from apps.users.models import User
 from apps.users.serializers import UserListSerializer
@@ -26,6 +27,7 @@ class MemberSkillSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = MemberSkill
+        ref_name = 'TaggedMemberSkill'
         fields = ('id', 'user', 'user_name', 'skill', 'skill_name', 'proficiency', 'created_at')
         read_only_fields = ('id', 'created_at')
 
@@ -78,6 +80,30 @@ class FlexibleWorkScheduleCreateSerializer(serializers.ModelSerializer):
         return super().create(validated_data)
 
 
+class MemberProjectSummarySerializer(serializers.Serializer):
+    project_id = serializers.IntegerField()
+    project_name = serializers.CharField()
+    project_code = serializers.CharField()
+    role_in_project = serializers.CharField()
+    role_in_project_display = serializers.CharField()
+    membership_status = serializers.CharField()
+    membership_status_display = serializers.CharField()
+    exited_at = serializers.DateTimeField(allow_null=True)
+    exit_reason = serializers.CharField(allow_blank=True)
+    project_status = serializers.CharField()
+
+
+class MemberTaskSummarySerializer(serializers.Serializer):
+    task_id = serializers.IntegerField()
+    title = serializers.CharField()
+    project_id = serializers.IntegerField()
+    project_name = serializers.CharField()
+    status = serializers.CharField()
+    status_display = serializers.CharField()
+    deadline = serializers.DateTimeField(allow_null=True)
+    is_overdue = serializers.BooleanField()
+
+
 class MemberListSerializer(serializers.ModelSerializer):
     """成员列表精简序列化器（返回用户基本信息+联系方式）"""
     global_role_display = serializers.CharField(source='get_global_role_display', read_only=True)
@@ -111,6 +137,7 @@ class MemberSerializer(serializers.ModelSerializer):
         )
         read_only_fields = fields
 
+    @extend_schema_field(MemberProjectSummarySerializer(many=True))
     def get_projects(self, obj):
         """获取用户参与的项目列表"""
         from apps.projects.models import ProjectMember
@@ -132,7 +159,7 @@ class MemberSerializer(serializers.ModelSerializer):
             })
         return result
 
-    def get_project_count(self, obj):
+    def get_project_count(self, obj) -> int:
         """获取用户参与的项目数量"""
         from apps.projects.models import ProjectMember
         return ProjectMember.objects.filter(
@@ -173,11 +200,13 @@ class MemberDetailSerializer(serializers.ModelSerializer):
         )
         read_only_fields = fields
 
+    @extend_schema_field(MemberSkillSerializer(many=True))
     def get_skills(self, obj):
         """获取用户的技能列表"""
         skills = MemberSkill.objects.filter(user=obj).select_related('skill')
         return MemberSkillSerializer(skills, many=True).data
 
+    @extend_schema_field(FlexibleWorkScheduleSerializer(allow_null=True))
     def get_latest_work_schedule(self, obj):
         """获取用户最新的灵活工作时间"""
         schedule = FlexibleWorkSchedule.objects.filter(user=obj).first()
@@ -185,6 +214,7 @@ class MemberDetailSerializer(serializers.ModelSerializer):
             return FlexibleWorkScheduleSerializer(schedule).data
         return None
 
+    @extend_schema_field(MemberProjectSummarySerializer(many=True))
     def get_projects(self, obj):
         """获取用户参与的项目列表"""
         from apps.projects.models import ProjectMember
@@ -206,13 +236,14 @@ class MemberDetailSerializer(serializers.ModelSerializer):
             })
         return result
 
-    def get_project_count(self, obj):
+    def get_project_count(self, obj) -> int:
         """获取用户参与的项目数量"""
         from apps.projects.models import ProjectMember
         return ProjectMember.objects.filter(
             user=obj, status=ProjectMember.Status.ACTIVE
         ).count()
 
+    @extend_schema_field(MemberTaskSummarySerializer(many=True))
     def get_tasks(self, obj):
         """获取分配给用户的任务列表（进行中/待办）"""
         from apps.tasks.models import Task
@@ -234,7 +265,7 @@ class MemberDetailSerializer(serializers.ModelSerializer):
             })
         return result
 
-    def get_task_count(self, obj):
+    def get_task_count(self, obj) -> int:
         """获取分配给用户的未完成任务数量"""
         from apps.tasks.models import Task
         return Task.objects.filter(

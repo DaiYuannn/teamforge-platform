@@ -7,6 +7,8 @@
 import pytest
 from django.utils import timezone
 
+from apps.audit.models import OperationLog
+
 
 def extract_data(response):
     data = response.json()
@@ -87,6 +89,42 @@ class TestSensitiveDataAPI:
         assert resp.status_code == 200, resp.json()
         req.refresh_from_db()
         assert req.status == 'rejected'
+
+    def test_processed_request_cannot_be_reviewed_twice(
+        self,
+        approver_client,
+        make_sensitive_data,
+        make_user,
+    ):
+        from apps.sensitive.models import SensitiveAccessRequest
+
+        req = SensitiveAccessRequest.objects.create(
+            sensitive_data=make_sensitive_data(),
+            applicant=make_user(email='single-review-applicant@test.com'),
+            usage_scenario='不可重复审批',
+            status=SensitiveAccessRequest.Status.PENDING,
+        )
+
+        approved = approver_client.post(
+            f'/api/v1/sensitive/requests/{req.id}/approve/',
+            {'action': 'approve', 'expire_hours': 1},
+            format='json',
+        )
+        rejected = approver_client.post(
+            f'/api/v1/sensitive/requests/{req.id}/reject/',
+            {'action': 'reject', 'expire_hours': 0},
+            format='json',
+        )
+
+        assert approved.status_code == 200
+        assert rejected.status_code == 400
+        req.refresh_from_db()
+        assert req.status == SensitiveAccessRequest.Status.APPROVED
+        assert OperationLog.objects.filter(
+            module='sensitive',
+            object_type='SensitiveAccessRequest',
+            object_id=str(req.id),
+        ).count() == 1
 
     def test_sensitive_member_cannot_approve(self, member_client, make_sensitive_data, make_user):
         """P03: 普通成员不能审批"""
@@ -169,6 +207,156 @@ class TestSensitiveDataAPI:
         request_obj.refresh_from_db()
         assert request_obj.status == SensitiveAccessRequest.Status.PENDING
         assert request_obj.approver_id is None
+
+    @pytest.mark.parametrize('role', ['sens_approver', 'teacher', 'sys_admin'])
+    def test_pending_approve_roles_share_queue_but_exclude_own_requests(
+        self,
+        role,
+        api_client,
+        make_sensitive_data,
+        make_user,
+    ):
+        from apps.sensitive.models import SensitiveAccessRequest
+
+        reviewer = make_user(
+            email=f'pending-{role}@test.com',
+            global_role=role,
+        )
+        applicant = make_user(email=f'pending-applicant-{role}@test.com')
+        sensitive = make_sensitive_data()
+        own_request = SensitiveAccessRequest.objects.create(
+            sensitive_data=sensitive,
+            applicant=reviewer,
+            reason='审批角色本人申请',
+            status=SensitiveAccessRequest.Status.PENDING,
+        )
+        shared_request = SensitiveAccessRequest.objects.create(
+            sensitive_data=sensitive,
+            applicant=applicant,
+            reason='进入共享审批队列',
+            status=SensitiveAccessRequest.Status.PENDING,
+        )
+        processed_request = SensitiveAccessRequest.objects.create(
+            sensitive_data=sensitive,
+            applicant=applicant,
+            reason='已经处理',
+            status=SensitiveAccessRequest.Status.APPROVED,
+        )
+        api_client.force_authenticate(user=reviewer)
+
+        response = api_client.get(
+            '/api/v1/sensitive/requests/pending_approve/'
+        )
+
+        assert response.status_code == 200, response.json()
+        data = extract_data(response)
+        returned_ids = {item['id'] for item in data['results']}
+        assert shared_request.id in returned_ids
+        assert own_request.id not in returned_ids
+        assert processed_request.id not in returned_ids
+
+        my_response = api_client.get(
+            '/api/v1/sensitive/requests/my_requests/'
+        )
+        assert my_response.status_code == 200, my_response.json()
+        my_ids = {
+            item['id'] for item in extract_data(my_response)['results']
+        }
+        assert own_request.id in my_ids
+
+    def test_member_cannot_access_pending_approve(
+        self,
+        member_client,
+    ):
+        response = member_client.get(
+            '/api/v1/sensitive/requests/pending_approve/'
+        )
+
+        assert response.status_code == 403
+
+    def test_my_requests_uses_standard_page_and_page_size_contract(
+        self,
+        member_client,
+        make_sensitive_data,
+        make_user,
+    ):
+        from apps.sensitive.models import SensitiveAccessRequest
+
+        sensitive = make_sensitive_data()
+        other_user = make_user(email='other-sensitive-applicant@test.com')
+        own_requests = [
+            SensitiveAccessRequest.objects.create(
+                sensitive_data=sensitive,
+                applicant=member_client.user,
+                reason=f'本人申请 {index}',
+            )
+            for index in range(5)
+        ]
+        SensitiveAccessRequest.objects.create(
+            sensitive_data=sensitive,
+            applicant=other_user,
+            reason='其他成员申请',
+        )
+
+        response = member_client.get(
+            '/api/v1/sensitive/requests/my_requests/',
+            {'page': 2, 'page_size': 2},
+        )
+
+        assert response.status_code == 200, response.json()
+        data = extract_data(response)
+        assert 'page_size' in data
+        assert data['count'] == len(own_requests)
+        assert data['current_page'] == 2
+        assert data['total_pages'] == 3
+        assert len(data['results']) == 2
+        assert data['next'] is not None
+        assert data['previous'] is not None
+        assert {
+            item['applicant'] for item in data['results']
+        } == {member_client.user.id}
+
+    def test_pending_approve_uses_standard_page_and_page_size_contract(
+        self,
+        approver_client,
+        make_sensitive_data,
+        make_user,
+    ):
+        from apps.sensitive.models import SensitiveAccessRequest
+
+        sensitive = make_sensitive_data()
+        applicant = make_user(email='paginated-pending-applicant@test.com')
+        pending_requests = [
+            SensitiveAccessRequest.objects.create(
+                sensitive_data=sensitive,
+                applicant=applicant,
+                reason=f'待审批申请 {index}',
+            )
+            for index in range(5)
+        ]
+        own_request = SensitiveAccessRequest.objects.create(
+            sensitive_data=sensitive,
+            applicant=approver_client.user,
+            reason='不应进入本人审批队列',
+        )
+
+        response = approver_client.get(
+            '/api/v1/sensitive/requests/pending_approve/',
+            {'page': 2, 'page_size': 2},
+        )
+
+        assert response.status_code == 200, response.json()
+        data = extract_data(response)
+        assert 'page_size' in data
+        assert data['count'] == len(pending_requests)
+        assert data['current_page'] == 2
+        assert data['total_pages'] == 3
+        assert len(data['results']) == 2
+        assert data['next'] is not None
+        assert data['previous'] is not None
+        assert own_request.id not in {
+            item['id'] for item in data['results']
+        }
 
     def test_sensitive_access_logged(self, approver_client, make_sensitive_data, make_user):
         """P03: 敏感资料访问必须记录日志"""

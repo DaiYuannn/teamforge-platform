@@ -1,5 +1,5 @@
 import { get, post, put, patch, del } from './request'
-import type { User, UserFormData, PaginatedResponse, PaginationParams } from '@/types'
+import type { User, UserFormData, PaginatedResponse, PaginationParams, ThemeMode } from '@/types'
 
 /** 用户查询参数 */
 export interface UserQueryParams extends PaginationParams {
@@ -43,9 +43,13 @@ export interface UserPreferenceData {
   dashboard_layout: Record<string, unknown>
   primary_color: string
   theme_color?: string
+  theme_mode: ThemeMode
+  schedule_start: string
+  schedule_end: string
   default_landing: string
   sidebar_collapsed: boolean
   notification_sound: boolean
+  language?: 'zh-CN' | 'en'
   items_per_page: number
   default_scope?: 'mine' | 'team'
   sidebar_order?: string[]

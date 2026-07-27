@@ -7,6 +7,8 @@
 - MemberRankingSerializer / MemberRankingUpdateSerializer: 成员排名
 - RankingObjectionSerializer / RankingObjectionCreateSerializer / RankingObjectionReviewSerializer: 排名异议
 """
+from decimal import Decimal
+
 from rest_framework import serializers
 from django.utils import timezone
 
@@ -29,6 +31,7 @@ def _create_proof_asset(contribution, uploaded_file, uploader):
         content_type=getattr(uploaded_file, 'content_type', '') or '',
         uploader=uploader,
     )
+
 
 class ContributionSerializer(serializers.ModelSerializer):
     """贡献记录完整序列化器（含关联名称）"""
@@ -269,7 +272,7 @@ class RankingObjectionReviewSerializer(serializers.Serializer):
     corrected_total_score = serializers.DecimalField(
         max_digits=12,
         decimal_places=2,
-        min_value=0,
+        min_value=Decimal('0'),
         required=False,
     )
 

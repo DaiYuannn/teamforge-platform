@@ -14,11 +14,20 @@
 """
 import importlib
 
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import (
+    OpenApiParameter,
+    PolymorphicProxySerializer,
+    extend_schema,
+    inline_serializer,
+)
 from rest_framework import status
+from rest_framework import serializers
 from rest_framework.views import APIView
 
 from common.permissions import IsInternalTeamMember
 from common.response import success_response, error_response
+from common.schema import success_response_schema
 
 
 # 模型映射：type -> 模型与序列化器信息
@@ -44,9 +53,21 @@ MODEL_MAP = {
         'list_serializer': 'FinanceExpenseListSerializer',
         'label': '经费明细',
     },
+    'file': {
+        'module': 'apps.files.models',
+        'model': 'FileAsset',
+        'serializer_module': 'apps.files.serializers',
+        'list_serializer': 'FileAssetListSerializer',
+        'label': '文件',
+    },
 }
 
 VALID_TYPES = list(MODEL_MAP.keys())
+
+
+def _recycle_bin_serializers():
+    """Load business serializers lazily so schema generation mirrors runtime."""
+    return [_get_serializer_class(cfg) for cfg in MODEL_MAP.values()]
 
 
 def _get_config(model_type):
@@ -71,11 +92,66 @@ def _get_all_objects_manager(model_cls):
     return getattr(model_cls, 'all_objects', model_cls._default_manager)
 
 
+def _scope_deleted_queryset(queryset, model_type, user):
+    """回收站沿用业务列表的可见范围，避免泄露已删除文件。"""
+    if model_type != 'file':
+        return queryset
+
+    from django.db.models import Q
+    from apps.files.models import FileAsset
+    from apps.projects.models import Project, ProjectMember
+    from common.project_access import is_external_collaborator, scope_project_queryset
+
+    queryset = queryset.select_related(
+        'project', 'folder', 'uploader', 'deleted_by',
+    ).prefetch_related('tag_relations__tag')
+    if user.global_role in ('sys_admin', 'teacher'):
+        return queryset
+    if is_external_collaborator(user):
+        return scope_project_queryset(
+            queryset.exclude(level=FileAsset.Level.SENSITIVE),
+            user,
+            project_lookup='project',
+        )
+    member_project_ids = ProjectMember.objects.filter(
+        user=user,
+        status=ProjectMember.Status.ACTIVE,
+    ).values_list('project_id', flat=True)
+    led_project_ids = Project.objects.filter(leader=user).values_list('id', flat=True)
+    return queryset.filter(
+        Q(level=FileAsset.Level.PUBLIC)
+        | Q(level=FileAsset.Level.INTERNAL, project_id__in=member_project_ids)
+        | Q(level=FileAsset.Level.INTERNAL, project_id__in=led_project_ids)
+    ).distinct()
+
+
 class RecycleBinView(APIView):
     """回收站视图"""
     permission_classes = [IsInternalTeamMember]
 
     # ---- GET：回收站列表 ----
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name='type',
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                enum=VALID_TYPES,
+                default='project',
+            ),
+        ],
+        responses={
+            200: success_response_schema(
+                'RecycleBinListResponse',
+                PolymorphicProxySerializer(
+                    component_name='RecycleBinItem',
+                    serializers=_recycle_bin_serializers,
+                    resource_type_field_name=None,
+                    many=True,
+                ),
+            ),
+        },
+    )
     def get(self, request):
         """获取回收站列表（仅返回已软删除的对象）"""
         model_type = request.query_params.get('type', 'project')
@@ -89,12 +165,34 @@ class RecycleBinView(APIView):
         model_cls = _get_model_class(cfg)
         manager = _get_all_objects_manager(model_cls)
         deleted_qs = manager.filter(is_deleted=True).order_by('-deleted_at')
+        deleted_qs = _scope_deleted_queryset(
+            deleted_qs, model_type, request.user,
+        )
 
         serializer_cls = _get_serializer_class(cfg)
-        serializer = serializer_cls(deleted_qs, many=True)
+        serializer = serializer_cls(
+            deleted_qs, many=True, context={'request': request},
+        )
         return success_response(serializer.data, message='回收站列表获取成功')
 
     # ---- POST：恢复 ----
+    @extend_schema(
+        request=inline_serializer(
+            name='RecycleBinRestoreRequest',
+            fields={
+                'type': serializers.ChoiceField(
+                    choices=VALID_TYPES, default='project',
+                ),
+                'id': serializers.IntegerField(),
+            },
+        ),
+        responses={
+            200: success_response_schema(
+                'RecycleBinRestoreResponse',
+                serializers.JSONField(allow_null=True),
+            ),
+        },
+    )
     def post(self, request):
         """恢复对象（从回收站还原）"""
         # 权限校验：恢复操作仅限老师 / 管理员
@@ -132,6 +230,38 @@ class RecycleBinView(APIView):
         return success_response(message=f'{cfg["label"]}恢复成功')
 
     # ---- DELETE：永久删除 ----
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name='type',
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                enum=VALID_TYPES,
+                default='project',
+            ),
+            OpenApiParameter(
+                name='id',
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.QUERY,
+                required=True,
+            ),
+        ],
+        request=inline_serializer(
+            name='RecycleBinDeleteRequest',
+            fields={
+                'type': serializers.ChoiceField(
+                    choices=VALID_TYPES, required=False,
+                ),
+                'id': serializers.IntegerField(required=False),
+            },
+        ),
+        responses={
+            200: success_response_schema(
+                'RecycleBinDeleteResponse',
+                serializers.JSONField(allow_null=True),
+            ),
+        },
+    )
     def delete(self, request):
         """永久删除（物理删除，不可恢复）"""
         # 权限校验：永久删除仅限系统管理员
@@ -165,5 +295,11 @@ class RecycleBinView(APIView):
                 http_status=status.HTTP_404_NOT_FOUND,
             )
 
+        if model_type == 'file':
+            for version in obj.versions.all():
+                if version.file:
+                    version.file.delete(save=False)
+            if obj.file:
+                obj.file.delete(save=False)
         obj.delete()
         return success_response(message=f'{cfg["label"]}已永久删除')

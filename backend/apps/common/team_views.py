@@ -82,17 +82,17 @@ class TeamSerializer(serializers.ModelSerializer):
         )
         read_only_fields = ('id', 'owner', 'created_at')
 
-    def get_member_count(self, obj):
+    def get_member_count(self, obj) -> int:
         return obj.teammember_set.filter(status=TeamMember.Status.ACTIVE).count()
 
-    def get_current_user_role(self, obj):
+    def get_current_user_role(self, obj) -> str:
         request = self.context.get('request')
         if not request or not request.user.is_authenticated:
             return ''
         membership = TeamMember.objects.filter(team=obj, user=request.user).first()
         return membership.role if membership else ''
 
-    def get_can_manage(self, obj):
+    def get_can_manage(self, obj) -> bool:
         request = self.context.get('request')
         return bool(
             request and request.user.is_authenticated
@@ -135,6 +135,8 @@ class TeamViewSet(MultiSerializerMixin, ModelViewSet):
     ordering_fields = ['created_at', 'name']
 
     def get_queryset(self):
+        if getattr(self, 'swagger_fake_view', False):
+            return self.queryset.none()
         user = self.request.user
         # 当前用户拥有或加入的团队
         owned = self.queryset.filter(owner=user)
@@ -442,6 +444,8 @@ class TeamMemberViewSet(ModelViewSet):
     filterset_fields = ['team', 'user', 'role']
 
     def get_queryset(self):
+        if getattr(self, 'swagger_fake_view', False):
+            return self.queryset.none()
         user = self.request.user
         if user.global_role == 'sys_admin':
             return self.queryset

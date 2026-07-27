@@ -9,12 +9,14 @@
 - POST /api/v1/users/oauth/callback/
 - GET  /api/v1/users/oauth/bindings/
 """
+from drf_spectacular.utils import extend_schema, inline_serializer
 from rest_framework import serializers, status
 from rest_framework.generics import GenericAPIView
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.views import APIView
 
 from common.response import success_response, error_response
+from common.schema import success_response_schema
 from .oauth_models import OAuthAccount
 
 
@@ -24,6 +26,15 @@ SUPPORTED_PROVIDERS = [
     {'provider': 'google', 'name': 'Google', 'enabled': True},
     {'provider': 'wechat', 'name': '微信', 'enabled': False},
 ]
+
+_OAUTH_ERROR_RESPONSE_SCHEMA = inline_serializer(
+    name='OAuthErrorResponse',
+    fields={
+        'code': serializers.IntegerField(),
+        'message': serializers.CharField(),
+        'data': serializers.JSONField(allow_null=True),
+    },
+)
 
 
 class OAuthAccountSerializer(serializers.ModelSerializer):
@@ -42,6 +53,22 @@ class OAuthProvidersView(APIView):
     """
     permission_classes = [AllowAny]
 
+    @extend_schema(
+        responses={
+            200: success_response_schema(
+                'OAuthProvidersResponse',
+                inline_serializer(
+                    name='OAuthProvider',
+                    fields={
+                        'provider': serializers.CharField(),
+                        'name': serializers.CharField(),
+                        'enabled': serializers.BooleanField(),
+                    },
+                    many=True,
+                ),
+            ),
+        },
+    )
     def get(self, request):
         return success_response(SUPPORTED_PROVIDERS)
 
@@ -55,6 +82,19 @@ class OAuthCallbackView(GenericAPIView):
     serializer_class = serializers.Serializer
     permission_classes = [AllowAny]
 
+    @extend_schema(
+        request=inline_serializer(
+            name='OAuthCallbackRequest',
+            fields={
+                'provider': serializers.CharField(),
+                'code': serializers.CharField(),
+            },
+        ),
+        responses={
+            400: _OAUTH_ERROR_RESPONSE_SCHEMA,
+            501: _OAUTH_ERROR_RESPONSE_SCHEMA,
+        },
+    )
     def post(self, request):
         provider = request.data.get('provider', '')
         code = request.data.get('code', '')
@@ -77,6 +117,14 @@ class OAuthBindListView(GenericAPIView):
     serializer_class = OAuthAccountSerializer
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        responses={
+            200: success_response_schema(
+                'OAuthBindingListResponse',
+                OAuthAccountSerializer(many=True),
+            ),
+        },
+    )
     def get(self, request):
         bindings = OAuthAccount.objects.filter(user=request.user).order_by('-created_at')
         serializer = self.get_serializer(bindings, many=True)

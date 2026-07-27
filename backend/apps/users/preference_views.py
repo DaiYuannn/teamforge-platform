@@ -6,10 +6,13 @@ PUT /api/v1/users/preference/   更新偏好设置（不存在则自动创建）
 import re
 from collections.abc import Mapping
 
+from drf_spectacular.utils import extend_schema, inline_serializer
+from rest_framework import serializers
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
 from common.response import success_response, error_response
+from common.schema import success_response_schema
 from .models import UserPreference
 
 
@@ -18,9 +21,13 @@ _DEFAULT_PREFERENCE = {
     'dashboard_layout': {},
     'theme_color': UserPreference.DEFAULT_THEME,
     'primary_color': UserPreference.DEFAULT_PRIMARY_COLOR,
+    'theme_mode': UserPreference.DEFAULT_THEME_MODE,
+    'schedule_start': UserPreference.DEFAULT_SCHEDULE_START,
+    'schedule_end': UserPreference.DEFAULT_SCHEDULE_END,
     'default_landing': 'dashboard',
     'sidebar_collapsed': False,
     'notification_sound': True,
+    'language': UserPreference.DEFAULT_LANGUAGE,
     'items_per_page': 20,
     'default_scope': 'mine',
     'sidebar_order': [],
@@ -34,9 +41,13 @@ _ALLOWED_FIELDS = {
     'dashboard_layout',
     'theme_color',
     'primary_color',
+    'theme_mode',
+    'schedule_start',
+    'schedule_end',
     'default_landing',
     'sidebar_collapsed',
     'notification_sound',
+    'language',
     'items_per_page',
     'default_scope',
     'sidebar_order',
@@ -48,9 +59,11 @@ _ALLOWED_FIELDS = {
 # 各字段的合法取值校验
 _VALID_CHOICES = {
     'theme_color': set(UserPreference.THEME_TO_PRIMARY_COLOR),
+    'theme_mode': set(UserPreference.ThemeMode.values),
     'default_landing': {'dashboard', 'projects', 'tasks', 'notifications'},
     'items_per_page': {10, 20, 50},
     'default_scope': {'mine', 'team'},
+    'language': {'zh-CN', 'en'},
 }
 
 _BOOLEAN_FIELDS = {'sidebar_collapsed', 'notification_sound'}
@@ -58,6 +71,186 @@ _NOTIFICATION_FIELDS = {'categories', 'channels', 'quiet_hours', 'digest'}
 _QUIET_HOUR_FIELDS = {'enabled', 'start', 'end'}
 _DIGEST_CHOICES = {'instant', 'daily', 'weekly'}
 _CLOCK_PATTERN = re.compile(r'^(?:[01]\d|2[0-3]):[0-5]\d$')
+
+# Keep this API contract aligned with the top-level routes exposed by the
+# preference screen. Detail URLs and arbitrary redirects are intentionally
+# excluded from account shortcuts.
+FAVORITE_ROUTE_CHOICES = (
+    '/dashboard',
+    '/todo',
+    '/notifications',
+    '/announcements',
+    '/activities',
+    '/reports',
+    '/analytics-studio',
+    '/projects',
+    '/projects/archive',
+    '/competitions',
+    '/tasks',
+    '/team',
+    '/members',
+    '/members/schedule',
+    '/members/team-schedule',
+    '/members/skills',
+    '/finance',
+    '/files',
+    '/imports',
+    '/intellectual-property',
+    '/intellectual-property/todo',
+    '/contributions',
+    '/contributions/pending',
+    '/sensitive',
+    '/audit/logs',
+    '/admin/integrations',
+    '/admin/platform-capabilities',
+    '/admin/engineering',
+    '/admin/users',
+    '/admin/backups',
+    '/admin/public-portal',
+)
+MAX_FAVORITE_ROUTES = 8
+
+
+def _notification_preference_schema(name, *, required):
+    return inline_serializer(
+        name=name,
+        fields={
+            'categories': serializers.DictField(
+                child=serializers.BooleanField(),
+                required=False,
+            ),
+            'channels': serializers.DictField(
+                child=serializers.BooleanField(),
+                required=False,
+            ),
+            'quiet_hours': inline_serializer(
+                name=f'{name}QuietHours',
+                fields={
+                    'enabled': serializers.BooleanField(required=False),
+                    'start': serializers.RegexField(
+                        r'^(?:[01]\d|2[0-3]):[0-5]\d$',
+                        required=False,
+                    ),
+                    'end': serializers.RegexField(
+                        r'^(?:[01]\d|2[0-3]):[0-5]\d$',
+                        required=False,
+                    ),
+                },
+                required=False,
+            ),
+            'digest': serializers.ChoiceField(
+                choices=['instant', 'daily', 'weekly'],
+                required=False,
+            ),
+        },
+        required=required,
+    )
+
+
+_USER_PREFERENCE_RESPONSE_SCHEMA = success_response_schema(
+    'UserPreferenceResponse',
+    inline_serializer(
+        name='UserPreferenceData',
+        fields={
+            'user_id': serializers.IntegerField(),
+            'dashboard_layout': serializers.JSONField(),
+            'theme_color': serializers.ChoiceField(
+                choices=sorted(UserPreference.THEME_TO_PRIMARY_COLOR),
+            ),
+            'primary_color': serializers.RegexField(r'^#[0-9a-fA-F]{6}$'),
+            'theme_mode': serializers.ChoiceField(
+                choices=UserPreference.ThemeMode.choices,
+            ),
+            'schedule_start': serializers.RegexField(
+                UserPreference.SCHEDULE_TIME_PATTERN,
+            ),
+            'schedule_end': serializers.RegexField(
+                UserPreference.SCHEDULE_TIME_PATTERN,
+            ),
+            'default_landing': serializers.ChoiceField(
+                choices=['dashboard', 'projects', 'tasks', 'notifications'],
+            ),
+            'sidebar_collapsed': serializers.BooleanField(),
+            'notification_sound': serializers.BooleanField(),
+            'language': serializers.ChoiceField(choices=['zh-CN', 'en']),
+            'items_per_page': serializers.ChoiceField(choices=[10, 20, 50]),
+            'default_scope': serializers.ChoiceField(choices=['mine', 'team']),
+            'sidebar_order': serializers.ListField(
+                child=serializers.CharField(),
+            ),
+            'favorite_routes': serializers.ListField(
+                child=serializers.ChoiceField(choices=FAVORITE_ROUTE_CHOICES),
+                max_length=MAX_FAVORITE_ROUTES,
+            ),
+            'saved_filters': serializers.DictField(
+                child=serializers.DictField(),
+            ),
+            'notification_preferences': _notification_preference_schema(
+                'UserPreferenceNotificationSettings',
+                required=True,
+            ),
+        },
+    ),
+)
+
+_USER_PREFERENCE_UPDATE_SCHEMA = inline_serializer(
+    name='UserPreferenceUpdateRequest',
+    fields={
+        'dashboard_layout': serializers.JSONField(required=False),
+        'theme_color': serializers.ChoiceField(
+            choices=sorted(UserPreference.THEME_TO_PRIMARY_COLOR),
+            required=False,
+        ),
+        'primary_color': serializers.RegexField(
+            r'^#[0-9a-fA-F]{6}$',
+            required=False,
+        ),
+        'theme_mode': serializers.ChoiceField(
+            choices=UserPreference.ThemeMode.choices,
+            required=False,
+        ),
+        'schedule_start': serializers.RegexField(
+            UserPreference.SCHEDULE_TIME_PATTERN,
+            required=False,
+        ),
+        'schedule_end': serializers.RegexField(
+            UserPreference.SCHEDULE_TIME_PATTERN,
+            required=False,
+        ),
+        'default_landing': serializers.ChoiceField(
+            choices=['dashboard', 'projects', 'tasks', 'notifications'],
+            required=False,
+        ),
+        'sidebar_collapsed': serializers.BooleanField(required=False),
+        'notification_sound': serializers.BooleanField(required=False),
+        'language': serializers.ChoiceField(choices=['zh-CN', 'en'], required=False),
+        'items_per_page': serializers.ChoiceField(
+            choices=[10, 20, 50],
+            required=False,
+        ),
+        'default_scope': serializers.ChoiceField(
+            choices=['mine', 'team'],
+            required=False,
+        ),
+        'sidebar_order': serializers.ListField(
+            child=serializers.CharField(),
+            required=False,
+        ),
+        'favorite_routes': serializers.ListField(
+            child=serializers.ChoiceField(choices=FAVORITE_ROUTE_CHOICES),
+            max_length=MAX_FAVORITE_ROUTES,
+            required=False,
+        ),
+        'saved_filters': serializers.DictField(
+            child=serializers.DictField(),
+            required=False,
+        ),
+        'notification_preferences': _notification_preference_schema(
+            'UserPreferenceUpdateNotificationSettings',
+            required=False,
+        ),
+    },
+)
 
 
 def _unique_string_list(value):
@@ -140,6 +333,7 @@ class UserPreferenceView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(responses={200: _USER_PREFERENCE_RESPONSE_SCHEMA})
     def get(self, request):
         """获取当前用户偏好设置"""
         user = request.user
@@ -153,6 +347,10 @@ class UserPreferenceView(APIView):
 
         return success_response(self._serialize(pref))
 
+    @extend_schema(
+        request=_USER_PREFERENCE_UPDATE_SCHEMA,
+        responses={200: _USER_PREFERENCE_RESPONSE_SCHEMA},
+    )
     def put(self, request):
         """更新当前用户偏好设置"""
         user = request.user
@@ -192,6 +390,43 @@ class UserPreferenceView(APIView):
                     code=1001,
                 )
 
+        for field in ('schedule_start', 'schedule_end'):
+            if field not in update_data:
+                continue
+            if UserPreference.normalize_schedule_time(update_data[field]) is None:
+                return error_response(
+                    message=f'字段 {field} 必须为 HH:MM 格式的有效时间',
+                    code=1001,
+                )
+
+        existing_pref = UserPreference.objects.filter(user=user).first()
+        effective_theme_mode = update_data.get(
+            'theme_mode',
+            existing_pref.theme_mode
+            if existing_pref
+            else UserPreference.DEFAULT_THEME_MODE,
+        )
+        effective_schedule_start = update_data.get(
+            'schedule_start',
+            existing_pref.schedule_start
+            if existing_pref
+            else UserPreference.DEFAULT_SCHEDULE_START,
+        )
+        effective_schedule_end = update_data.get(
+            'schedule_end',
+            existing_pref.schedule_end
+            if existing_pref
+            else UserPreference.DEFAULT_SCHEDULE_END,
+        )
+        if (
+            effective_theme_mode == UserPreference.ThemeMode.SCHEDULE
+            and effective_schedule_start == effective_schedule_end
+        ):
+            return error_response(
+                message='定时模式的开始时间和结束时间不能相同',
+                code=1001,
+            )
+
         has_primary_color = 'primary_color' in update_data
         primary_color = update_data.get('primary_color')
         if has_primary_color:
@@ -227,6 +462,27 @@ class UserPreferenceView(APIView):
                     code=1001,
                 )
 
+        if 'favorite_routes' in update_data:
+            favorite_routes = update_data['favorite_routes']
+            if len(favorite_routes) > MAX_FAVORITE_ROUTES:
+                return error_response(
+                    message=f'favorite_routes 最多可设置 {MAX_FAVORITE_ROUTES} 个入口',
+                    code=1001,
+                )
+            invalid_routes = [
+                route
+                for route in favorite_routes
+                if route not in FAVORITE_ROUTE_CHOICES
+            ]
+            if invalid_routes:
+                return error_response(
+                    message=(
+                        'favorite_routes 包含不支持的入口：'
+                        f'{", ".join(invalid_routes)}'
+                    ),
+                    code=1001,
+                )
+
         if 'saved_filters' in update_data:
             saved_filters = update_data['saved_filters']
             if not isinstance(saved_filters, dict) or not all(
@@ -256,6 +512,10 @@ class UserPreferenceView(APIView):
         message = '偏好设置已创建' if created else '偏好设置已更新'
         return success_response(self._serialize(pref), message=message)
 
+    @extend_schema(
+        request=_USER_PREFERENCE_UPDATE_SCHEMA,
+        responses={200: _USER_PREFERENCE_RESPONSE_SCHEMA},
+    )
     def patch(self, request):
         """PATCH 与原有部分更新语义一致。"""
         return self.put(request)
@@ -272,9 +532,13 @@ class UserPreferenceView(APIView):
                 else UserPreference.DEFAULT_THEME
             ),
             'primary_color': pref.safe_primary_color,
+            'theme_mode': pref.theme_mode,
+            'schedule_start': pref.schedule_start,
+            'schedule_end': pref.schedule_end,
             'default_landing': pref.default_landing,
             'sidebar_collapsed': pref.sidebar_collapsed,
             'notification_sound': pref.notification_sound,
+            'language': pref.language,
             'items_per_page': pref.items_per_page,
             'default_scope': pref.default_scope,
             'sidebar_order': pref.sidebar_order or [],

@@ -7,6 +7,7 @@ N41: 审批流程测试
 凭证。因此需要“申请人”时使用 make_user 创建，仅用 admin_client 作为操作客户端。
 """
 import pytest
+from decimal import Decimal
 
 from apps.common.approval_models import ApprovalFlow, ApprovalRequest
 
@@ -70,6 +71,7 @@ class TestApprovalRequest:
         flow = self._make_flow()
         resp = member_client.post('/api/v1/approvals/requests/', {
             'flow': flow.id, 'title': '请假1天', 'content': '病假',
+            'metadata': {'start_date': '2026-07-28', 'end_date': '2026-07-28'},
         }, format='json')
         assert resp.status_code in (200, 201), resp.json()
         req = ApprovalRequest.objects.get(title='请假1天')
@@ -190,3 +192,105 @@ class TestApprovalRequest:
         assert len(reviews) == 1
         assert reviews[0]['action'] == 'approve'
         assert reviews[0]['opinion'] == '通过意见'
+
+
+@pytest.mark.api
+@pytest.mark.django_db
+class TestApprovalBusinessLinkage:
+    @staticmethod
+    def _flow(flow_type):
+        return ApprovalFlow.objects.create(
+            name=f'{flow_type} business flow', flow_type=flow_type, steps=[]
+        )
+
+    @staticmethod
+    def _approve(admin_client, approval_request):
+        response = admin_client.post(
+            f'/api/v1/approvals/requests/{approval_request.id}/approve/',
+            {'opinion': 'approved by unified flow'}, format='json',
+        )
+        assert response.status_code == 200, response.json()
+
+    def test_leave_approval_updates_membership_status(self, admin_client, make_user):
+        from apps.users.models import User
+
+        applicant = make_user(email='leave-link@example.com')
+        approval = ApprovalRequest.objects.create(
+            applicant=applicant,
+            flow=self._flow('leave'),
+            title='Leave linkage',
+            metadata={'start_date': '2026-07-28', 'end_date': '2026-07-29'},
+        )
+        self._approve(admin_client, approval)
+        applicant.refresh_from_db()
+        assert applicant.membership_status == User.MembershipStatus.ON_LEAVE
+
+    def test_expense_approval_updates_reimbursement(
+        self, admin_client, make_user, make_project
+    ):
+        from apps.finance.models import FinanceExpense
+
+        applicant = make_user(email='expense-link@example.com')
+        project = make_project(leader=applicant)
+        expense = FinanceExpense.objects.create(
+            project=project,
+            title='Approval-linked expense',
+            amount=Decimal('128.00'),
+            expense_date='2026-07-27',
+            spender=applicant,
+            reimbursement_status=FinanceExpense.ReimbursementStatus.PENDING,
+            applied_by=applicant,
+        )
+        approval = ApprovalRequest.objects.create(
+            applicant=applicant,
+            flow=self._flow('expense'),
+            title='Expense linkage',
+            metadata={'expense_id': expense.id},
+        )
+        self._approve(admin_client, approval)
+        expense.refresh_from_db()
+        assert expense.reimbursement_status == FinanceExpense.ReimbursementStatus.APPROVED
+        assert expense.reviewer == admin_client.user
+
+    def test_sensitive_approval_grants_timed_access(
+        self, admin_client, make_user, make_sensitive_data
+    ):
+        from apps.sensitive.models import SensitiveAccessRequest
+
+        applicant = make_user(email='sensitive-link@example.com')
+        access = SensitiveAccessRequest.objects.create(
+            sensitive_data=make_sensitive_data(),
+            applicant=applicant,
+            reason='Unified approval linkage',
+            status=SensitiveAccessRequest.Status.PENDING,
+        )
+        approval = ApprovalRequest.objects.create(
+            applicant=applicant,
+            flow=self._flow('sensitive'),
+            title='Sensitive linkage',
+            metadata={'access_request_id': access.id, 'expire_hours': 4},
+        )
+        self._approve(admin_client, approval)
+        access.refresh_from_db()
+        assert access.status == SensitiveAccessRequest.Status.APPROVED
+        assert access.approver == admin_client.user
+        assert access.access_expires_at is not None
+
+    def test_project_approval_applies_validated_changes(
+        self, admin_client, make_user, make_project
+    ):
+        applicant = make_user(email='project-link@example.com')
+        project = make_project(leader=applicant)
+        approval = ApprovalRequest.objects.create(
+            applicant=applicant,
+            flow=self._flow('project'),
+            title='Project linkage',
+            metadata={
+                'project_id': project.id,
+                'changes': {'priority': 'urgent', 'intro': 'Approved scope'},
+            },
+        )
+        self._approve(admin_client, approval)
+        project.refresh_from_db()
+        assert project.priority == 'urgent'
+        assert project.intro == 'Approved scope'

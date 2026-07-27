@@ -1,7 +1,10 @@
 """OpenAPI Schema 路由（N60）"""
 from django.urls import path
 
-from .openapi_views import OpenAPISchemaView, APIEndpointListView
+from .openapi_views import (
+    APIEndpointListView,
+    OpenAPISchemaView,
+)
 
 urlpatterns = [
     path('schema/', OpenAPISchemaView.as_view(), name='openapi-schema'),

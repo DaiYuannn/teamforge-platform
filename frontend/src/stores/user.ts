@@ -6,8 +6,10 @@ import { getAccessToken, getRefreshToken, setTokens, clearTokens } from '@/api/r
 import type { LoginParams, User, UserPreferences, UserRole } from '@/types'
 import type { UserPreferenceData } from '@/api/users'
 import { useAppStore } from '@/stores/app'
+import { setLocale } from '@/i18n'
 import {
   applyPrimaryColor,
+  normalizeThemePreference,
   normalizePrimaryColor,
   resetPrimaryColor,
   type PrimaryColor,
@@ -95,14 +97,17 @@ export const useUserStore = defineStore('user', () => {
       ? landing as UserPreferences['default_landing']
       : 'dashboard'
     const pageSize = Number(value?.items_per_page)
+    const themePreference = normalizeThemePreference(value)
     return {
       dashboard_layout: value?.dashboard_layout || {},
       default_landing: normalizedLanding,
       sidebar_collapsed: value?.sidebar_collapsed ?? false,
       notification_sound: value?.notification_sound ?? true,
+      language: value?.language === 'en' ? 'en' : 'zh-CN',
       items_per_page: ([10, 20, 50].includes(pageSize) ? pageSize : 20) as 10 | 20 | 50,
       theme_color: value?.theme_color,
       primary_color: normalizePrimaryColor(colorOverride ?? value?.primary_color),
+      ...themePreference,
       default_scope: value?.default_scope === 'team' ? 'team' : 'mine',
       sidebar_order: Array.isArray(value?.sidebar_order) ? value.sidebar_order.map(String) : [],
       favorite_routes: Array.isArray(value?.favorite_routes) ? value.favorite_routes.map(String) : [],
@@ -137,6 +142,7 @@ export const useUserStore = defineStore('user', () => {
     role.value = normalizedUser.global_role
     applyPrimaryColor(color)
     useAppStore().applyUserPreference(normalizedUser.preferences)
+    setLocale(normalizedUser.preferences?.language)
     return normalizedUser
   }
 
@@ -147,7 +153,7 @@ export const useUserStore = defineStore('user', () => {
     token.value = result.token.access
     refreshToken.value = result.token.refresh
     setCurrentUser(result.user)
-    setTokens(result.token.access, result.token.refresh)
+    setTokens(result.token.access, result.token.refresh, params.remember_me === true)
   }
 
   /** 退出登录 */
@@ -182,12 +188,26 @@ export const useUserStore = defineStore('user', () => {
   /** 保存偏好，并让所有入口共享同一套主色预览、确认与回滚逻辑。 */
   async function savePreference(data: Partial<UserPreferenceData>): Promise<UserPreferenceData> {
     const previousColor = primaryColor.value
+    const appStore = useAppStore()
+    const previousThemePreference = {
+      theme_mode: appStore.themeMode,
+      schedule_start: appStore.scheduleStart,
+      schedule_end: appStore.scheduleEnd,
+    }
     const requestedValue = data.primary_color ?? data.theme_color
     const requestedColor = requestedValue === undefined
       ? undefined
       : normalizePrimaryColor(requestedValue)
 
     if (requestedColor) syncPrimaryColor(requestedColor)
+    if (data.theme_mode !== undefined || data.schedule_start !== undefined || data.schedule_end !== undefined) {
+      appStore.applyThemeSettings({
+        ...previousThemePreference,
+        theme_mode: data.theme_mode ?? previousThemePreference.theme_mode,
+        schedule_start: data.schedule_start ?? previousThemePreference.schedule_start,
+        schedule_end: data.schedule_end ?? previousThemePreference.schedule_end,
+      })
+    }
 
     try {
       const preference = await usersApi.updateUserPreference({
@@ -208,6 +228,7 @@ export const useUserStore = defineStore('user', () => {
       return { ...preference, primary_color: savedColor }
     } catch (error) {
       syncPrimaryColor(previousColor)
+      appStore.applyThemeSettings(previousThemePreference)
       throw error
     }
   }
@@ -219,6 +240,7 @@ export const useUserStore = defineStore('user', () => {
       token.value = accessToken
     } else {
       resetPrimaryColor()
+      useAppStore().resetUserPreference()
     }
   }
 

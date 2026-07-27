@@ -6,6 +6,7 @@
 import os
 
 from django.core.files import File
+from django.db.models import Count, Q
 from django.http import Http404
 from rest_framework import status
 from rest_framework.decorators import action
@@ -20,15 +21,17 @@ from common.project_access import (
     scope_project_queryset,
     user_can_access_project,
 )
-from .models import FileAsset, FileVersion
+from .models import FileAsset, FileFolder, FileVersion
 from .tag_models import FileTag, FileTagRelation
 from .serializers import (
     FileAssetSerializer, FileAssetListSerializer, FileVersionSerializer,
     FileTagSerializer, FileTagRelationSerializer, AssignTagsSerializer,
+    FileFolderSerializer, MoveFileSerializer,
 )
 from .permissions import (
     FileUploadPermission,
     FileDownloadPermission,
+    scope_file_queryset,
     user_can_access_file,
 )
 from .audit import record_download_audit
@@ -42,7 +45,9 @@ class FileAssetViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet)
     - download: 下载文件（根据文件级别校验权限）
     - destroy: 删除文件（老师/管理员/上传者）
     """
-    queryset = FileAsset.objects.all().order_by('-created_at')
+    queryset = FileAsset.objects.select_related(
+        'project', 'folder', 'uploader', 'deleted_by',
+    ).prefetch_related('tag_relations__tag').order_by('-created_at')
 
     serializer_classes_by_action = {
         'list': FileAssetListSerializer,
@@ -66,6 +71,8 @@ class FileAssetViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet)
         'upload_version': [FileUploadPermission],
         'download_version': [IsAuthenticated],
         'restore_version': [FileUploadPermission],
+        'move': [FileUploadPermission],
+        'office_preview': [IsAuthenticated],
     }
 
     filterset_fields = ['project', 'level', 'uploader']
@@ -78,38 +85,24 @@ class FileAssetViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet)
         - 管理员/老师：可查看所有文件
         - 普通成员：只能查看公开文件 + 自己参与项目的内部文件
         """
-        from django.db.models import Q
-        from apps.projects.models import ProjectMember, Project
-
         queryset = super().get_queryset()
         user = self.request.user
-
-        # 管理员和老师可查看所有文件
-        if user.global_role in ['sys_admin', 'teacher']:
-            return queryset
-        if is_external_collaborator(user):
-            return scope_project_queryset(
-                queryset.exclude(level=FileAsset.Level.SENSITIVE),
-                user,
-                project_lookup='project',
-            )
-
-        # 普通成员：获取用户参与的项目ID列表 + 负责的项目ID列表
-        member_project_ids = list(
-            ProjectMember.objects.filter(
-                user=user, status=ProjectMember.Status.ACTIVE
-            ).values_list('project_id', flat=True)
+        visible = scope_file_queryset(
+            queryset,
+            user,
+            include_sensitive=user.global_role in ['sys_admin', 'teacher'],
         )
-        led_project_ids = list(
-            Project.objects.filter(leader=user).values_list('id', flat=True)
-        )
-        all_project_ids = member_project_ids + led_project_ids
 
-        # 公开文件 + 自己项目的内部文件（不含敏感文件）
-        return queryset.filter(
-            Q(level='public') |
-            (Q(level='internal') & Q(project_id__in=all_project_ids))
-        )
+        folder = self.request.query_params.get('folder')
+        if folder:
+            if folder == 'root':
+                visible = visible.filter(folder__isnull=True)
+            else:
+                visible = visible.filter(folder_id=folder)
+        tag = self.request.query_params.get('tag')
+        if tag:
+            visible = visible.filter(tag_relations__tag_id=tag)
+        return visible.distinct()
 
     def check_object_permissions(self, request, obj):
         super().check_object_permissions(request, obj)
@@ -156,14 +149,57 @@ class FileAssetViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet)
         )
 
     def destroy(self, request, *args, **kwargs):
-        """删除文件"""
+        """软删除文件，保留物理内容以便从回收站恢复。"""
         instance = self.get_object()
         self.check_object_permissions(request, instance)
-        # 删除物理文件
-        if instance.file:
-            instance.file.delete(save=False)
-        instance.delete()
-        return success_response(message='文件删除成功')
+        instance.soft_delete(request.user)
+        return success_response(message='文件已移入回收站')
+
+    @action(detail=True, methods=['post'])
+    def move(self, request, pk=None):
+        """将文件移动到同项目文件夹，folder=null 表示项目根目录。"""
+        file_asset = self.get_object()
+        self.check_object_permissions(request, file_asset)
+        serializer = MoveFileSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        folder = serializer.validated_data.get('folder')
+        if folder and folder.project_id != file_asset.project_id:
+            return error_response(
+                message='文件只能移动到同一项目的文件夹',
+                code=1005,
+                http_status=status.HTTP_400_BAD_REQUEST,
+            )
+        file_asset.folder = folder
+        file_asset.save(update_fields=['folder', 'updated_at'])
+        return success_response(
+            FileAssetSerializer(file_asset, context={'request': request}).data,
+            message='文件移动成功',
+        )
+
+    @action(detail=True, methods=['get'], url_path='office-preview')
+    def office_preview(self, request, pk=None):
+        """提取现代 Office 文档的有限、只读结构化内容。"""
+        from .office_preview import OfficePreviewError, extract_office_preview
+
+        file_asset = self.get_object()
+        permission = FileDownloadPermission()
+        if not permission.has_object_permission(request, self, file_asset):
+            return error_response(
+                message='权限不足，无法预览此文件',
+                code=1003,
+                http_status=status.HTTP_403_FORBIDDEN,
+            )
+        if not file_asset.file:
+            raise Http404('文件不存在')
+        try:
+            preview = extract_office_preview(file_asset)
+        except OfficePreviewError as exc:
+            return error_response(
+                message=str(exc),
+                code=1006,
+                http_status=status.HTTP_400_BAD_REQUEST,
+            )
+        return success_response(preview)
 
     @action(detail=True, methods=['get'])
     def download(self, request, pk=None):
@@ -765,3 +801,61 @@ class FileTagViewSet(ModelViewSet):
             {'unassigned': deleted_count},
             message='标签取消成功',
         )
+
+
+class FileFolderViewSet(ModelViewSet):
+    """项目文件夹 CRUD。文件夹写操作沿用文件上传权限。"""
+
+    queryset = FileFolder.objects.select_related(
+        'project', 'parent', 'created_by',
+    ).annotate(
+        file_count=Count('files', filter=Q(files__is_deleted=False)),
+    ).order_by('name', 'id')
+    serializer_class = FileFolderSerializer
+    permission_classes = [FileUploadPermission]
+    filterset_fields = ['project', 'parent']
+    search_fields = ['name']
+
+    def get_queryset(self):
+        return scope_project_queryset(
+            super().get_queryset(),
+            self.request.user,
+            project_lookup='project',
+        )
+
+    def check_object_permissions(self, request, obj):
+        super().check_object_permissions(request, obj)
+        if not user_can_access_project(
+            request.user,
+            obj.project,
+            write=request.method not in ('GET', 'HEAD', 'OPTIONS'),
+        ):
+            self.permission_denied(request, message='无权访问该项目文件夹')
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        folder = serializer.save(created_by=request.user)
+        return success_response(
+            self.get_serializer(folder).data,
+            message='文件夹创建成功',
+            http_status=status.HTTP_201_CREATED,
+        )
+
+    def update(self, request, *args, **kwargs):
+        partial = kwargs.pop('partial', False)
+        folder = self.get_object()
+        serializer = self.get_serializer(
+            folder, data=request.data, partial=partial,
+        )
+        serializer.is_valid(raise_exception=True)
+        folder = serializer.save()
+        return success_response(
+            self.get_serializer(folder).data,
+            message='文件夹更新成功',
+        )
+
+    def destroy(self, request, *args, **kwargs):
+        folder = self.get_object()
+        folder.delete()
+        return success_response(message='文件夹删除成功，所含文件已移至项目根目录')

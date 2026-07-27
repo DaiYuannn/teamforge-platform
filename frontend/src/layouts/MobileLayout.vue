@@ -4,6 +4,7 @@
     <div class="mobile-header">
       <div class="header-title">{{ currentSectionTitle }}</div>
       <div class="header-right">
+        <AccountThemeToggle :icon-size="20" />
         <!-- 通知铃铛组件 -->
         <NotificationBell />
         <el-button
@@ -41,7 +42,7 @@
         @keydown.enter="switchTab(tab.path)"
       >
         <el-icon :size="21"><component :is="tab.icon" /></el-icon>
-        <span class="tab-label">{{ tab.label }}</span>
+        <span class="tab-label">{{ t(tab.label) }}</span>
       </div>
     </div>
 
@@ -76,16 +77,16 @@
         >
           <template #title>
             <el-icon><component :is="group.icon" /></el-icon>
-            <span>{{ group.title }}</span>
+            <span>{{ t(group.title) }}</span>
           </template>
           <el-menu-item v-for="item in group.items" :key="item.path" :index="item.path">
             <el-icon><component :is="item.icon" /></el-icon>
-            <span>{{ item.title }}</span>
+            <span>{{ t(item.title) }}</span>
           </el-menu-item>
         </el-sub-menu>
         <el-menu-item index="logout" class="logout-menu-item">
           <el-icon><SwitchButton /></el-icon>
-          <span>退出登录</span>
+          <span>{{ t('退出登录') }}</span>
         </el-menu-item>
       </el-menu>
     </el-drawer>
@@ -102,17 +103,20 @@ import { useUserStore } from '@/stores/user'
 import { getRoleLabel } from '@/utils/format'
 import NotificationBell from '@/components/NotificationBell.vue'
 import AvatarWithName from '@/components/AvatarWithName.vue'
+import AccountThemeToggle from '@/components/AccountThemeToggle.vue'
 import {
   findNavigationGroup,
   findNavigationItem,
   getMobilePrimaryNavigation,
   getVisibleNavigationGroups,
 } from '@/config/navigation'
+import { useI18n } from '@/i18n'
 
 const route = useRoute()
 const router = useRouter()
 const userStore = useUserStore()
 const showMenu = ref(false)
+const { t } = useI18n()
 
 const userInfo = computed(() => userStore.userInfo)
 const roleLabel = computed(() => getRoleLabel(userStore.role))
@@ -126,8 +130,8 @@ const activeMenu = computed(() => {
   return activeNavigationItem.value?.path || route.path
 })
 const currentSectionTitle = computed(() => {
-  if (route.path.startsWith('/user/')) return '个人工作区'
-  return activeNavigationGroup.value?.title || '团队工作区'
+  if (route.path.startsWith('/user/')) return t('个人工作区')
+  return t(activeNavigationGroup.value?.title || '团队工作区')
 })
 const drawerDefaultOpeneds = computed(() => [
   `group:${activeNavigationGroup.value?.key || 'workspace'}`,

@@ -209,15 +209,24 @@
           </el-table-column>
 
           <el-table-column
-            v-if="canManageTasks"
             label="操作"
-            width="84"
+            width="132"
             fixed="right"
             align="center"
           >
             <template #default="{ row }">
-              <div v-if="canManageTask(row as Task)" class="row-actions">
-                <el-tooltip content="编辑任务" placement="top">
+              <div class="row-actions">
+                <el-tooltip content="打开协作详情" placement="top">
+                  <el-button
+                    circle
+                    type="primary"
+                    plain
+                    :icon="ChatDotRound"
+                    aria-label="打开任务协作详情"
+                    @click="openTaskCollaboration(row as Task)"
+                  />
+                </el-tooltip>
+                <el-tooltip v-if="canManageTask(row as Task)" content="编辑任务" placement="top">
                   <el-button
                     circle
                     :icon="Edit"
@@ -226,7 +235,7 @@
                     @click="handleEdit(row as Task)"
                   />
                 </el-tooltip>
-                <el-tooltip content="删除任务" placement="top">
+                <el-tooltip v-if="canManageTask(row as Task)" content="删除任务" placement="top">
                   <el-button
                     circle
                     type="danger"
@@ -246,7 +255,6 @@
         <TaskBoard
           :tasks="taskList"
           :interactive="true"
-          :can-open="canManageTask"
           :can-change-status="canChangeTaskStatus"
           :can-change-to-status="canChangeTaskToStatus"
           @change-status="handleChangeStatus"
@@ -255,7 +263,7 @@
       </div>
 
       <footer v-if="total > 0" class="pagination-wrapper">
-        <el-pagination
+        <AccessiblePagination
           v-model:current-page="queryParams.page"
           v-model:page-size="queryParams.page_size"
           :total="total"
@@ -286,6 +294,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   ArrowDown,
   Calendar,
+  ChatDotRound,
   Delete,
   Download,
   Edit,
@@ -570,7 +579,11 @@ function setEditingTask(task: Task): void {
 }
 
 function handleBoardTaskClick(task: Task): void {
-  if (canManageTask(task)) handleEdit(task)
+  openTaskCollaboration(task)
+}
+
+function openTaskCollaboration(task: Task): void {
+  router.push({ name: 'TaskCollaboration', params: { id: task.id } })
 }
 
 async function handleChangeStatus(task: Task, newStatus: TaskStatus): Promise<void> {
@@ -695,6 +708,8 @@ onMounted(async () => {
       if (canManageTask(task)) {
         setEditingTask(task)
         formDialogVisible.value = true
+      } else {
+        openTaskCollaboration(task)
       }
     } catch {
       // 请求层统一处理错误。

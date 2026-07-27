@@ -82,8 +82,9 @@ def scope_project_queryset(
             if not write or getattr(user, 'membership_status', '') == 'active':
                 return queryset
 
+    prefix = f'{project_lookup}__' if project_lookup else ''
     filters = {
-        f'{project_lookup}__members__user': user,
-        f'{project_lookup}__members__status': 'active',
+        f'{prefix}members__user': user,
+        f'{prefix}members__status': 'active',
     }
     return queryset.filter(**filters).distinct()

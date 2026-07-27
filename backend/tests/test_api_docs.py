@@ -23,7 +23,7 @@ class TestAPIDocs:
         assert resp.status_code == 200, resp.json()
         data = extract_data(resp)
         assert 'title' in data
-        assert 'version' in data
+        assert data['version'] == '2.1.0'
 
     def test_returns_endpoint_count(self, teacher_client):
         """返回端点数量"""
@@ -35,14 +35,14 @@ class TestAPIDocs:
     def test_returns_schema_url(self, teacher_client):
         """返回 schema URL"""
         data = extract_data(teacher_client.get('/api/v1/common/api-docs/'))
-        assert 'schema_url' in data
-        assert data['schema_url']
+        assert data['schema_url'] == '/api/v1/common/openapi/schema/'
 
-    def test_returns_docs_urls(self, teacher_client):
-        """返回文档 URL"""
+    def test_returns_real_endpoint_index_url(self, teacher_client):
+        """只返回当前实际注册的契约入口，不发布 Swagger/Redoc 死链接。"""
         data = extract_data(teacher_client.get('/api/v1/common/api-docs/'))
-        assert 'docs_url' in data
-        assert 'redoc_url' in data
+        assert data['endpoint_index_url'] == '/api/v1/common/openapi/endpoints/'
+        assert 'docs_url' not in data
+        assert 'redoc_url' not in data
 
     def test_unauthenticated_blocked(self, api_client):
         """未认证不可访问"""

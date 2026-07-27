@@ -61,7 +61,7 @@ function goLogin(): void {
   top: 0;
   z-index: 100;
   height: 64px;
-  background: rgba(255, 255, 255, 0.96);
+  background: color-mix(in srgb, var(--color-surface) 96%, transparent);
   border-bottom: 1px solid var(--color-border-light);
 }
 
@@ -98,7 +98,7 @@ function goLogin(): void {
   height: 34px;
   flex: 0 0 auto;
   color: #fff;
-  background: var(--color-primary);
+  background: var(--color-primary-fill);
   border-radius: var(--radius-sm);
 }
 
@@ -142,7 +142,7 @@ function goLogin(): void {
 
 .public-footer {
   min-height: 72px;
-  color: var(--color-text-muted);
+  color: rgba(255, 255, 255, 0.72);
   background: #17231f;
 }
 

@@ -23,6 +23,7 @@ INSTALLED_APPS = [
     'rest_framework',
     'rest_framework_simplejwt',
     'rest_framework_simplejwt.token_blacklist',
+    'drf_spectacular',
     'corsheaders',
     'django_filters',
     'django_celery_beat',
@@ -50,11 +51,13 @@ MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
+    'django.middleware.locale.LocaleMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'apps.common.performance_metrics.PerformanceMetricsMiddleware',
     'apps.audit.middleware.OperationLogMiddleware',
 ]
 
@@ -103,6 +106,10 @@ AUTH_PASSWORD_VALIDATORS = [
 ]
 
 LANGUAGE_CODE = 'zh-hans'
+LANGUAGES = [
+    ('zh-hans', '简体中文'),
+    ('en', 'English'),
+]
 TIME_ZONE = 'Asia/Shanghai'
 USE_I18N = True
 USE_TZ = True
@@ -160,7 +167,47 @@ REST_FRAMEWORK = {
     'EXCEPTION_HANDLER': 'common.exceptions.custom_exception_handler',
     'DATETIME_FORMAT': '%Y-%m-%d %H:%M:%S',
     'DATE_FORMAT': '%Y-%m-%d',
+    'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
 }
+
+SPECTACULAR_SETTINGS = {
+    'TITLE': 'TeamForge Platform API',
+    'DESCRIPTION': '团队项目管理平台公开的版本化 REST API 契约。',
+    'VERSION': '2.1.0',
+    'OAS_VERSION': '3.0.3',
+    'SERVE_INCLUDE_SCHEMA': False,
+    'COMPONENT_SPLIT_REQUEST': True,
+    'SCHEMA_PATH_PREFIX': r'/api/v1',
+    'ENUM_NAME_OVERRIDES': {
+        'FinanceCategoryEnum': 'common.schema_enums.FINANCE_CATEGORY_CHOICES',
+        'KnowledgeCategoryEnum': 'common.schema_enums.KNOWLEDGE_CATEGORY_CHOICES',
+        'IntellectualPropertyStatusEnum': 'common.schema_enums.IP_STATUS_CHOICES',
+        'ProjectStatusEnum': 'common.schema_enums.PROJECT_STATUS_CHOICES',
+        'CompetitionStatusEnum': 'common.schema_enums.COMPETITION_STATUS_CHOICES',
+        'ContributionStatusEnum': 'common.schema_enums.CONTRIBUTION_STATUS_CHOICES',
+        'ScheduledReportStatusEnum': 'common.schema_enums.SCHEDULED_REPORT_STATUS_CHOICES',
+        'ImportStatusEnum': 'common.schema_enums.IMPORT_STATUS_CHOICES',
+        'ErrorLevelEnum': 'common.schema_enums.ERROR_LEVEL_CHOICES',
+        'CompetitionLevelEnum': 'common.schema_enums.COMPETITION_LEVEL_CHOICES',
+        'FileLevelEnum': 'common.schema_enums.FILE_LEVEL_CHOICES',
+        'TaskPriorityEnum': 'common.schema_enums.TASK_PRIORITY_CHOICES',
+        'NotificationPriorityEnum': 'common.schema_enums.NOTIFICATION_PRIORITY_CHOICES',
+        'ProjectPriorityEnum': 'common.schema_enums.PROJECT_PRIORITY_CHOICES',
+        'TaskStatusEnum': 'common.schema_enums.TASK_STATUS_CHOICES',
+        'ProjectStageEnum': 'common.schema_enums.PROJECT_STAGE_CHOICES',
+        'ReviewDecisionEnum': 'common.schema_enums.REVIEW_DECISION_CHOICES',
+        'ObjectionActionEnum': 'common.schema_enums.OBJECTION_ACTION_CHOICES',
+        'MaterialCheckStatusEnum': 'common.schema_enums.MATERIAL_CHECK_STATUS_CHOICES',
+    },
+}
+
+# Process-local performance diagnostics. No request bodies or SQL parameters
+# are retained by the collector.
+PERFORMANCE_SAMPLE_LIMIT = int(os.environ.get('PERFORMANCE_SAMPLE_LIMIT', '500'))
+PERFORMANCE_SLOW_QUERY_LIMIT = int(os.environ.get('PERFORMANCE_SLOW_QUERY_LIMIT', '100'))
+PERFORMANCE_SLOW_QUERY_SECONDS = float(
+    os.environ.get('PERFORMANCE_SLOW_QUERY_SECONDS', '0.5')
+)
 
 SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(hours=2),
@@ -240,6 +287,7 @@ EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER', '')
 EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD', '')
 EMAIL_USE_TLS = True
 DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
+FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:5173')
 
 TESSERACT_CMD = os.environ.get('TESSERACT_CMD', '')
 OCR_TESSERACT_LANG = os.environ.get('OCR_TESSERACT_LANG', 'chi_sim+eng')

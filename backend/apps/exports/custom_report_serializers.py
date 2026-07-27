@@ -1,5 +1,6 @@
 """自定义报表与定时报表序列化器。"""
 from rest_framework import serializers
+from drf_spectacular.utils import extend_schema_field
 
 from apps.users.models import User
 from .custom_report_models import CustomReport
@@ -13,6 +14,23 @@ class CustomReportSerializer(serializers.ModelSerializer):
         model = CustomReport
         fields = '__all__'
         read_only_fields = ('id', 'created_by', 'created_by_name', 'created_at', 'updated_at')
+
+    def validate_report_type(self, value):
+        if value not in CustomReport.ReportType.values:
+            raise serializers.ValidationError('Unsupported report type')
+        return value
+
+    def validate_config(self, value):
+        value = value or {}
+        if value.get('data_source', 'project') not in {
+            'project', 'task', 'finance', 'competition',
+        }:
+            raise serializers.ValidationError('Unsupported data source')
+        if value.get('chart_type', 'table') not in {'table', 'bar', 'line', 'pie'}:
+            raise serializers.ValidationError('Unsupported chart type')
+        if not isinstance(value.get('filters', {}), dict):
+            raise serializers.ValidationError('filters must be an object')
+        return value
 
 
 class ScheduledReportExecutionSerializer(serializers.ModelSerializer):
@@ -37,7 +55,7 @@ class ScheduledReportExecutionSerializer(serializers.ModelSerializer):
         )
         read_only_fields = fields
 
-    def get_download_url(self, obj):
+    def get_download_url(self, obj) -> str:
         if not obj.file:
             return ''
         return f'/exports/scheduled-reports/{obj.schedule_id}/executions/{obj.pk}/download/'
@@ -128,9 +146,11 @@ class ScheduledReportSerializer(serializers.ModelSerializer):
                 })
         return attrs
 
+    @extend_schema_field(serializers.ListField(child=serializers.CharField()))
     def get_recipient_names(self, obj):
         return [user.name for user in obj.recipients.all()]
 
+    @extend_schema_field(ScheduledReportExecutionSerializer(many=True))
     def get_recent_executions(self, obj):
         records = list(obj.executions.all()[:5])
         return ScheduledReportExecutionSerializer(records, many=True).data

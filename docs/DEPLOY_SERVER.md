@@ -182,32 +182,32 @@ GRANT ALL PRIVILEGES ON DATABASE team_management TO team_user;
 
 ## 6. 创建管理员账号
 
-在 Docker 容器中创建超级管理员：
+完成第 8 节的生产启动与初始化后，在 Docker 容器中创建超级管理员：
 
 ```bash
 cd /opt/team-management/deploy
 
 # 进入后端容器执行
-docker compose -f docker-compose.prod.yml exec backend python manage.py createsuperuser
+docker compose --env-file env/backend.prod.env -f docker-compose.prod.yml exec backend python manage.py createsuperuser
 
 # 或创建演示管理员 + 演示数据
-docker compose -f docker-compose.prod.yml exec backend python manage.py seed_demo_data --clean --force
+docker compose --env-file env/backend.prod.env -f docker-compose.prod.yml exec backend python manage.py seed_demo_data --clean --force
 ```
 
 ---
 
 ## 7. 运行数据库迁移
 
-数据库迁移由后端容器的 entrypoint 自动执行。如需手动执行：
+`start-prod.sh` 与 `start-prod.ps1` 会显式执行数据库迁移和静态资源收集。完成第 8 节的后端启动后，也可以用以下幂等命令手动重跑：
 
 ```bash
 cd /opt/team-management/deploy
 
 # 执行迁移
-docker compose -f docker-compose.prod.yml exec backend python manage.py migrate
+docker compose --env-file env/backend.prod.env -f docker-compose.prod.yml exec -T backend python manage.py migrate --noinput
 
 # 收集静态文件
-docker compose -f docker-compose.prod.yml exec backend python manage.py collectstatic --noinput
+docker compose --env-file env/backend.prod.env -f docker-compose.prod.yml exec -T backend python manage.py collectstatic --noinput
 ```
 
 ---
@@ -219,11 +219,17 @@ docker compose -f docker-compose.prod.yml exec backend python manage.py collects
 ```bash
 cd /opt/team-management/deploy
 
-# 构建并启动全部服务
-docker compose -f docker-compose.prod.yml up -d --build
+# 构建镜像并先启动数据库、Redis 与后端
+docker compose --env-file env/backend.prod.env -f docker-compose.prod.yml build
+docker compose --env-file env/backend.prod.env -f docker-compose.prod.yml up -d postgres redis backend
+
+# 初始化数据库和静态资源，成功后再启动其余服务
+docker compose --env-file env/backend.prod.env -f docker-compose.prod.yml exec -T backend python manage.py migrate --noinput
+docker compose --env-file env/backend.prod.env -f docker-compose.prod.yml exec -T backend python manage.py collectstatic --noinput
+docker compose --env-file env/backend.prod.env -f docker-compose.prod.yml up -d
 
 # 查看服务状态
-docker compose -f docker-compose.prod.yml ps
+docker compose --env-file env/backend.prod.env -f docker-compose.prod.yml ps
 ```
 
 启动的服务列表：
@@ -242,14 +248,14 @@ docker compose -f docker-compose.prod.yml ps
 
 ```bash
 # Worker 与 Beat 已由生产编排默认启动
-docker compose -f docker-compose.prod.yml ps celery-worker celery-beat
+docker compose --env-file env/backend.prod.env -f docker-compose.prod.yml ps celery-worker celery-beat
 ```
 
 ### 8.3 验证服务健康
 
 ```bash
 # 检查所有容器状态
-docker compose -f docker-compose.prod.yml ps
+docker compose --env-file env/backend.prod.env -f docker-compose.prod.yml ps
 
 # 检查后端健康
 curl http://localhost/api/v1/auth/login/ -X POST \
@@ -291,7 +297,7 @@ cp /etc/letsencrypt/live/your-domain.com/privkey.pem deploy/nginx/ssl/key.pem
 SECURE_SSL_REDIRECT=True
 
 # 5. 重启 Nginx
-docker compose -f docker-compose.prod.yml restart nginx
+docker compose --env-file env/backend.prod.env -f docker-compose.prod.yml restart nginx
 ```
 
 ---
@@ -302,22 +308,22 @@ docker compose -f docker-compose.prod.yml restart nginx
 cd /opt/team-management/deploy
 
 # 查看所有服务日志（最近 100 行）
-docker compose -f docker-compose.prod.yml logs --tail=100
+docker compose --env-file env/backend.prod.env -f docker-compose.prod.yml logs --tail=100
 
 # 只看后端日志
-docker compose -f docker-compose.prod.yml logs --tail=100 backend
+docker compose --env-file env/backend.prod.env -f docker-compose.prod.yml logs --tail=100 backend
 
 # 只看 Nginx 日志
-docker compose -f docker-compose.prod.yml logs --tail=100 nginx
+docker compose --env-file env/backend.prod.env -f docker-compose.prod.yml logs --tail=100 nginx
 
 # 只看数据库日志
-docker compose -f docker-compose.prod.yml logs --tail=100 postgres
+docker compose --env-file env/backend.prod.env -f docker-compose.prod.yml logs --tail=100 postgres
 
 # 实时跟踪日志
-docker compose -f docker-compose.prod.yml logs -f backend
+docker compose --env-file env/backend.prod.env -f docker-compose.prod.yml logs -f backend
 
 # 查看 Celery 日志
-docker compose -f docker-compose.prod.yml logs -f celery-worker celery-beat
+docker compose --env-file env/backend.prod.env -f docker-compose.prod.yml logs -f celery-worker celery-beat
 ```
 
 ---
@@ -328,17 +334,17 @@ docker compose -f docker-compose.prod.yml logs -f celery-worker celery-beat
 cd /opt/team-management/deploy
 
 # 重启单个服务
-docker compose -f docker-compose.prod.yml restart backend
-docker compose -f docker-compose.prod.yml restart nginx
+docker compose --env-file env/backend.prod.env -f docker-compose.prod.yml restart backend
+docker compose --env-file env/backend.prod.env -f docker-compose.prod.yml restart nginx
 
 # 重启全部服务
-docker compose -f docker-compose.prod.yml restart
+docker compose --env-file env/backend.prod.env -f docker-compose.prod.yml restart
 
 # 停止全部服务
-docker compose -f docker-compose.prod.yml down
+docker compose --env-file env/backend.prod.env -f docker-compose.prod.yml down
 
 # 停止并删除数据卷（危险！会丢失数据）
-docker compose -f docker-compose.prod.yml down -v
+docker compose --env-file env/backend.prod.env -f docker-compose.prod.yml down -v
 ```
 
 ### 更新代码后重新部署
@@ -349,9 +355,9 @@ cd /opt/team-management
 # 拉取最新代码
 git pull origin main
 
-# 重新构建并启动
+# 重新构建、初始化并启动
 cd deploy
-docker compose -f docker-compose.prod.yml up -d --build
+bash start-prod.sh
 ```
 
 ---
@@ -390,8 +396,8 @@ find /opt/backups/team-management -maxdepth 2 -type f -ls
 后端尚未启动完成。检查后端状态：
 
 ```bash
-docker compose -f docker-compose.prod.yml ps backend
-docker compose -f docker-compose.prod.yml logs --tail=50 backend
+docker compose --env-file env/backend.prod.env -f docker-compose.prod.yml ps backend
+docker compose --env-file env/backend.prod.env -f docker-compose.prod.yml logs --tail=50 backend
 ```
 
 常见原因：环境变量未正确配置（如 SECRET_KEY、DB_PASSWORD 为空）。检查 `env/backend.prod.env` 文件。
@@ -401,7 +407,7 @@ docker compose -f docker-compose.prod.yml logs --tail=50 backend
 前端构建可能失败。重新构建前端：
 
 ```bash
-docker compose -f docker-compose.prod.yml up -d --build frontend
+docker compose --env-file env/backend.prod.env -f docker-compose.prod.yml up -d --build frontend
 ```
 
 ### Q3: 上传文件失败（413 Request Entity Too Large）
@@ -410,7 +416,7 @@ Nginx 默认限制已在配置中设为 100MB。如仍报错，检查 `deploy/ng
 
 ### Q4: Celery 定时通知不工作
 
-生产编排默认启动 Celery Worker 与 Beat。先检查 `docker compose -f docker-compose.prod.yml ps celery-worker celery-beat`，再查看两项服务日志；任一服务未运行都会影响定时提醒或定时报表。
+生产编排默认启动 Celery Worker 与 Beat。先检查 `docker compose --env-file env/backend.prod.env -f docker-compose.prod.yml ps celery-worker celery-beat`，再查看两项服务日志；任一服务未运行都会影响定时提醒或定时报表。
 
 ### Q5: 磁盘空间不足
 
@@ -428,7 +434,7 @@ docker system df
 ### Q6: 如何修改管理员密码
 
 ```bash
-docker compose -f docker-compose.prod.yml exec backend python manage.py changepassword admin@demo.com
+docker compose --env-file env/backend.prod.env -f docker-compose.prod.yml exec backend python manage.py changepassword admin@demo.com
 ```
 
 ### Q7: 如何更新代码后重新部署
@@ -437,9 +443,7 @@ docker compose -f docker-compose.prod.yml exec backend python manage.py changepa
 cd /opt/team-management
 git pull origin main
 cd deploy
-docker compose -f docker-compose.prod.yml up -d --build
-# 等待服务健康后执行迁移
-docker compose -f docker-compose.prod.yml exec backend python manage.py migrate
+bash start-prod.sh
 ```
 
 ---

@@ -99,7 +99,7 @@
       </div>
 
       <div class="pagination-wrapper">
-        <el-pagination
+        <AccessiblePagination
           v-model:current-page="page"
           :page-size="pageSize"
           :total="total"

@@ -12,12 +12,23 @@ from rest_framework.viewsets import ModelViewSet
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.decorators import action
 from rest_framework_simplejwt.tokens import RefreshToken
+from drf_spectacular.utils import extend_schema, inline_serializer
+from rest_framework import serializers
 from django.contrib.auth import authenticate
+from django.contrib.auth.password_validation import validate_password
+from django.contrib.auth.tokens import default_token_generator
+from django.conf import settings
+from django.core.mail import send_mail
+from django.utils.encoding import force_bytes, force_str
+from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
+from datetime import timedelta
+import logging
 from django.db import transaction
 from django.utils import timezone
 
 from common.response import success_response, error_response
 from common.mixins import MultiSerializerMixin, MultiPermissionMixin
+from common.schema import success_response_schema
 from .models import User, UserLifecycleEvent
 from .serializers import (
     UserSerializer, UserListSerializer, UserCreateSerializer,
@@ -28,6 +39,9 @@ from .permissions import IsUserManager, IsSelfOrAdmin
 from .login_security_services import (
     get_client_ip, get_user_agent, is_ip_blocked, record_login_attempt,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 class UserViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet):
@@ -299,12 +313,35 @@ class LoginView(APIView):
     """
     permission_classes = []
 
+    @extend_schema(
+        auth=[],
+        request=LoginSerializer,
+        responses={
+            200: success_response_schema(
+                'LoginResponse',
+                inline_serializer(
+                    name='LoginData',
+                    fields={
+                        'token': inline_serializer(
+                            name='JWTTokenPair',
+                            fields={
+                                'access': serializers.CharField(),
+                                'refresh': serializers.CharField(),
+                            },
+                        ),
+                        'user': UserSerializer(),
+                    },
+                ),
+            ),
+        },
+    )
     def post(self, request):
         serializer = LoginSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
         email = serializer.validated_data['email']
         password = serializer.validated_data['password']
+        remember_me = serializer.validated_data['remember_me']
 
         ip_address = get_client_ip(request)
         user_agent = get_user_agent(request)
@@ -356,6 +393,9 @@ class LoginView(APIView):
 
         # 生成 JWT token
         refresh = RefreshToken.for_user(user)
+        refresh.set_exp(lifetime=(
+            timedelta(days=30) if remember_me else timedelta(days=1)
+        ))
 
         return success_response({
             'token': {
@@ -366,6 +406,86 @@ class LoginView(APIView):
         }, message='登录成功')
 
 
+class PasswordResetRequestView(APIView):
+    """Send a one-time reset link without exposing account existence."""
+
+    permission_classes = []
+
+    def post(self, request):
+        email = str(request.data.get('email', '')).strip().lower()
+        if not email:
+            return error_response(
+                message='Email is required', code=1014,
+                http_status=status.HTTP_400_BAD_REQUEST,
+            )
+        user = User.objects.filter(email__iexact=email, is_active=True).first()
+        if user and user.has_usable_password():
+            uid = urlsafe_base64_encode(force_bytes(user.pk))
+            token = default_token_generator.make_token(user)
+            frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:5173').rstrip('/')
+            reset_url = f'{frontend_url}/reset-password?uid={uid}&token={token}'
+            try:
+                send_mail(
+                    subject='Team management password reset',
+                    message=(
+                        'A password reset was requested for your account.\n\n'
+                        f'Open this link to set a new password:\n{reset_url}\n\n'
+                        'If you did not request this, ignore this email.'
+                    ),
+                    from_email=settings.DEFAULT_FROM_EMAIL or None,
+                    recipient_list=[user.email],
+                    fail_silently=False,
+                )
+            except Exception:
+                logger.exception('Password reset email delivery failed')
+        return success_response(
+            message='If the account exists, a password reset email has been sent.'
+        )
+
+
+class PasswordResetConfirmView(APIView):
+    """Validate a one-time token and replace the account password."""
+
+    permission_classes = []
+
+    def post(self, request):
+        uid = str(request.data.get('uid', ''))
+        token = str(request.data.get('token', ''))
+        new_password = str(request.data.get('new_password', ''))
+        confirm_password = str(request.data.get('confirm_password', ''))
+        if not uid or not token or not new_password:
+            return error_response(
+                message='Reset token and new password are required', code=1015,
+                http_status=status.HTTP_400_BAD_REQUEST,
+            )
+        if new_password != confirm_password:
+            return error_response(
+                message='Passwords do not match', code=1016,
+                http_status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            user_id = force_str(urlsafe_base64_decode(uid))
+            user = User.objects.get(pk=user_id, is_active=True)
+        except (TypeError, ValueError, OverflowError, User.DoesNotExist):
+            user = None
+        if user is None or not default_token_generator.check_token(user, token):
+            return error_response(
+                message='The password reset link is invalid or expired', code=1017,
+                http_status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            validate_password(new_password, user=user)
+        except Exception as exc:
+            messages = getattr(exc, 'messages', [str(exc)])
+            return error_response(
+                message='; '.join(messages), code=1018,
+                http_status=status.HTTP_400_BAD_REQUEST,
+            )
+        user.set_password(new_password)
+        user.save(update_fields=['password'])
+        return success_response(message='Password reset successfully')
+
+
 class ChangePasswordView(APIView):
     """
     修改密码
@@ -374,6 +494,22 @@ class ChangePasswordView(APIView):
     """
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        request=inline_serializer(
+            name='ChangePasswordRequest',
+            fields={
+                'old_password': serializers.CharField(write_only=True),
+                'new_password': serializers.CharField(write_only=True),
+                'confirm_password': serializers.CharField(write_only=True),
+            },
+        ),
+        responses={
+            200: success_response_schema(
+                'ChangePasswordResponse',
+                serializers.JSONField(allow_null=True),
+            ),
+        },
+    )
     def post(self, request):
         old_password = request.data.get('old_password', '')
         new_password = request.data.get('new_password', '')
@@ -436,6 +572,21 @@ class UploadAvatarView(APIView):
     ALLOWED_TYPES = {'image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'}
     MAX_SIZE = 5 * 1024 * 1024  # 5MB
 
+    @extend_schema(
+        request=inline_serializer(
+            name='UploadAvatarRequest',
+            fields={'avatar': serializers.ImageField()},
+        ),
+        responses={
+            200: success_response_schema(
+                'UploadAvatarResponse',
+                inline_serializer(
+                    name='UploadAvatarData',
+                    fields={'avatar': serializers.CharField()},
+                ),
+            ),
+        },
+    )
     def post(self, request):
         upload_file = request.FILES.get('avatar')
         if not upload_file:

@@ -8,6 +8,8 @@
 """
 
 from django.utils import timezone
+from drf_spectacular.utils import OpenApiParameter, extend_schema, inline_serializer
+from rest_framework import serializers
 from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
@@ -18,6 +20,7 @@ from common.response import success_response, error_response
 from common.mixins import MultiSerializerMixin, MultiPermissionMixin
 from common.permissions import IsSysAdmin
 from common.project_access import is_external_collaborator
+from common.schema import success_response_schema
 from apps.users.models import User
 from apps.users.serializers import ExternalCollaboratorUserSerializer
 from .models import SkillTag, MemberSkill, FlexibleWorkSchedule
@@ -441,6 +444,23 @@ class MemberDetailView(APIView):
     """
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name='user_id',
+                type=int,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description='成员 ID；省略时返回当前登录用户。',
+            ),
+        ],
+        responses={
+            200: success_response_schema(
+                'MemberDetailResponse',
+                MemberDetailSerializer(),
+            ),
+        },
+    )
     def get(self, request):
         """获取成员详情"""
         user_id = request.query_params.get('user_id') or request.user.id
@@ -472,6 +492,53 @@ class MemberGrowthTimelineView(APIView):
     """
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name='user_id',
+                type=int,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description='成员 ID；省略时返回当前登录用户。',
+            ),
+        ],
+        responses={
+            200: success_response_schema(
+                'MemberGrowthTimelineResponse',
+                inline_serializer(
+                    name='MemberGrowthTimelineData',
+                    fields={
+                        'user_id': serializers.IntegerField(),
+                        'user_name': serializers.CharField(),
+                        'contrib_summary': inline_serializer(
+                            name='MemberGrowthContributionSummary',
+                            fields={
+                                'total': serializers.IntegerField(),
+                                'approved': serializers.IntegerField(),
+                                'pending': serializers.IntegerField(),
+                                'total_weight': serializers.FloatField(),
+                            },
+                        ),
+                        'events': inline_serializer(
+                            name='MemberGrowthEvent',
+                            fields={
+                                'id': serializers.CharField(),
+                                'type': serializers.CharField(),
+                                'title': serializers.CharField(),
+                                'description': serializers.CharField(),
+                                'timestamp': serializers.DateTimeField(allow_null=True),
+                                'date': serializers.DateField(allow_null=True),
+                                'project_name': serializers.CharField(),
+                                'metadata': serializers.JSONField(),
+                            },
+                            many=True,
+                        ),
+                        'total_events': serializers.IntegerField(),
+                    },
+                ),
+            ),
+        },
+    )
     def get(self, request):
         from apps.contributions.models import Contribution
         from apps.competitions.models import Competition

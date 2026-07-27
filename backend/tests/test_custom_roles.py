@@ -4,7 +4,10 @@ N36: 自定义角色测试
 - /api/v1/users/role-assignments/  角色分配 CRUD
 """
 import pytest
+from rest_framework.test import APIClient
 
+from apps.finance.models import FinanceBudget
+from apps.exports.custom_report_models import CustomReport
 from apps.users.role_models import CustomRole, UserRoleAssignment
 
 
@@ -144,3 +147,138 @@ class TestUserRoleAssignment:
         resp = admin_client.delete(f'/api/v1/users/role-assignments/{assignment.id}/')
         assert resp.status_code in (200, 204)
         assert not UserRoleAssignment.objects.filter(id=assignment.id).exists()
+
+
+def assigned_client(user, permissions, *, project=None, name='runtime-role'):
+    role = CustomRole.objects.create(name=name, permissions=permissions)
+    UserRoleAssignment.objects.create(user=user, role=role, project=project)
+    client = APIClient()
+    client.force_authenticate(user=user)
+    return client
+
+
+@pytest.mark.api
+@pytest.mark.django_db
+class TestCustomRoleEffects:
+    def test_global_project_create_permission_creates_project(self, make_user):
+        user = make_user(email='project-create@test.com')
+        client = assigned_client(user, ['project.create'])
+
+        response = client.post('/api/v1/projects/', {
+            'name': 'Created by custom role',
+            'code': 'CUSTOM-CREATE',
+            'leader': user.id,
+        }, format='json')
+
+        assert response.status_code == 201, response.json()
+
+    def test_project_manage_is_limited_to_assigned_project(
+        self, make_user, make_project
+    ):
+        user = make_user(email='project-manager@test.com')
+        allowed = make_project(name='Allowed project')
+        denied = make_project(name='Denied project')
+        client = assigned_client(user, ['project.manage'], project=allowed)
+
+        allowed_response = client.patch(
+            f'/api/v1/projects/{allowed.id}/', {'intro': 'updated'}, format='json'
+        )
+        denied_response = client.patch(
+            f'/api/v1/projects/{denied.id}/', {'intro': 'forbidden'}, format='json'
+        )
+
+        assert allowed_response.status_code == 200, allowed_response.json()
+        assert denied_response.status_code == 403
+
+    def test_task_create_and_manage_are_distinct_and_project_scoped(
+        self, make_user, make_project, make_task
+    ):
+        user = make_user(email='task-role@test.com')
+        allowed = make_project(name='Task role project')
+        denied = make_project(name='Other task project')
+        create_client = assigned_client(
+            user, ['task.create'], project=allowed, name='task-creator'
+        )
+
+        created = create_client.post('/api/v1/tasks/', {
+            'project': allowed.id,
+            'title': 'Custom role task',
+            'assignee': user.id,
+        }, format='json')
+        rejected = create_client.post('/api/v1/tasks/', {
+            'project': denied.id,
+            'title': 'Cross-project task',
+            'assignee': user.id,
+        }, format='json')
+
+        assert created.status_code == 201, created.json()
+        assert rejected.status_code == 403
+
+        task = make_task(project=allowed)
+        manage_client = assigned_client(
+            user, ['task.manage'], project=allowed, name='task-manager'
+        )
+        updated = manage_client.patch(
+            f'/api/v1/tasks/{task.id}/', {'description': 'managed'}, format='json'
+        )
+        assert updated.status_code == 200, updated.json()
+
+    def test_finance_manage_is_limited_to_assigned_project(
+        self, make_user, make_project
+    ):
+        user = make_user(email='finance-role@test.com')
+        allowed = make_project(name='Finance role project')
+        denied = make_project(name='Other finance project')
+        allowed_budget = FinanceBudget.objects.create(project=allowed)
+        denied_budget = FinanceBudget.objects.create(project=denied)
+        client = assigned_client(user, ['finance.manage'], project=allowed)
+
+        allowed_response = client.patch(
+            f'/api/v1/finance/budgets/{allowed_budget.id}/',
+            {'period': '2026-Q3'}, format='json',
+        )
+        denied_response = client.patch(
+            f'/api/v1/finance/budgets/{denied_budget.id}/',
+            {'period': '2026-Q4'}, format='json',
+        )
+
+        assert allowed_response.status_code == 200, allowed_response.json()
+        assert denied_response.status_code == 403
+
+    def test_member_permissions_require_global_assignment(self, make_user):
+        viewer = make_user(email='member-viewer@test.com')
+        target = make_user(email='member-target@test.com')
+        view_client = assigned_client(viewer, ['member.view'], name='member-viewer')
+        assert view_client.get('/api/v1/users/').status_code == 200
+
+        manager = make_user(email='member-manager@test.com')
+        manage_client = assigned_client(
+            manager, ['member.manage'], name='member-manager'
+        )
+        response = manage_client.patch(
+            f'/api/v1/users/{target.id}/', {'name': 'Managed user'}, format='json'
+        )
+        assert response.status_code == 200, response.json()
+
+    def test_report_permissions_expose_and_manage_other_reports(
+        self, make_user
+    ):
+        owner = make_user(email='report-role-owner@test.com')
+        report = CustomReport.objects.create(
+            name='Shared report', report_type='summary', config={}, created_by=owner
+        )
+        viewer = make_user(email='report-role-viewer@test.com')
+        view_client = assigned_client(viewer, ['report.view'], name='report-viewer')
+        assert view_client.get(
+            f'/api/v1/exports/custom-reports/{report.id}/'
+        ).status_code == 200
+
+        manager = make_user(email='report-role-manager@test.com')
+        manage_client = assigned_client(
+            manager, ['report.manage'], name='report-manager'
+        )
+        response = manage_client.patch(
+            f'/api/v1/exports/custom-reports/{report.id}/',
+            {'description': 'managed'}, format='json',
+        )
+        assert response.status_code == 200, response.json()

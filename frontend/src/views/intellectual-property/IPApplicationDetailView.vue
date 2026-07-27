@@ -25,6 +25,16 @@
           编辑申请
         </el-button>
         <el-button
+          v-if="application && hasPrivilegedRole"
+          type="danger"
+          plain
+          :icon="Delete"
+          :loading="deleting"
+          @click="handleDelete"
+        >
+          删除申请
+        </el-button>
+        <el-button
           v-if="primaryWorkflowAction"
           type="primary"
           :loading="statusTransitioning"
@@ -657,6 +667,7 @@ import {
   Avatar,
   ChatDotRound,
   DataBoard,
+  Delete,
   DocumentChecked,
   Edit,
   EditPen,
@@ -674,6 +685,7 @@ import {
   addIPContributor,
   archiveIPApplication,
   confirmIPContributor,
+  deleteIPApplication,
   getIPApplication,
   resolveIPReturn,
   syncIPContribution,
@@ -741,6 +753,7 @@ const submitting = ref(false)
 const syncing = ref(false)
 const statusTransitioning = ref(false)
 const certificateUploading = ref(false)
+const deleting = ref(false)
 const materialUpdatingId = ref(0)
 const activeTab = ref('overview')
 const application = ref<IPApplication | null>(null)
@@ -948,6 +961,34 @@ async function loadUsers(): Promise<void> {
 
 function handleEdit(): void {
   router.push(`/intellectual-property/create?id=${applicationId}`)
+}
+
+async function handleDelete(): Promise<void> {
+  if (!application.value || !hasPrivilegedRole.value) return
+  try {
+    await ElMessageBox.confirm(
+      `确定删除成果“${application.value.title}”吗？删除后无法恢复。`,
+      '删除成果与知识产权',
+      {
+        confirmButtonText: '删除',
+        cancelButtonText: '取消',
+        type: 'error',
+      },
+    )
+  } catch {
+    return
+  }
+
+  deleting.value = true
+  try {
+    await deleteIPApplication(applicationId)
+    ElMessage.success('成果与知识产权条目已删除')
+    await router.replace('/intellectual-property')
+  } catch {
+    // The request interceptor presents the backend error.
+  } finally {
+    deleting.value = false
+  }
 }
 
 async function handleConfirmContributor(row: IPContributor): Promise<void> {
@@ -1183,9 +1224,9 @@ onMounted(() => {
 }
 
 .status-banner {
-  color: #7f3030;
+  color: var(--danger-text);
   background: var(--danger-light);
-  border: 1px solid #efcfcd;
+  border: 1px solid var(--danger-border);
 }
 
 .status-banner span { flex: 1; }
@@ -1226,9 +1267,9 @@ onMounted(() => {
 
 .attention-banner {
   align-items: flex-start;
-  color: #74480f;
+  color: var(--warning-text);
   background: var(--warning-light);
-  border: 1px solid #ead5b6;
+  border: 1px solid var(--warning-border);
 }
 
 .attention-icon {
@@ -1243,7 +1284,7 @@ onMounted(() => {
 }
 
 .attention-banner span { font-size: 11px; font-weight: 600; }
-.attention-banner p { margin-top: 2px; color: #5f461f; font-size: 13px; line-height: 1.5; }
+.attention-banner p { margin-top: 2px; color: var(--warning-text); font-size: 13px; line-height: 1.5; }
 
 .detail-workspace {
   min-width: 0;

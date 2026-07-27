@@ -51,7 +51,7 @@
           <p>聚焦已经获得赛事认可、并形成可复用经验的团队项目。</p>
         </header>
 
-        <div v-if="loading" class="project-grid" aria-label="正在加载项目">
+        <div v-if="loading" class="project-grid" role="status" aria-label="正在加载项目">
           <el-skeleton v-for="index in 3" :key="index" animated class="project-skeleton">
             <template #template>
               <el-skeleton-item variant="rect" style="height: 220px" />
@@ -360,13 +360,13 @@ onMounted(loadData)
   min-height: 44px;
   padding: 0 18px;
   border-color: #fff;
-  color: var(--color-text);
+  color: var(--color-on-light);
   background: #fff;
 }
 
 .hero-actions :deep(.el-button:hover) {
   border-color: #fff;
-  color: var(--color-primary);
+  color: var(--color-primary-fill);
   background: #fff;
 }
 
@@ -404,7 +404,7 @@ onMounted(loadData)
 
 .intro-band {
   padding: 34px 0;
-  background: var(--color-primary);
+  background: var(--color-primary-fill);
   color: #fff;
 }
 
@@ -549,8 +549,8 @@ onMounted(loadData)
   max-width: 100%;
   padding: 4px 7px;
   overflow: hidden;
-  color: #7a541b;
-  background: #fbf1df;
+  color: var(--warning-text);
+  background: var(--warning-light);
   border-radius: var(--radius-xs);
   font-size: 11px;
   text-overflow: ellipsis;
@@ -627,7 +627,7 @@ onMounted(loadData)
 .ip-type {
   width: fit-content;
   padding: 4px 8px;
-  color: #654687;
+  color: var(--ip-color);
   background: var(--ip-light);
   border-radius: var(--radius-xs);
   font-size: 12px;
@@ -673,7 +673,7 @@ onMounted(loadData)
 
 .member-avatar {
   color: #fff;
-  background: var(--color-primary);
+  background: var(--color-primary-fill);
 }
 
 .member-main {
@@ -752,7 +752,7 @@ onMounted(loadData)
 .join-section {
   padding: 64px 0;
   color: #fff;
-  background: var(--color-primary);
+  background: var(--color-primary-fill);
 }
 
 .join-inner {
@@ -780,7 +780,7 @@ onMounted(loadData)
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
-  color: var(--color-primary);
+  color: var(--color-primary-fill);
   background: #fff;
   border-radius: var(--radius-sm);
   font-weight: 600;
@@ -793,8 +793,8 @@ onMounted(loadData)
   justify-content: center;
   gap: 16px;
   padding: 16px;
-  color: #7f3030;
-  background: #f9e9e8;
+  color: var(--danger-text);
+  background: var(--danger-light);
 }
 
 @media screen and (max-width: 960px) {

@@ -170,6 +170,37 @@ class TestCustomDashboard:
         resp = member_client.get(f'{CUSTOM_DASHBOARD_URL}default/')
         assert resp.status_code in (400, 404)
 
+    def test_dashboard_data_uses_widgets_and_project_scope(
+        self, member_client, make_project, make_task, make_finance
+    ):
+        selected = make_project(name='Selected project')
+        other = make_project(name='Other project')
+        selected_task = make_task(project=selected, title='Selected task')
+        make_task(project=other, title='Other task')
+        make_finance(project=selected, amount=125)
+        make_finance(project=other, amount=900)
+        response = member_client.post(CUSTOM_DASHBOARD_URL, {
+            'name': 'Runtime dashboard',
+            'config': {
+                'widgets': ['signals', 'priority', 'delivery', 'business'],
+                'project_id': selected.id,
+                'date_range': 'month',
+            },
+        }, format='json')
+        dashboard_id = extract_data(response)['id']
+
+        runtime = member_client.get(
+            f'{CUSTOM_DASHBOARD_URL}{dashboard_id}/data/'
+        )
+
+        assert runtime.status_code == 200, runtime.json()
+        data = extract_data(runtime)
+        assert set(data['widgets']) == {'signals', 'priority', 'delivery', 'business'}
+        assert data['widgets']['signals']['metrics'][0]['value'] == 1
+        assert data['widgets']['priority']['items'][0]['id'] == selected_task.id
+        assert data['widgets']['delivery']['items'][0]['id'] == selected.id
+        assert data['widgets']['business']['metrics'][0]['value'] == 125.0
+
 
 @pytest.mark.model
 @pytest.mark.django_db

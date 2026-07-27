@@ -158,35 +158,9 @@ class FileShareLinkViewSet(
         if not token:
             return error_response(message='请提供 token 参数', code=1005)
 
-        try:
-            share_link = FileShareLink.objects.select_related('file').get(token=token)
-        except FileShareLink.DoesNotExist:
-            return error_response(
-                message='分享链接不存在', code=1004,
-                http_status=status.HTTP_404_NOT_FOUND,
-            )
-
-        if share_link.file.level == FileAsset.Level.SENSITIVE:
-            return error_response(
-                message='敏感文件禁止通过公开分享访问',
-                code=1003,
-                http_status=status.HTTP_403_FORBIDDEN,
-            )
-
-        # 校验链接有效性
-        if not share_link.is_active:
-            return error_response(message='分享链接已撤销', code=1008,
-                                  http_status=status.HTTP_403_FORBIDDEN)
-        if share_link.is_expired:
-            return error_response(message='分享链接已过期', code=1009,
-                                  http_status=status.HTTP_403_FORBIDDEN)
-        if share_link.is_view_limit_reached:
-            return error_response(message='分享链接访问次数已达上限', code=1010,
-                                  http_status=status.HTTP_403_FORBIDDEN)
-
-        # 增加访问次数
-        share_link.view_count = (share_link.view_count or 0) + 1
-        share_link.save(update_fields=['view_count'])
+        share_link, failure = self._consume_view(token)
+        if failure:
+            return self._share_error(failure)
 
         file_asset = share_link.file
         return success_response({
@@ -302,8 +276,22 @@ class FileShareLinkViewSet(
             )
             raise
 
-        share_link.view_count = (share_link.view_count or 0) + 1
-        share_link.save(update_fields=['view_count'])
+        share_link, failure = self._consume_view(token)
+        if failure:
+            record_download_audit(
+                request,
+                module='files',
+                object_type='FileShareLink',
+                object_id=share_link.id if share_link else '',
+                channel='share',
+                is_success=False,
+                response_status=(
+                    status.HTTP_404_NOT_FOUND
+                    if failure == 'missing'
+                    else status.HTTP_403_FORBIDDEN
+                ),
+            )
+            return self._share_error(failure)
         record_download_audit(
             request,
             module='files',
@@ -312,6 +300,55 @@ class FileShareLinkViewSet(
             channel='share',
         )
         return response
+
+    @staticmethod
+    @transaction.atomic
+    def _consume_view(token):
+        """Validate and consume one access atomically across access/download."""
+        try:
+            share_link = (
+                FileShareLink.objects.select_for_update()
+                .select_related('file')
+                .get(token=token)
+            )
+        except FileShareLink.DoesNotExist:
+            return None, 'missing'
+
+        if share_link.file.level == FileAsset.Level.SENSITIVE:
+            return share_link, 'sensitive'
+        if not share_link.is_active or share_link.file.is_deleted:
+            return share_link, 'revoked'
+        if share_link.is_expired:
+            return share_link, 'expired'
+        if share_link.is_view_limit_reached:
+            return share_link, 'limit'
+
+        share_link.view_count = (share_link.view_count or 0) + 1
+        share_link.save(update_fields=['view_count'])
+        return share_link, None
+
+    @staticmethod
+    def _share_error(failure):
+        if failure == 'missing':
+            return error_response(
+                message='分享链接不存在', code=1004,
+                http_status=status.HTTP_404_NOT_FOUND,
+            )
+        if failure == 'sensitive':
+            return error_response(
+                message='敏感文件禁止通过公开分享访问', code=1003,
+                http_status=status.HTTP_403_FORBIDDEN,
+            )
+        message, code = {
+            'revoked': ('分享链接已撤销', 1008),
+            'expired': ('分享链接已过期', 1009),
+            'limit': ('分享链接访问次数已达上限', 1010),
+        }[failure]
+        return error_response(
+            message=message,
+            code=code,
+            http_status=status.HTTP_403_FORBIDDEN,
+        )
 
     @staticmethod
     def _can_manage(user, share_link):

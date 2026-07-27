@@ -12,6 +12,7 @@ class MemberSkillSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = MemberSkill
+        ref_name = 'NamedMemberSkill'
         fields = (
             'id', 'user', 'user_name', 'name',
             'level', 'certified', 'created_at',

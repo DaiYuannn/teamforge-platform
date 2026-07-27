@@ -436,7 +436,7 @@ async function saveSchedule(): Promise<void> {
       const report = await createCustomReport({
         name: form.name.trim(),
         description: form.description.trim(),
-        report_type: form.dataSource,
+        report_type: 'summary',
         config: {
           data_source: form.dataSource,
           group_by: form.groupBy,

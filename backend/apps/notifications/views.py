@@ -34,6 +34,8 @@ class NotificationViewSet(MultiSerializerMixin, ReadOnlyModelViewSet):
 
     def get_queryset(self):
         """只返回当前用户的通知"""
+        if getattr(self, 'swagger_fake_view', False):
+            return Notification.objects.none()
         queryset = Notification.objects.select_related('recipient', 'sender').filter(
             recipient=self.request.user,
             channel=Notification.Channel.INAPP,

@@ -9,11 +9,14 @@
 from decimal import Decimal
 
 from django.db.models import Sum, Q
+from drf_spectacular.utils import OpenApiParameter, extend_schema, inline_serializer
+from rest_framework import serializers
 from rest_framework.views import APIView
 
 from common.permissions import IsInternalTeamMember
 from common.response import success_response
 from common.mixins import MultiSerializerMixin
+from common.schema import success_response_schema
 from .models import User
 
 
@@ -26,6 +29,38 @@ class MemberStatisticsView(APIView):
     """
     permission_classes = [IsInternalTeamMember]
 
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name='user',
+                type=int,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description='按成员 ID 筛选。',
+            ),
+        ],
+        responses={
+            200: success_response_schema(
+                'MemberStatisticsResponse',
+                inline_serializer(
+                    name='MemberStatisticsItem',
+                    fields={
+                        'user_id': serializers.IntegerField(),
+                        'user_name': serializers.CharField(),
+                        'email': serializers.EmailField(),
+                        'global_role': serializers.CharField(),
+                        'total_tasks': serializers.IntegerField(),
+                        'completed_tasks': serializers.IntegerField(),
+                        'task_completion_rate': serializers.FloatField(),
+                        'project_participation_count': serializers.IntegerField(),
+                        'contribution_score': serializers.FloatField(),
+                        'attendance_rate': serializers.FloatField(),
+                    },
+                    many=True,
+                ),
+            ),
+        },
+    )
     def get(self, request):
         from apps.tasks.models import Task
         from apps.projects.models import ProjectMember

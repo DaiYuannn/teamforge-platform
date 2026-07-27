@@ -8,10 +8,13 @@ from decimal import Decimal
 
 from django.db.models import Count, Q, Sum
 from django.utils import timezone
+from drf_spectacular.utils import OpenApiParameter, extend_schema, inline_serializer
+from rest_framework import serializers
 from rest_framework.views import APIView
 
 from common.response import success_response, error_response
 from common.permissions import IsInternalTeamMember
+from common.schema import success_response_schema
 from apps.projects.models import Project, ProjectMember, ProjectStageLog
 from apps.tasks.models import Task
 from apps.finance.models import FinanceBudget, FinanceExpense
@@ -30,6 +33,102 @@ class SmartReviewView(APIView):
     # 智能复盘会返回经费汇总，必须与财务模块保持同一内部数据域。
     permission_classes = [IsInternalTeamMember]
 
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name='project_id',
+                type=int,
+                location=OpenApiParameter.QUERY,
+                required=True,
+                description='待复盘的项目 ID。',
+            ),
+        ],
+        responses={
+            200: success_response_schema(
+                'ProjectSmartReviewResponse',
+                inline_serializer(
+                    name='ProjectSmartReviewData',
+                    fields={
+                        'project_id': serializers.IntegerField(),
+                        'project_name': serializers.CharField(),
+                        'generated_at': serializers.DateTimeField(),
+                        'summary': serializers.CharField(),
+                        'achievements': inline_serializer(
+                            name='ProjectSmartReviewAchievement',
+                            fields={
+                                'competition_name': serializers.CharField(),
+                                'level': serializers.CharField(),
+                                'level_display': serializers.CharField(),
+                                'award_level': serializers.CharField(),
+                            },
+                            many=True,
+                        ),
+                        'problem_areas': inline_serializer(
+                            name='ProjectSmartReviewProblemArea',
+                            fields={
+                                'area': serializers.CharField(),
+                                'label': serializers.CharField(),
+                                'detail': serializers.CharField(),
+                            },
+                            many=True,
+                        ),
+                        'lessons': serializers.ListField(
+                            child=serializers.CharField(),
+                        ),
+                        'improvements': serializers.ListField(
+                            child=serializers.CharField(),
+                        ),
+                        'task_statistics': inline_serializer(
+                            name='ProjectSmartReviewTaskStatistics',
+                            fields={
+                                'total': serializers.IntegerField(),
+                                'done': serializers.IntegerField(),
+                                'overdue': serializers.IntegerField(),
+                                'cancelled': serializers.IntegerField(),
+                                'completion_rate': serializers.FloatField(),
+                            },
+                        ),
+                        'finance_summary': inline_serializer(
+                            name='ProjectSmartReviewFinanceSummary',
+                            fields={
+                                'has_budget': serializers.BooleanField(),
+                                'total_expense': serializers.FloatField(),
+                                'expense_count': serializers.IntegerField(),
+                                'total_income': serializers.FloatField(required=False),
+                                'used_amount': serializers.FloatField(required=False),
+                                'utilization': serializers.FloatField(required=False),
+                            },
+                        ),
+                        'team_performance': inline_serializer(
+                            name='ProjectSmartReviewTeamPerformance',
+                            fields={
+                                'user_id': serializers.IntegerField(),
+                                'user_name': serializers.CharField(),
+                                'role_in_project': serializers.CharField(),
+                                'task_total': serializers.IntegerField(),
+                                'task_done': serializers.IntegerField(),
+                                'contribution_count': serializers.IntegerField(),
+                                'completion_rate': serializers.FloatField(),
+                            },
+                            many=True,
+                        ),
+                        'timeline': inline_serializer(
+                            name='ProjectSmartReviewTimelineEvent',
+                            fields={
+                                'from_stage': serializers.CharField(required=False),
+                                'to_stage': serializers.CharField(required=False),
+                                'note': serializers.CharField(required=False),
+                                'event': serializers.CharField(required=False),
+                                'label': serializers.CharField(required=False),
+                                'date': serializers.CharField(allow_null=True),
+                            },
+                            many=True,
+                        ),
+                    },
+                ),
+            ),
+        },
+    )
     def get(self, request):
         project_id = request.query_params.get('project_id')
         if not project_id:

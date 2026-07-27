@@ -56,7 +56,7 @@ $env:DOCKER_BUILDKIT=1
 |------|------|------|------|
 | postgres | postgres:16-alpine | 5432 | 数据库 |
 | redis | redis:7-alpine | 6379 | 缓存 / Celery broker |
-| backend | 自构建 (python:3.11-slim) | 8000 | Django runserver 热重载 |
+| backend | 自构建 (python:3.10-bookworm) | 8000 | Django runserver 热重载 |
 | frontend | 自构建 (node:20-alpine) | 3000 | Vite 开发服务器 HMR |
 | nginx | nginx:alpine | 80 | 反向代理统一入口 |
 
@@ -106,7 +106,7 @@ docker compose exec backend python manage.py createsuperuser
 |------|------|------|------|
 | postgres | postgres:16-alpine | 不暴露 | 数据库 |
 | redis | redis:7-alpine | 不暴露 | 缓存 / Celery broker |
-| backend | 自构建 | 8000(内部) | gunicorn + migrate + collectstatic |
+| backend | 自构建 | 8000(内部) | gunicorn；部署脚本执行 migrate + collectstatic |
 | celery-worker | 同 backend | - | 默认启动，执行异步任务与报表生成 |
 | celery-beat | 同 backend | - | 默认启动，调度提醒与定时报表 |
 | frontend | 自构建 | - | 构建产物输出到共享卷后退出 |
@@ -124,15 +124,18 @@ bash start-prod.sh
 .\start-prod.ps1
 ```
 
-脚本会自动：检查/生成生产环境变量 → 构建镜像 → 启动服务。
+脚本会自动：检查/生成生产环境变量 → 构建镜像 → 启动数据库、Redis 与后端 → 执行迁移和静态资源收集 → 启动其余服务。
 
 **方式二：手动命令**
 
 ```bash
 cp env/backend.prod.env.example env/backend.prod.env
 # ⚠️ 编辑 env/backend.prod.env，修改 DJANGO_SECRET_KEY、DB_PASSWORD、FIELD_ENCRYPTION_KEY
-docker compose -f docker-compose.prod.yml build
-docker compose -f docker-compose.prod.yml up -d
+docker compose --env-file env/backend.prod.env -f docker-compose.prod.yml build
+docker compose --env-file env/backend.prod.env -f docker-compose.prod.yml up -d postgres redis backend
+docker compose --env-file env/backend.prod.env -f docker-compose.prod.yml exec -T backend python manage.py migrate --noinput
+docker compose --env-file env/backend.prod.env -f docker-compose.prod.yml exec -T backend python manage.py collectstatic --noinput
+docker compose --env-file env/backend.prod.env -f docker-compose.prod.yml up -d
 ```
 
 ### Celery Worker 与 Beat
@@ -140,8 +143,8 @@ docker compose -f docker-compose.prod.yml up -d
 Celery 已列入后端标准依赖，生产编排会默认启动 Worker 与 Beat。部署后应确认两个服务均为健康运行状态：
 
 ```bash
-docker compose -f docker-compose.prod.yml up -d celery-worker celery-beat
-docker compose -f docker-compose.prod.yml ps celery-worker celery-beat
+docker compose --env-file env/backend.prod.env -f docker-compose.prod.yml up -d celery-worker celery-beat
+docker compose --env-file env/backend.prod.env -f docker-compose.prod.yml ps celery-worker celery-beat
 ```
 
 ### 启用 HTTPS
@@ -149,7 +152,7 @@ docker compose -f docker-compose.prod.yml ps celery-worker celery-beat
 1. 将证书放入 `nginx/ssl/`（`cert.pem` 与 `key.pem`）
 2. 取消 `nginx/default.prod.conf` 中 HTTPS `server` 块的注释
 3. 在 `env/backend.prod.env` 中设置 `SECURE_SSL_REDIRECT=True`
-4. 重启 nginx：`docker compose -f docker-compose.prod.yml restart nginx`
+4. 重启 nginx：`docker compose --env-file env/backend.prod.env -f docker-compose.prod.yml restart nginx`
 
 ---
 
@@ -229,30 +232,32 @@ docker compose down -v
 
 ### 生产环境
 
+以下命令适用于已经完成首次迁移和静态资源收集的环境；首次部署请使用上方一键脚本或完整手动流程。
+
 ```bash
 # 启动 / 停止
-docker compose -f docker-compose.prod.yml up -d
-docker compose -f docker-compose.prod.yml down
+docker compose --env-file env/backend.prod.env -f docker-compose.prod.yml up -d
+docker compose --env-file env/backend.prod.env -f docker-compose.prod.yml down
 
 # 查看日志
-docker compose -f docker-compose.prod.yml logs -f
+docker compose --env-file env/backend.prod.env -f docker-compose.prod.yml logs -f
 
 # 重新构建并更新某个服务
-docker compose -f docker-compose.prod.yml build backend
-docker compose -f docker-compose.prod.yml up -d backend
+docker compose --env-file env/backend.prod.env -f docker-compose.prod.yml build backend
+docker compose --env-file env/backend.prod.env -f docker-compose.prod.yml up -d backend
 
 # 检查 Celery
-docker compose -f docker-compose.prod.yml ps celery-worker celery-beat
+docker compose --env-file env/backend.prod.env -f docker-compose.prod.yml ps celery-worker celery-beat
 
 # 查看服务状态
-docker compose -f docker-compose.prod.yml ps
+docker compose --env-file env/backend.prod.env -f docker-compose.prod.yml ps
 ```
 
 ---
 
 ## 七、关键设计说明
 
-1. **入口点脚本内嵌于 `/usr/local/bin`**：开发模式挂载 `../backend:/app` 会覆盖 `/app` 下的内容，故 entrypoint 放在 `/usr/local/bin/docker-entrypoint.sh` 以避免被覆盖。它在启动前执行 `migrate`，生产模式额外执行 `collectstatic`。
+1. **生产初始化显式执行**：生产部署脚本先启动 PostgreSQL、Redis 与 backend，再在 backend 容器内执行 `migrate --noinput` 和 `collectstatic --noinput`；只有两项成功后才启动 Celery、前端构建器与 Nginx。
 
 2. **前端构建产物共享**：生产环境中 `frontend` 服务（`target: build` 阶段）将 `dist/` 拷贝到 `frontend_dist` 共享卷后退出，`nginx` 通过 `service_completed_successfully` 依赖条件确保在其完成后启动并托管。
 

@@ -41,7 +41,7 @@ class SensitiveDataSerializer(serializers.ModelSerializer):
             'key_version', 'created_at', 'updated_at',
         )
 
-    def get_masked_value(self, obj):
+    def get_masked_value(self, obj) -> str:
         """脱敏显示：先解密再脱敏"""
         if not obj.is_encrypted or not obj.encrypted_content:
             return '***'
@@ -51,7 +51,7 @@ class SensitiveDataSerializer(serializers.ModelSerializer):
         except Exception:
             return '***'
 
-    def get_has_file(self, obj):
+    def get_has_file(self, obj) -> bool:
         """是否有附件"""
         return obj.file_attachment_id is not None
 
@@ -73,7 +73,7 @@ class SensitiveDataDetailSerializer(serializers.ModelSerializer):
         )
         read_only_fields = fields
 
-    def get_plaintext(self, obj):
+    def get_plaintext(self, obj) -> str:
         """返回明文（仅在审批通过上下文中使用）"""
         if not obj.is_encrypted:
             return obj.encrypted_content
@@ -160,7 +160,7 @@ class SensitiveAccessRequestSerializer(serializers.ModelSerializer):
             'approved_at', 'access_expires_at', 'viewed_at', 'created_at',
         )
 
-    def get_has_attachment(self, obj):
+    def get_has_attachment(self, obj) -> bool:
         return obj.sensitive_data.file_attachment_id is not None
 
 

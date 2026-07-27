@@ -31,13 +31,18 @@ export interface PaginationParams {
 
 // 用户角色
 export type UserRole = 'sys_admin' | 'teacher' | 'member' | 'sens_approver'
+export type ThemeMode = 'light' | 'dark' | 'system' | 'schedule'
 
 export interface UserPreferences {
   primary_color: string
   theme_color?: string
+  theme_mode: ThemeMode
+  schedule_start: string
+  schedule_end: string
   default_landing: 'dashboard' | 'projects' | 'tasks' | 'notifications'
   sidebar_collapsed: boolean
   notification_sound: boolean
+  language?: 'zh-CN' | 'en'
   items_per_page: 10 | 20 | 50
   default_scope?: 'mine' | 'team'
   sidebar_order?: string[]
@@ -81,6 +86,7 @@ export interface User {
 export interface LoginParams {
   email: string
   password: string
+  remember_me?: boolean
 }
 
 // 登录响应数据

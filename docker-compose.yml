@@ -4,6 +4,10 @@ services:
     restart: unless-stopped
     env_file:
       - .env.docker
+    environment:
+      POSTGRES_DB: ${DB_NAME:-team_management}
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
     volumes:
       - docker_pg_data:/var/lib/postgresql/data
     healthcheck:
@@ -15,6 +19,8 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    ports:
+      - "127.0.0.1:6379:6379"
     volumes:
       - docker_redis_data:/data
     healthcheck:
@@ -36,13 +42,14 @@ services:
     volumes:
       - docker_media:/app/media
       - docker_static:/app/staticfiles
+      - docker_demo_backups:/app/demo_backups
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/api/v1/auth/login/ >/dev/null"]
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/api/v1/common/health/ >/dev/null"]
       interval: 15s
       timeout: 5s
       retries: 10
@@ -60,6 +67,7 @@ services:
     volumes:
       - docker_media:/app/media
       - docker_static:/app/staticfiles
+      - docker_demo_backups:/app/demo_backups
     depends_on:
       db:
         condition: service_healthy
@@ -79,6 +87,7 @@ services:
     volumes:
       - docker_media:/app/media
       - docker_static:/app/staticfiles
+      - docker_demo_backups:/app/demo_backups
     depends_on:
       db:
         condition: service_healthy
@@ -116,4 +125,5 @@ volumes:
   docker_redis_data:
   docker_media:
   docker_static:
+  docker_demo_backups:
   docker_frontend_dist:

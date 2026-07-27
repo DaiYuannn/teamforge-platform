@@ -1,6 +1,6 @@
 <template>
   <div class="page-container pending-approve-page">
-    <PageHeader title="待我审批" subtitle="敏感资料访问审批队列">
+    <PageHeader title="访问审批队列" subtitle="敏感资料限时查看与下载授权">
       <template #meta>
         <span class="page-meta">{{ pendingList.length }} 项待处理</span>
       </template>
@@ -122,7 +122,7 @@
       </div>
       <el-form class="decision-form" :model="approveForm" label-position="top">
         <el-form-item label="有效时长（小时）">
-          <el-input-number v-model="approveForm.expire_hours" :min="1" :max="72" controls-position="right" />
+          <el-input-number v-model="approveForm.expire_hours" :min="1" :max="24" controls-position="right" />
         </el-form-item>
         <el-form-item label="审批意见">
           <el-input v-model="approveForm.approval_opinion" type="textarea" :rows="2" placeholder="可选" />

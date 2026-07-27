@@ -263,15 +263,15 @@ function submitAdvance(): void {
 }
 
 .phase-item[data-state='complete'] .phase-marker > span,
-.phase-item[data-state='current'] .phase-marker > span { color: #fff; background: var(--color-primary); border-color: var(--color-primary); }
+.phase-item[data-state='current'] .phase-marker > span { color: #fff; background: var(--color-primary-fill); border-color: var(--color-primary-fill); }
 .phase-item[data-state='current'] .phase-marker > span { box-shadow: 0 0 0 3px var(--color-primary-soft); }
 .phase-item > strong { display: block; margin-top: 7px; overflow: hidden; color: var(--color-text-regular); font-size: 11px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
 .phase-item > small { display: block; margin-top: 1px; color: var(--color-text-muted); font-size: 9px; }
 .phase-item[data-state='current'] > strong { color: var(--color-primary); font-weight: 600; }
 
-.stage-overview--abnormal { background: var(--danger-light); border-color: #efcfcd; }
+.stage-overview--abnormal { background: var(--danger-light); border-color: var(--danger-border); }
 .stage-overview--abnormal .stage-heading strong { color: var(--color-danger); }
-.abnormal-copy { margin-top: 12px; color: #744343; font-size: 12px; line-height: 1.55; }
+.abnormal-copy { margin-top: 12px; color: var(--danger-text); font-size: 12px; line-height: 1.55; }
 
 .stage-history { margin-top: 18px; padding: 18px; background: var(--color-surface); border: 1px solid var(--color-border-light); border-radius: var(--radius-md); }
 .stage-history > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 18px; }

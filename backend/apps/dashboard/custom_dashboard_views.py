@@ -7,6 +7,9 @@ from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
+from django.db.models import Count, Sum
+from django.utils import timezone
+from datetime import timedelta
 
 from common.response import success_response, error_response
 from .custom_dashboard_models import CustomDashboard
@@ -25,6 +28,8 @@ class CustomDashboardViewSet(ModelViewSet):
 
     def get_queryset(self):
         """仅返回当前用户的看板"""
+        if getattr(self, 'swagger_fake_view', False):
+            return CustomDashboard.objects.none()
         return CustomDashboard.objects.filter(user=self.request.user)
 
     def perform_create(self, serializer):
@@ -100,3 +105,114 @@ class CustomDashboardViewSet(ModelViewSet):
             CustomDashboardSerializer(dashboard).data,
             message='success',
         )
+
+    @action(detail=True, methods=['get'])
+    def data(self, request, pk=None):
+        dashboard = self.get_object()
+        config = dashboard.config or {}
+        widgets = config.get('widgets') or ['signals', 'priority']
+        project_id = config.get('project_id')
+        range_days = {'week': 7, 'month': 30, 'quarter': 90}.get(
+            config.get('date_range'), 30,
+        )
+        since = timezone.now() - timedelta(days=range_days)
+        payload = {}
+        for widget in widgets:
+            if not isinstance(widget, str):
+                continue
+            builder = getattr(self, f'_build_{widget}', None)
+            if builder:
+                payload[widget] = builder(project_id=project_id, since=since)
+        return success_response({
+            'dashboard': CustomDashboardSerializer(dashboard).data,
+            'generated_at': timezone.now().isoformat(),
+            'widgets': payload,
+        })
+
+    @staticmethod
+    def _build_signals(*, project_id, since):
+        from apps.projects.models import Project
+        from apps.tasks.models import Task
+        from apps.users.models import User
+
+        projects = Project.objects.all()
+        tasks = Task.objects.all()
+        if project_id:
+            projects = projects.filter(pk=project_id)
+            tasks = tasks.filter(project_id=project_id)
+        return {
+            'metrics': [
+                {'label': 'Projects', 'value': projects.count(), 'route': '/projects'},
+                {'label': 'Active projects', 'value': projects.filter(status='active').count(), 'route': '/projects?status=active'},
+                {'label': 'Pending tasks', 'value': tasks.exclude(status='done').count(), 'route': '/tasks'},
+                {'label': 'Active members', 'value': User.objects.filter(is_active=True).count(), 'route': '/members'},
+            ],
+        }
+
+    @staticmethod
+    def _build_priority(*, project_id, since):
+        from apps.tasks.models import Task
+
+        tasks = Task.objects.exclude(status=Task.Status.DONE).select_related(
+            'project', 'assignee',
+        )
+        if project_id:
+            tasks = tasks.filter(project_id=project_id)
+        tasks = tasks.order_by('deadline', '-priority')[:20]
+        return {
+            'total': tasks.count(),
+            'items': [{
+                'id': task.id,
+                'title': task.title,
+                'project_name': task.project.name,
+                'assignee_name': task.assignee.name if task.assignee else '',
+                'status': task.status,
+                'deadline': task.deadline.isoformat() if task.deadline else None,
+                'route': f'/tasks?task={task.id}',
+            } for task in tasks],
+        }
+
+    @staticmethod
+    def _build_delivery(*, project_id, since):
+        from apps.projects.models import Project
+
+        projects = Project.objects.annotate(task_count=Count('tasks')).order_by(
+            '-updated_at',
+        )
+        if project_id:
+            projects = projects.filter(pk=project_id)
+        return {
+            'items': [{
+                'id': project.id,
+                'name': project.name,
+                'code': project.code,
+                'stage': project.get_current_stage_display(),
+                'status': project.get_status_display(),
+                'task_count': project.task_count,
+                'updated_at': project.updated_at.isoformat(),
+                'route': f'/projects/{project.id}',
+            } for project in projects[:20]],
+        }
+
+    @staticmethod
+    def _build_business(*, project_id, since):
+        from apps.competitions.models import Competition
+        from apps.finance.models import FinanceExpense
+        from apps.intellectual_property.models import IntellectualPropertyApplication
+
+        expenses = FinanceExpense.objects.filter(expense_date__gte=since.date())
+        competitions = Competition.objects.all()
+        applications = IntellectualPropertyApplication.objects.all()
+        if project_id:
+            expenses = expenses.filter(project_id=project_id)
+            competitions = competitions.filter(project_id=project_id)
+            applications = applications.filter(related_project_id=project_id)
+        total = expenses.aggregate(value=Sum('amount'))['value'] or 0
+        return {
+            'metrics': [
+                {'label': 'Period expense', 'value': float(total), 'format': 'currency', 'route': '/finance'},
+                {'label': 'Competitions', 'value': competitions.count(), 'route': '/competitions'},
+                {'label': 'Awarded', 'value': competitions.filter(is_awarded=True).count(), 'route': '/competitions'},
+                {'label': 'IP applications', 'value': applications.count(), 'route': '/intellectual-property'},
+            ],
+        }

@@ -3,7 +3,7 @@
 """
 from rest_framework.permissions import BasePermission, SAFE_METHODS
 
-from common.permissions import RolePermission
+from common.permissions import RolePermission, user_has_custom_permission
 
 
 class IsUserManager(RolePermission):
@@ -16,9 +16,16 @@ class IsUserManager(RolePermission):
             return False
         # list / retrieve 允许老师和管理员查看用户列表
         if request.method in SAFE_METHODS:
-            return request.user.global_role in ['sys_admin', 'teacher']
+            return (
+                request.user.global_role in ['sys_admin', 'teacher']
+                or user_has_custom_permission(request.user, 'member.view')
+                or user_has_custom_permission(request.user, 'member.manage')
+            )
         # 写操作仅限系统管理员
-        return request.user.global_role == 'sys_admin'
+        return (
+            request.user.global_role == 'sys_admin'
+            or user_has_custom_permission(request.user, 'member.manage')
+        )
 
 
 class IsSelfOrAdmin(BasePermission):

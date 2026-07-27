@@ -39,10 +39,10 @@ class ImportTaskSerializer(serializers.ModelSerializer):
             'created_by', 'created_at', 'updated_at',
         )
 
-    def get_file_name(self, obj):
+    def get_file_name(self, obj) -> str:
         return _display_file_name(obj.file_path)
 
-    def get_can_rollback(self, obj):
+    def get_can_rollback(self, obj) -> bool:
         return obj.status == ImportTask.Status.CONFIRMED and bool(obj.snapshot)
 
 
@@ -63,10 +63,10 @@ class ImportTaskListSerializer(serializers.ModelSerializer):
         )
         read_only_fields = fields
 
-    def get_file_name(self, obj):
+    def get_file_name(self, obj) -> str:
         return _display_file_name(obj.file_path)
 
-    def get_can_rollback(self, obj):
+    def get_can_rollback(self, obj) -> bool:
         return obj.status == ImportTask.Status.CONFIRMED and bool(obj.snapshot)
 
 

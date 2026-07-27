@@ -303,7 +303,7 @@
         </div>
 
         <div v-if="total > 0" class="pagination-wrapper">
-          <el-pagination
+          <AccessiblePagination
             v-model:current-page="queryParams.page"
             v-model:page-size="queryParams.page_size"
             :total="total"
@@ -368,6 +368,7 @@ import {
 } from '@/utils/format'
 import { COMPETITION_LEVEL_MAP, COMPETITION_STATUS_MAP } from '@/utils/constants'
 import { useDevice } from '@/composables/useDevice'
+import { positiveQueryId } from '@/utils/globalSearch'
 import type { Competition, Project } from '@/types'
 import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
@@ -551,9 +552,19 @@ async function handleDelete(row: CompetitionRow): Promise<void> {
   }
 }
 
-onMounted(() => {
-  loadProjectOptions()
-  loadData()
+onMounted(async () => {
+  await Promise.all([loadProjectOptions(), loadData()])
+  const competitionId = positiveQueryId(route.query.competition_id)
+  if (!competitionId) return
+  detailLoadingId.value = competitionId
+  try {
+    selectedCompetition.value = await getCompetition(competitionId)
+    detailDialogVisible.value = true
+  } catch {
+    // 请求错误已由拦截器处理。
+  } finally {
+    detailLoadingId.value = null
+  }
 })
 </script>
 

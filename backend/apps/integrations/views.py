@@ -4,6 +4,8 @@
 - IntegrationLogViewSet: 集成日志查看（只读）
 - BotPushTestView: 群机器人推送测试
 """
+from drf_spectacular.utils import extend_schema, inline_serializer
+from rest_framework import serializers
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
@@ -12,6 +14,7 @@ from rest_framework.viewsets import ModelViewSet, ReadOnlyModelViewSet
 from common.response import success_response, error_response
 from common.mixins import MultiSerializerMixin, MultiPermissionMixin
 from common.permissions import IsSysAdmin
+from common.schema import success_response_schema
 from apps.audit.models import OperationLog
 from .models import IntegrationConfig, IntegrationLog, WebhookConfig
 from .serializers import (
@@ -139,6 +142,33 @@ class BotPushTestView(APIView):
     """
     permission_classes = [IsAuthenticated, IsSysAdmin]
 
+    @extend_schema(
+        request=inline_serializer(
+            name='BotPushTestRequest',
+            fields={
+                'title': serializers.CharField(required=False),
+                'content': serializers.CharField(required=False),
+                'markdown': serializers.CharField(
+                    required=False,
+                    allow_null=True,
+                    allow_blank=True,
+                ),
+            },
+        ),
+        responses={
+            200: success_response_schema(
+                'BotPushTestResponse',
+                inline_serializer(
+                    name='BotPushTestResult',
+                    fields={
+                        'total': serializers.IntegerField(),
+                        'success': serializers.IntegerField(),
+                        'failed': serializers.IntegerField(),
+                    },
+                ),
+            ),
+        },
+    )
     def post(self, request):
         from .services import BotPushService
 

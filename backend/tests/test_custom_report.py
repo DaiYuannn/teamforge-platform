@@ -3,6 +3,8 @@ N49 自定义报表测试
 - CRUD、generate（根据 config 生成数据）、报表类型
 """
 import pytest
+from datetime import datetime
+from django.utils import timezone
 from rest_framework.test import APIClient
 
 from apps.exports.custom_report_models import CustomReport
@@ -241,6 +243,62 @@ class TestCustomReport:
         assert resp.status_code == 200
         data = extract_data(resp)
         assert 'message' in data['data']['summary']
+
+    def test_comparison_report_adds_rank_share_and_average(
+        self, member_client, make_project, make_task
+    ):
+        first = make_project(name='Comparison A')
+        second = make_project(name='Comparison B')
+        make_task(project=first)
+        make_task(project=first)
+        make_task(project=second)
+        report = CustomReport.objects.create(
+            name='Comparison semantics', report_type='comparison',
+            config={
+                'data_source': 'task', 'group_by': 'project',
+                'chart_type': 'bar',
+            },
+            created_by=member_client.user,
+        )
+
+        response = member_client.post(f'{CUSTOM_REPORT_URL}{report.id}/generate/')
+
+        assert response.status_code == 200, response.json()
+        data = extract_data(response)['data']
+        assert data['report_type'] == 'comparison'
+        assert data['groups'][0]['rank'] == 1
+        assert data['groups'][0]['share_percent'] > data['groups'][1]['share_percent']
+        assert data['comparison']['average'] == 1.5
+
+    def test_trend_report_groups_records_by_month(
+        self, member_client, make_project, make_task
+    ):
+        project = make_project()
+        january = make_task(project=project)
+        february = make_task(project=project)
+        from apps.tasks.models import Task
+        Task.objects.filter(pk=january.pk).update(
+            created_at=timezone.make_aware(datetime(2026, 1, 15, 9, 0)),
+        )
+        Task.objects.filter(pk=february.pk).update(
+            created_at=timezone.make_aware(datetime(2026, 2, 15, 9, 0)),
+        )
+        report = CustomReport.objects.create(
+            name='Trend semantics', report_type='trend',
+            config={
+                'data_source': 'task', 'group_by': 'status',
+                'chart_type': 'line', 'filters': {'project_id': project.id},
+            },
+            created_by=member_client.user,
+        )
+
+        response = member_client.post(f'{CUSTOM_REPORT_URL}{report.id}/generate/')
+
+        assert response.status_code == 200, response.json()
+        data = extract_data(response)['data']
+        assert data['report_type'] == 'trend'
+        assert data['group_by'] == 'month'
+        assert [group['label'] for group in data['groups']] == ['2026-01', '2026-02']
 
 
 @pytest.mark.model

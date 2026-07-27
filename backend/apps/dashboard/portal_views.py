@@ -1,9 +1,12 @@
 """公开门户设置、逐项发布和成员授权接口。"""
+from drf_spectacular.utils import extend_schema
+from rest_framework import serializers
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
 from common.permissions import IsTeacherOrAdmin
 from common.response import error_response, success_response
+from common.schema import success_response_schema
 
 from .portal_models import PortalPublication, PortalSettings
 from .portal_serializers import (
@@ -11,6 +14,34 @@ from .portal_serializers import (
     PortalPublicationSerializer,
     PortalSettingsSerializer,
 )
+
+
+class PortalManagementItemSerializer(serializers.Serializer):
+    content_type = serializers.CharField()
+    object_id = serializers.IntegerField()
+    is_public = serializers.BooleanField()
+    is_featured = serializers.BooleanField()
+    member_consent = serializers.BooleanField()
+    display_order = serializers.IntegerField()
+    custom_title = serializers.CharField(allow_blank=True)
+    custom_summary = serializers.CharField(allow_blank=True)
+    image_url = serializers.CharField(allow_blank=True)
+    name = serializers.CharField()
+    code = serializers.CharField(allow_blank=True)
+    secondary = serializers.CharField(allow_blank=True)
+    status = serializers.CharField()
+
+
+class PortalManagementDataSerializer(serializers.Serializer):
+    settings = PortalSettingsSerializer()
+    projects = PortalManagementItemSerializer(many=True)
+    ip_applications = PortalManagementItemSerializer(many=True)
+    members = PortalManagementItemSerializer(many=True)
+
+
+class PortalMemberStateSerializer(serializers.Serializer):
+    consent = serializers.BooleanField()
+    is_public = serializers.BooleanField()
 
 
 def get_portal_settings():
@@ -36,6 +67,13 @@ def _publication_payload(content_type, object_id, publication_map):
 class PortalManagementView(APIView):
     permission_classes = [IsTeacherOrAdmin]
 
+    @extend_schema(
+        responses={
+            200: success_response_schema(
+                'PortalManagementResponse', PortalManagementDataSerializer(),
+            ),
+        },
+    )
     def get(self, request):
         from apps.intellectual_property.models import IntellectualPropertyApplication
         from apps.projects.models import Project
@@ -93,6 +131,14 @@ class PortalManagementView(APIView):
             'members': members,
         })
 
+    @extend_schema(
+        request=PortalSettingsSerializer(partial=True),
+        responses={
+            200: success_response_schema(
+                'PortalSettingsUpdateResponse', PortalSettingsSerializer(),
+            ),
+        },
+    )
     def patch(self, request):
         instance = get_portal_settings()
         serializer = PortalSettingsSerializer(instance, data=request.data, partial=True)
@@ -117,6 +163,15 @@ class PortalPublicationView(APIView):
             return User.objects.filter(pk=object_id).exists()
         return False
 
+    @extend_schema(
+        request=PortalPublicationSerializer(partial=True),
+        responses={
+            200: success_response_schema(
+                'PortalPublicationUpdateResponse',
+                PortalPublicationSerializer(),
+            ),
+        },
+    )
     def patch(self, request, content_type, object_id):
         valid_types = {choice[0] for choice in PortalPublication.ContentType.choices}
         if content_type not in valid_types or not self._object_exists(content_type, object_id):
@@ -137,6 +192,13 @@ class PortalPublicationView(APIView):
 class PortalMemberConsentView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        responses={
+            200: success_response_schema(
+                'PortalMemberConsentResponse', PortalMemberStateSerializer(),
+            ),
+        },
+    )
     def get(self, request):
         publication = PortalPublication.objects.filter(
             content_type=PortalPublication.ContentType.MEMBER,
@@ -147,6 +209,14 @@ class PortalMemberConsentView(APIView):
             'is_public': publication.is_public if publication else False,
         })
 
+    @extend_schema(
+        request=PortalMemberConsentSerializer,
+        responses={
+            200: success_response_schema(
+                'PortalMemberConsentUpdateResponse', PortalMemberStateSerializer(),
+            ),
+        },
+    )
     def patch(self, request):
         serializer = PortalMemberConsentSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)

@@ -11,6 +11,8 @@ export {}
 /* prettier-ignore */
 declare module 'vue' {
   export interface GlobalComponents {
+    AccessiblePagination: typeof import('./components/AccessiblePagination.vue')['default']
+    AccountThemeToggle: typeof import('./components/AccountThemeToggle.vue')['default']
     AvatarWithName: typeof import('./components/AvatarWithName.vue')['default']
     ElAlert: typeof import('element-plus/es')['ElAlert']
     ElAside: typeof import('element-plus/es')['ElAside']
@@ -58,6 +60,7 @@ declare module 'vue' {
     ElRate: typeof import('element-plus/es')['ElRate']
     ElResult: typeof import('element-plus/es')['ElResult']
     ElRow: typeof import('element-plus/es')['ElRow']
+    ElSegmented: typeof import('element-plus/es')['ElSegmented']
     ElSelect: typeof import('element-plus/es')['ElSelect']
     ElSkeleton: typeof import('element-plus/es')['ElSkeleton']
     ElSkeletonItem: typeof import('element-plus/es')['ElSkeletonItem']
@@ -75,6 +78,7 @@ declare module 'vue' {
     ElTimePicker: typeof import('element-plus/es')['ElTimePicker']
     ElTimeSelect: typeof import('element-plus/es')['ElTimeSelect']
     ElTooltip: typeof import('element-plus/es')['ElTooltip']
+    ElTree: typeof import('element-plus/es')['ElTree']
     ElUpload: typeof import('element-plus/es')['ElUpload']
     EmptyState: typeof import('./components/EmptyState.vue')['default']
     FileUploader: typeof import('./components/FileUploader.vue')['default']
@@ -82,6 +86,7 @@ declare module 'vue' {
     NotificationBell: typeof import('./components/NotificationBell.vue')['default']
     PageHeader: typeof import('./components/PageHeader.vue')['default']
     ProjectTimeline: typeof import('./components/ProjectTimeline.vue')['default']
+    QuickEntryPanel: typeof import('./components/QuickEntryPanel.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
     StageStepper: typeof import('./components/StageStepper.vue')['default']

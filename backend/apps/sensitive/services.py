@@ -140,7 +140,9 @@ class SensitiveDataService:
         :return: (success, data_or_message)
         """
         try:
-            request_obj = SensitiveAccessRequest.objects.get(id=request_id)
+            request_obj = SensitiveAccessRequest.objects.select_for_update().select_related(
+                'sensitive_data'
+            ).get(id=request_id)
         except SensitiveAccessRequest.DoesNotExist:
             return False, '访问申请不存在'
 
@@ -181,7 +183,9 @@ class SensitiveDataService:
         :return: (success, data_or_message)
         """
         try:
-            request_obj = SensitiveAccessRequest.objects.get(id=request_id)
+            request_obj = SensitiveAccessRequest.objects.select_for_update().select_related(
+                'sensitive_data'
+            ).get(id=request_id)
         except SensitiveAccessRequest.DoesNotExist:
             return False, '访问申请不存在'
 

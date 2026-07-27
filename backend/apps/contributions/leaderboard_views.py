@@ -5,11 +5,14 @@
 from django.db.models import Sum, Count, F, DecimalField
 from django.db.models.functions import Coalesce
 from decimal import Decimal
+from drf_spectacular.utils import OpenApiParameter, extend_schema, inline_serializer
+from rest_framework import serializers
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
 from common.response import success_response
 from common.project_access import scope_project_queryset
+from common.schema import success_response_schema
 from .models import Contribution
 
 
@@ -23,6 +26,43 @@ class ContributionLeaderboardView(APIView):
     """
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        parameters=[
+            OpenApiParameter('project', int, OpenApiParameter.QUERY, required=False),
+            OpenApiParameter('period', str, OpenApiParameter.QUERY, required=False),
+            OpenApiParameter(
+                'limit',
+                int,
+                OpenApiParameter.QUERY,
+                required=False,
+                description='仅返回排名靠前的指定人数；非正整数会被忽略。',
+            ),
+        ],
+        responses={
+            200: success_response_schema(
+                'ContributionLeaderboardResponse',
+                inline_serializer(
+                    name='ContributionLeaderboardData',
+                    fields={
+                        'total_members': serializers.IntegerField(),
+                        'leaderboard': inline_serializer(
+                            name='ContributionLeaderboardItem',
+                            fields={
+                                'rank': serializers.IntegerField(),
+                                'user_id': serializers.IntegerField(),
+                                'user_name': serializers.CharField(),
+                                'email': serializers.EmailField(),
+                                'global_role': serializers.CharField(),
+                                'contribution_score': serializers.FloatField(),
+                                'contribution_count': serializers.IntegerField(),
+                            },
+                            many=True,
+                        ),
+                    },
+                ),
+            ),
+        },
+    )
     def get(self, request):
         params = request.query_params
         project_id = params.get('project')

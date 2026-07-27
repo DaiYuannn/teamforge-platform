@@ -103,7 +103,9 @@ class IPApplicationViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelView
         - 项目成员/老师/管理员：返回 DetailSerializer（完整字段）
         - 非项目成员：返回 ListSerializer（公开字段）
         """
-        if self.action == 'retrieve':
+        if getattr(self, 'action', None) == 'retrieve':
+            if getattr(self, 'swagger_fake_view', False):
+                return IPApplicationDetailSerializer
             instance = self.get_object()
             if not _can_access_application(self.request.user, instance):
                 return IPApplicationListSerializer

@@ -12,7 +12,7 @@ from django.db.models import Q
 
 from common.response import success_response, error_response
 from common.mixins import MultiSerializerMixin, MultiPermissionMixin
-from common.permissions import IsProjectLeaderOrTeacherOrAdmin
+from common.permissions import IsProjectLeaderOrTeacherOrAdmin, user_has_custom_permission
 from .models import Task
 from .serializers import TaskSerializer, TaskListSerializer, TaskCreateSerializer
 from .services import task_service
@@ -165,7 +165,10 @@ class TaskViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet):
         task = self.get_object()
 
         user = request.user
-        if not task_service.can_access_status_action(task, user):
+        if not (
+            task_service.can_access_status_action(task, user)
+            or user_has_custom_permission(user, 'task.manage', project_id=task.project_id)
+        ):
             return error_response(message='无权修改此任务状态', code=1003,
                                   http_status=status.HTTP_403_FORBIDDEN)
 

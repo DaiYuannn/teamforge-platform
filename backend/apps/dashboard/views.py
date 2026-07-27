@@ -7,10 +7,13 @@ import subprocess
 from datetime import timedelta
 from django.conf import settings
 from django.utils import timezone
+from drf_spectacular.utils import extend_schema, inline_serializer
+from rest_framework import serializers
 from django.db.models import Sum, Count, Q
 from rest_framework.views import APIView
 
 from common.response import success_response
+from common.schema import success_response_schema
 from common.permissions import IsInternalTeamMember, IsTeacherOrAdmin
 from apps.projects.models import Project, ProjectMember
 from apps.tasks.models import Task
@@ -18,6 +21,113 @@ from apps.finance.models import FinanceBudget, FinanceExpense
 from apps.competitions.models import Competition
 from apps.users.models import User
 from apps.notifications.models import Announcement
+
+
+class DashboardNamedCountSerializer(serializers.Serializer):
+    name = serializers.CharField()
+    count = serializers.IntegerField()
+
+
+class DashboardProjectOverviewSerializer(serializers.Serializer):
+    total = serializers.IntegerField()
+    active = serializers.IntegerField()
+    paused = serializers.IntegerField()
+    closed = serializers.IntegerField()
+    awarded = serializers.IntegerField()
+    stage_distribution = serializers.DictField(
+        child=DashboardNamedCountSerializer(),
+    )
+
+
+class DashboardProjectFinanceSerializer(serializers.Serializer):
+    project_id = serializers.IntegerField()
+    project_name = serializers.CharField()
+    bonus_amount = serializers.DecimalField(max_digits=14, decimal_places=2)
+    other_income = serializers.DecimalField(max_digits=14, decimal_places=2)
+    used_amount = serializers.DecimalField(max_digits=14, decimal_places=2)
+    remaining_amount = serializers.DecimalField(max_digits=14, decimal_places=2)
+    status = serializers.CharField()
+    status_display = serializers.CharField()
+
+
+class DashboardFinanceOverviewSerializer(serializers.Serializer):
+    total_bonus = serializers.DecimalField(max_digits=14, decimal_places=2)
+    total_other_income = serializers.DecimalField(max_digits=14, decimal_places=2)
+    total_income = serializers.DecimalField(max_digits=14, decimal_places=2)
+    total_used = serializers.DecimalField(max_digits=14, decimal_places=2)
+    total_pending = serializers.DecimalField(max_digits=14, decimal_places=2)
+    total_remaining = serializers.DecimalField(max_digits=14, decimal_places=2)
+    project_finance = DashboardProjectFinanceSerializer(many=True)
+
+
+class DashboardTaskOverviewSerializer(serializers.Serializer):
+    total = serializers.IntegerField()
+    overdue = serializers.IntegerField()
+    upcoming_deadline = serializers.IntegerField()
+    status_distribution = serializers.DictField(
+        child=DashboardNamedCountSerializer(),
+    )
+
+
+class DashboardTopMemberSerializer(serializers.Serializer):
+    user_id = serializers.IntegerField()
+    name = serializers.CharField()
+    project_count = serializers.IntegerField()
+
+
+class DashboardMemberOverviewSerializer(serializers.Serializer):
+    total = serializers.IntegerField()
+    teacher = serializers.IntegerField()
+    member = serializers.IntegerField()
+    admin = serializers.IntegerField()
+    student = serializers.IntegerField()
+    top_members = DashboardTopMemberSerializer(many=True)
+
+
+class DashboardRiskSerializer(serializers.Serializer):
+    type = serializers.CharField()
+    message = serializers.CharField()
+    project_id = serializers.IntegerField(required=False)
+    project_name = serializers.CharField(required=False)
+    last_update = serializers.CharField(required=False)
+    task_id = serializers.IntegerField(required=False)
+    task_title = serializers.CharField(required=False)
+    deadline = serializers.CharField(required=False, allow_null=True)
+    competition_id = serializers.IntegerField(required=False)
+    competition_name = serializers.CharField(required=False)
+    defense_date = serializers.CharField(required=False, allow_null=True)
+
+
+class DashboardRiskOverviewSerializer(serializers.Serializer):
+    total = serializers.IntegerField()
+    items = DashboardRiskSerializer(many=True)
+
+
+class DashboardAnnouncementSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    title = serializers.CharField()
+    content = serializers.CharField()
+    category = serializers.CharField()
+    category_display = serializers.CharField()
+    is_pinned = serializers.BooleanField()
+    is_public = serializers.BooleanField()
+    author_name = serializers.CharField(allow_blank=True)
+    published_at = serializers.CharField(allow_null=True)
+
+
+class DashboardAnnouncementOverviewSerializer(serializers.Serializer):
+    total = serializers.IntegerField()
+    items = DashboardAnnouncementSerializer(many=True)
+
+
+class DashboardDataSerializer(serializers.Serializer):
+    project_overview = DashboardProjectOverviewSerializer()
+    finance_overview = DashboardFinanceOverviewSerializer()
+    task_overview = DashboardTaskOverviewSerializer()
+    member_overview = DashboardMemberOverviewSerializer()
+    risk_alerts = DashboardRiskOverviewSerializer()
+    announcements = DashboardAnnouncementOverviewSerializer()
+    generated_at = serializers.CharField()
 
 
 class DashboardView(APIView):
@@ -28,6 +138,13 @@ class DashboardView(APIView):
     """
     permission_classes = [IsInternalTeamMember]
 
+    @extend_schema(
+        responses={
+            200: success_response_schema(
+                'DashboardResponse', DashboardDataSerializer(),
+            ),
+        },
+    )
     def get(self, request):
         """获取驾驶舱聚合数据"""
         now = timezone.now()
@@ -35,13 +152,25 @@ class DashboardView(APIView):
         stale_threshold = now - timedelta(days=11)
         # 30天前
         month_ago = now - timedelta(days=30)
+        project_id = request.query_params.get('project_id')
+        try:
+            project_id = int(project_id) if project_id else None
+        except (TypeError, ValueError):
+            return error_response(message='project_id must be an integer', code=1001)
 
         # ============ 1. 项目总览 ============
-        total_projects = Project.objects.count()
-        active_projects = Project.objects.filter(status=Project.Status.ACTIVE).count()
-        paused_projects = Project.objects.filter(status=Project.Status.PAUSED).count()
-        closed_projects = Project.objects.filter(status=Project.Status.CLOSED).count()
-        awarded_projects = Project.objects.filter(
+        project_queryset = Project.objects.all()
+        task_queryset = Task.objects.all()
+        budget_queryset = FinanceBudget.objects.all()
+        if project_id:
+            project_queryset = project_queryset.filter(pk=project_id)
+            task_queryset = task_queryset.filter(project_id=project_id)
+            budget_queryset = budget_queryset.filter(project_id=project_id)
+        total_projects = project_queryset.count()
+        active_projects = project_queryset.filter(status=Project.Status.ACTIVE).count()
+        paused_projects = project_queryset.filter(status=Project.Status.PAUSED).count()
+        closed_projects = project_queryset.filter(status=Project.Status.CLOSED).count()
+        awarded_projects = project_queryset.filter(
             current_stage=Project.Stage.AWARDED
         ).count()
 
@@ -50,7 +179,7 @@ class DashboardView(APIView):
         for stage_code, stage_name in Project.Stage.choices:
             stage_distribution[stage_code] = {
                 'name': stage_name,
-                'count': Project.objects.filter(current_stage=stage_code).count(),
+                'count': project_queryset.filter(current_stage=stage_code).count(),
             }
 
         project_overview = {
@@ -63,7 +192,7 @@ class DashboardView(APIView):
         }
 
         # ============ 2. 经费总表（所有项目汇总）============
-        budgets = FinanceBudget.objects.all()
+        budgets = budget_queryset
         total_bonus = budgets.aggregate(total=Sum('bonus_amount'))['total'] or 0
         total_other_income = budgets.aggregate(total=Sum('other_income'))['total'] or 0
         total_used = budgets.aggregate(total=Sum('used_amount'))['total'] or 0
@@ -100,14 +229,14 @@ class DashboardView(APIView):
         for status_code, status_name in Task.Status.choices:
             task_stats[status_code] = {
                 'name': status_name,
-                'count': Task.objects.filter(status=status_code).count(),
+                'count': task_queryset.filter(status=status_code).count(),
             }
 
-        total_tasks = Task.objects.count()
-        overdue_tasks = Task.objects.filter(status=Task.Status.OVERDUE).count()
+        total_tasks = task_queryset.count()
+        overdue_tasks = task_queryset.filter(status=Task.Status.OVERDUE).count()
         # 即将到期任务（3天内）
         soon_deadline = now + timedelta(days=3)
-        upcoming_deadline_tasks = Task.objects.filter(
+        upcoming_deadline_tasks = task_queryset.filter(
             deadline__lte=soon_deadline,
             deadline__gte=now,
             status__in=[Task.Status.TODO, Task.Status.DOING, Task.Status.PENDING_REVIEW],
@@ -157,7 +286,7 @@ class DashboardView(APIView):
         risks = []
 
         # 未更新项目（超过 11 天未打卡）
-        stale_projects = Project.objects.filter(
+        stale_projects = project_queryset.filter(
             status=Project.Status.ACTIVE,
         ).filter(
             Q(last_leader_update__lte=stale_threshold)
@@ -174,7 +303,7 @@ class DashboardView(APIView):
             })
 
         # 延期任务
-        overdue_task_list = Task.objects.filter(status=Task.Status.OVERDUE)[:20]
+        overdue_task_list = task_queryset.filter(status=Task.Status.OVERDUE)[:20]
         for task in overdue_task_list:
             risks.append({
                 'type': 'overdue_task',
@@ -189,7 +318,10 @@ class DashboardView(APIView):
             status__in=[Competition.Status.PREPARING, Competition.Status.ONGOING],
             defense_date__gte=now.date(),
             defense_date__lte=(now + timedelta(days=30)).date(),
-        ).order_by('defense_date')[:10]
+        )
+        if project_id:
+            upcoming_competitions = upcoming_competitions.filter(project_id=project_id)
+        upcoming_competitions = upcoming_competitions.order_by('defense_date')[:10]
         for comp in upcoming_competitions:
             risks.append({
                 'type': 'upcoming_competition',
@@ -306,6 +438,25 @@ class SystemInfoView(APIView):
             pass
         return None
 
+    @extend_schema(
+        responses={
+            200: success_response_schema(
+                'SystemInfoResponse',
+                inline_serializer(
+                    name='SystemInfoData',
+                    fields={
+                        'version': serializers.CharField(),
+                        'git_branch': serializers.CharField(allow_null=True),
+                        'django_version': serializers.CharField(),
+                        'python_version': serializers.CharField(),
+                        'installed_apps_count': serializers.IntegerField(),
+                        'business_apps_count': serializers.IntegerField(),
+                        'debug': serializers.BooleanField(),
+                    },
+                ),
+            ),
+        },
+    )
     def get(self, request):
         """获取系统信息"""
         import django

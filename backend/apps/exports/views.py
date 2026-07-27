@@ -4,6 +4,8 @@
 GET /api/v1/exports/?type=<导出类型>&format=<xlsx|docx|pdf>&project_id=<项目ID>
 导出接口直接返回文件流（非统一 JSON 响应）
 """
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, extend_schema
 from rest_framework.views import APIView
 
 from common.permissions import IsInternalTeamMember
@@ -38,6 +40,26 @@ class ExportTemplateView(APIView):
     """
     permission_classes = [IsInternalTeamMember]
 
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name='type',
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                enum=list(_TEMPLATE_HEADERS),
+                required=True,
+            ),
+        ],
+        responses={
+            (
+                200,
+                'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            ): OpenApiResponse(
+                response=OpenApiTypes.BINARY,
+                description='Empty XLSX import template with the selected headers.',
+            ),
+        },
+    )
     def get(self, request):
         import io
         import openpyxl
@@ -77,6 +99,81 @@ class ExportView(APIView):
     """
     permission_classes = [IsInternalTeamMember]
 
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name='type',
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                required=True,
+                enum=[
+                    'projects', 'finance_budget', 'finance_detail', 'tasks',
+                    'contributions', 'ip_applications', 'members',
+                    'competitions', 'project_report', 'ip_report',
+                    'finance_report',
+                ],
+            ),
+            OpenApiParameter(
+                name='file_format',
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                enum=['xlsx', 'csv', 'docx', 'pdf'],
+                default='xlsx',
+            ),
+            OpenApiParameter(
+                name='project_id', type=OpenApiTypes.INT,
+                location=OpenApiParameter.QUERY, required=False,
+            ),
+            OpenApiParameter(
+                name='ip_id', type=OpenApiTypes.INT,
+                location=OpenApiParameter.QUERY, required=False,
+            ),
+            OpenApiParameter(
+                name='search', type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY, required=False,
+            ),
+            OpenApiParameter(
+                name='status', type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY, required=False,
+            ),
+            OpenApiParameter(
+                name='priority', type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY, required=False,
+            ),
+            OpenApiParameter(
+                name='assignee', type=OpenApiTypes.INT,
+                location=OpenApiParameter.QUERY, required=False,
+            ),
+            OpenApiParameter(
+                name='scope', type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY, required=False,
+            ),
+            OpenApiParameter(
+                name='level', type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY, required=False,
+            ),
+        ],
+        responses={
+            (
+                200,
+                'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            ): OpenApiResponse(response=OpenApiTypes.BINARY, description='XLSX export.'),
+            (200, 'text/csv'): OpenApiResponse(
+                response=OpenApiTypes.BINARY, description='UTF-8 CSV export.',
+            ),
+            (
+                200,
+                'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            ): OpenApiResponse(response=OpenApiTypes.BINARY, description='DOCX export.'),
+            (200, 'application/pdf'): OpenApiResponse(
+                response=OpenApiTypes.BINARY, description='PDF export.',
+            ),
+            (200, 'text/html'): OpenApiResponse(
+                response=OpenApiTypes.BINARY,
+                description='Download fallback when the PDF renderer is unavailable.',
+            ),
+        },
+    )
     def get(self, request):
         export_type = request.query_params.get('type')
         fmt = request.query_params.get('file_format', 'xlsx').lower()

@@ -8,11 +8,18 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
 from django.db.models import Q
+from django.db import transaction
 
 from common.response import success_response, error_response
 from common.mixins import MultiSerializerMixin
 from common.permissions import IsTeacherOrAdminOrReadOnly
 from .approval_models import ApprovalFlow, ApprovalRequest
+from .approval_services import (
+    apply_business_decision,
+    cancel_business_request,
+    prepare_business_request,
+    validate_business_metadata,
+)
 
 
 # ============ 序列化器 ============
@@ -24,6 +31,11 @@ class ApprovalFlowSerializer(serializers.ModelSerializer):
         model = ApprovalFlow
         fields = ('id', 'name', 'flow_type', 'steps', 'is_active', 'created_at')
         read_only_fields = ('id', 'created_at')
+
+    def validate_flow_type(self, value):
+        if not value.strip():
+            raise serializers.ValidationError('Approval flow type is required')
+        return value
 
 
 class ApprovalRequestSerializer(serializers.ModelSerializer):
@@ -49,6 +61,15 @@ class ApprovalRequestCreateSerializer(serializers.ModelSerializer):
         model = ApprovalRequest
         fields = ('id', 'flow', 'title', 'content', 'metadata')
         read_only_fields = ('id',)
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        attrs['metadata'] = validate_business_metadata(
+            attrs['flow'].flow_type,
+            attrs.get('metadata', {}),
+            self.context['request'].user,
+        )
+        return attrs
 
 
 class ApprovalReviewSerializer(serializers.Serializer):
@@ -130,7 +151,9 @@ class ApprovalRequestViewSet(MultiSerializerMixin, ModelViewSet):
                 code=2504,
                 http_status=status.HTTP_400_BAD_REQUEST,
             )
-        req = serializer.save(applicant=request.user, status=ApprovalRequest.Status.PENDING)
+        with transaction.atomic():
+            req = serializer.save(applicant=request.user, status=ApprovalRequest.Status.PENDING)
+            prepare_business_request(req)
         return success_response(
             ApprovalRequestSerializer(req).data,
             message='审批申请已提交',
@@ -138,6 +161,7 @@ class ApprovalRequestViewSet(MultiSerializerMixin, ModelViewSet):
         )
 
     @action(detail=True, methods=['post'])
+    @transaction.atomic
     def approve(self, request, pk=None):
         """审批通过"""
         req = self.get_object()
@@ -156,6 +180,12 @@ class ApprovalRequestViewSet(MultiSerializerMixin, ModelViewSet):
         # 推进步骤，若已是最后一步则通过
         if req.current_step + 1 >= len(steps):
             req.status = ApprovalRequest.Status.APPROVED
+            apply_business_decision(
+                req,
+                approved=True,
+                actor=request.user,
+                opinion=serializer.validated_data.get('opinion', ''),
+            )
         else:
             req.current_step = req.current_step + 1
         meta = dict(req.metadata or {})
@@ -169,6 +199,7 @@ class ApprovalRequestViewSet(MultiSerializerMixin, ModelViewSet):
         return success_response(ApprovalRequestSerializer(req).data, message='审批通过')
 
     @action(detail=True, methods=['post'])
+    @transaction.atomic
     def reject(self, request, pk=None):
         """驳回"""
         req = self.get_object()
@@ -184,6 +215,12 @@ class ApprovalRequestViewSet(MultiSerializerMixin, ModelViewSet):
         serializer.is_valid(raise_exception=True)
 
         req.status = ApprovalRequest.Status.REJECTED
+        apply_business_decision(
+            req,
+            approved=False,
+            actor=request.user,
+            opinion=serializer.validated_data.get('opinion', ''),
+        )
         meta = dict(req.metadata or {})
         meta.setdefault('reviews', []).append({
             'action': 'reject',
@@ -195,6 +232,7 @@ class ApprovalRequestViewSet(MultiSerializerMixin, ModelViewSet):
         return success_response(ApprovalRequestSerializer(req).data, message='已驳回')
 
     @action(detail=True, methods=['post'])
+    @transaction.atomic
     def cancel(self, request, pk=None):
         """取消申请"""
         req = self.get_object()
@@ -204,7 +242,8 @@ class ApprovalRequestViewSet(MultiSerializerMixin, ModelViewSet):
         if req.status != ApprovalRequest.Status.PENDING:
             return error_response(message='仅待审批的申请可取消', code=2503)
         req.status = ApprovalRequest.Status.CANCELLED
-        req.save(update_fields=['status', 'updated_at'])
+        cancel_business_request(req)
+        req.save(update_fields=['status', 'metadata', 'updated_at'])
         return success_response(ApprovalRequestSerializer(req).data, message='已取消')
 
     @action(detail=False, methods=['get'])

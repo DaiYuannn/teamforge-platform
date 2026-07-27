@@ -6,18 +6,20 @@ Open API 文档视图
 - GET /api/v1/common/api-docs/
 """
 from rest_framework.views import APIView
+from drf_spectacular.utils import extend_schema, inline_serializer
+from rest_framework import serializers
 
 from common.permissions import IsTeacherOrAdmin
 from common.response import success_response
+from common.schema import success_response_schema
 
 # 文档元信息
 API_INFO = {
     'title': '团队管理软件 API',
-    'version': '2.0.0',
+    'version': '2.1.0',
     'description': '团队管理软件后端 OpenAPI 文档信息',
-    'schema_url': '/api/schema/',
-    'docs_url': '/api/docs/',
-    'redoc_url': '/api/redoc/',
+    'schema_url': '/api/v1/common/openapi/schema/',
+    'endpoint_index_url': '/api/v1/common/openapi/endpoints/',
 }
 
 
@@ -29,6 +31,24 @@ class APIDocsView(APIView):
 
     permission_classes = [IsTeacherOrAdmin]
 
+    @extend_schema(
+        responses={
+            200: success_response_schema(
+                'APIDocsResponse',
+                inline_serializer(
+                    name='APIDocsData',
+                    fields={
+                        'title': serializers.CharField(),
+                        'version': serializers.CharField(),
+                        'description': serializers.CharField(),
+                        'endpoint_count': serializers.IntegerField(),
+                        'schema_url': serializers.CharField(),
+                        'endpoint_index_url': serializers.CharField(),
+                    },
+                ),
+            ),
+        },
+    )
     def get(self, request):
         # 统计已注册的 URL 端点数量（API 路径）
         from config.urls import urlpatterns as top_urls
@@ -61,6 +81,5 @@ class APIDocsView(APIView):
             'description': API_INFO['description'],
             'endpoint_count': endpoint_count,
             'schema_url': API_INFO['schema_url'],
-            'docs_url': API_INFO['docs_url'],
-            'redoc_url': API_INFO['redoc_url'],
+            'endpoint_index_url': API_INFO['endpoint_index_url'],
         })
