@@ -46,6 +46,13 @@ class Contribution(models.Model):
         APPROVED = 'approved', '已通过'
         REJECTED = 'rejected', '已驳回'
 
+    class SourceType(models.TextChoices):
+        MANUAL = 'manual', '手工登记'
+        TASK = 'task', '任务验收'
+        COMPETITION = 'competition', '比赛记录'
+        IP = 'ip', '知识产权流程'
+        SYSTEM = 'system', '系统证据'
+
     # 用户
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -85,6 +92,14 @@ class Contribution(models.Model):
     )
     # 关联对象ID（如任务ID、比赛ID等）
     related_object_id = models.IntegerField('关联对象ID', null=True, blank=True)
+    source_type = models.CharField(
+        '来源类型',
+        max_length=20,
+        choices=SourceType.choices,
+        default=SourceType.MANUAL,
+        db_index=True,
+    )
+    source_verified = models.BooleanField('来源已核验', default=False)
     # 统计周期
     period = models.CharField('统计周期', max_length=20, blank=True, default='')
     # 证明材料（新增）
@@ -128,6 +143,39 @@ class Contribution(models.Model):
 
     def __str__(self):
         return f'{self.user.name} - {self.get_contribution_type_display()}({self.weight})'
+
+
+class ProjectContributionReviewer(models.Model):
+    """项目贡献审核人配置；独立审核人用于负责人本人申报。"""
+
+    project = models.ForeignKey(
+        Project,
+        on_delete=models.CASCADE,
+        related_name='contribution_reviewers',
+        verbose_name='项目',
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='contribution_reviewer_assignments',
+        verbose_name='审核人',
+    )
+    is_independent = models.BooleanField('可独立审核负责人申报', default=False)
+    priority = models.PositiveIntegerField('分派优先级', default=100)
+    is_active = models.BooleanField('是否启用', default=True)
+    created_at = models.DateTimeField('创建时间', auto_now_add=True)
+
+    class Meta:
+        db_table = 'project_contribution_reviewers'
+        verbose_name = '项目贡献审核人'
+        verbose_name_plural = verbose_name
+        ordering = ['priority', 'id']
+        constraints = [
+            models.UniqueConstraint(
+                fields=('project', 'user'),
+                name='uniq_project_contribution_reviewer',
+            ),
+        ]
 
 
 class MemberRanking(models.Model):

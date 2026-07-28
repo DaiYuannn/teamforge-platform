@@ -285,7 +285,9 @@ class GlobalSearchView(APIView):
                 Q(title__icontains=query) |
                 Q(content__icontains=query) |
                 Q(tags__icontains=query)
-            ), request.user).select_related('author', 'project')[:limit]
+            ), request.user, include_unscoped=True).select_related(
+                'author', 'project'
+            )[:limit]
             results['knowledge'] = [{
                 'id': a.id,
                 'title': a.title,

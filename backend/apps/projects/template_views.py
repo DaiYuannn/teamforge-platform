@@ -171,7 +171,10 @@ class ProjectTemplateViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelVi
             created_tasks += 1
 
         from .serializers import ProjectSerializer
-        result = ProjectSerializer(project).data
+        result = ProjectSerializer(
+            project,
+            context={'request': request},
+        ).data
         result['_instantiated'] = {
             'milestones': created_milestones,
             'tasks': created_tasks,

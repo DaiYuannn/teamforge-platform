@@ -18,6 +18,7 @@ from common.mixins import MultiSerializerMixin, MultiPermissionMixin
 from common.permissions import IsTeacherOrAdmin
 from .models import (
     IntellectualPropertyApplication,
+    IPApplicationCandidate,
     IPApplicationContributor,
     IPReturnRecord,
     IPMaterialVersion,
@@ -28,6 +29,7 @@ from .serializers import (
     IPApplicationDetailSerializer,
     IPApplicationCreateSerializer,
     IPApplicationUpdateSerializer,
+    IPApplicationCandidateSerializer,
     IPApplicationContributorSerializer,
     IPReturnRecordSerializer,
     IPReturnRecordCreateSerializer,
@@ -44,6 +46,7 @@ from .permissions import (
     IsMainWriterOrExecutor,
     IsReturnModifier,
     _can_access_application,
+    _is_application_leader_or_privileged,
     accessible_ip_applications,
 )
 from .services import ip_service
@@ -83,6 +86,7 @@ class IPApplicationViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelView
         'archive': [IsAuthenticated],
         'sync_contribution': [IsAuthenticated],
         'my_todo': [IsAuthenticated],
+        'candidates': [IsAuthenticated],
     }
 
     filterset_fields = ['ip_type', 'status', 'related_project', 'main_writer', 'applicant_executor']
@@ -94,6 +98,10 @@ class IPApplicationViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelView
             super()
             .get_queryset()
             .select_related('related_project', 'related_project__leader')
+            .prefetch_related(
+                'project_links__project',
+                'candidates__user',
+            )
             .filter(pk__in=accessible_ip_applications(self.request.user))
         )
 
@@ -157,9 +165,8 @@ class IPApplicationViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelView
         # 权限随当前审批阶段收紧，避免业务角色越过后续审核节点。
         user = request.user
         is_privileged = user.global_role in ['sys_admin', 'teacher']
-        is_project_leader = bool(
-            application.related_project
-            and application.related_project.leader_id == user.id
+        is_project_leader = _is_application_leader_or_privileged(
+            user, application
         )
         institutional_targets = (
             IntellectualPropertyApplication.Status.ACCEPTED,
@@ -198,10 +205,22 @@ class IPApplicationViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelView
                 http_status=status.HTTP_403_FORBIDDEN,
             )
 
+        status_note = str(
+            request.data.get('status_note', request.data.get('note', '')) or ''
+        ).strip()
+        reason_required_statuses = {
+            IntellectualPropertyApplication.Status.PAUSED,
+            IntellectualPropertyApplication.Status.TERMINATED,
+            IntellectualPropertyApplication.Status.DEFERRED,
+        }
+        if target_status in reason_required_statuses and not status_note:
+            return error_response(message='暂停、终止或延期时必须填写状态说明')
+
         success, result = ip_service.transition_status(
             application=application,
             target_status=target_status,
             user=user,
+            status_note=status_note,
         )
 
         if not success:
@@ -250,8 +269,7 @@ class IPApplicationViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelView
         user = request.user
         can_sync = (
             user.global_role in ['sys_admin', 'teacher'] or
-            (application.related_project and
-             application.related_project.leader_id == user.id)
+            _is_application_leader_or_privileged(user, application)
         )
         if not can_sync:
             return error_response(
@@ -314,6 +332,83 @@ class IPApplicationViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelView
 
         serializer = IPApplicationListSerializer(queryset, many=True)
         return success_response(serializer.data)
+
+    @action(detail=True, methods=['get', 'post', 'patch', 'delete'])
+    def candidates(self, request, pk=None):
+        """维护拟申报及正式提交名单，不返回身份证等敏感明文。"""
+        application = self.get_object()
+        if request.method == 'GET':
+            records = application.candidates.select_related(
+                'user', 'checked_by',
+            ).all()
+            return success_response(
+                IPApplicationCandidateSerializer(
+                    records,
+                    many=True,
+                    context={'request': request},
+                ).data
+            )
+
+        if not _is_application_leader_or_privileged(request.user, application):
+            return error_response(
+                message='仅项目负责人或指定老师可维护拟申报名单',
+                code=1003,
+                http_status=status.HTTP_403_FORBIDDEN,
+            )
+
+        if request.method == 'POST':
+            data = request.data.copy()
+            data['application'] = application.id
+            serializer = IPApplicationCandidateSerializer(
+                data=data,
+                context={'request': request},
+            )
+            serializer.is_valid(raise_exception=True)
+            candidate = serializer.save()
+            return success_response(
+                IPApplicationCandidateSerializer(
+                    candidate,
+                    context={'request': request},
+                ).data,
+                message='拟申报成员已添加',
+                http_status=status.HTTP_201_CREATED,
+            )
+
+        candidate_id = request.data.get('candidate_id') or request.query_params.get(
+            'candidate_id'
+        )
+        candidate = application.candidates.filter(pk=candidate_id).first()
+        if candidate is None:
+            return error_response(
+                message='拟申报名单记录不存在',
+                code=1004,
+                http_status=status.HTTP_404_NOT_FOUND,
+            )
+        if request.method == 'PATCH':
+            data = request.data.copy()
+            data.pop('candidate_id', None)
+            serializer = IPApplicationCandidateSerializer(
+                candidate,
+                data=data,
+                partial=True,
+                context={'request': request},
+            )
+            serializer.is_valid(raise_exception=True)
+            candidate = serializer.save()
+            if 'identity_check_status' in serializer.validated_data:
+                candidate.checked_by = request.user
+                candidate.checked_at = timezone.now()
+                candidate.save(update_fields=['checked_by', 'checked_at', 'updated_at'])
+            return success_response(
+                IPApplicationCandidateSerializer(
+                    candidate,
+                    context={'request': request},
+                ).data,
+                message='拟申报名单已更新',
+            )
+
+        candidate.delete()
+        return success_response(message='拟申报成员已移除')
 
 
 class IPContributorViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet):

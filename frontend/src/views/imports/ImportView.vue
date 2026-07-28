@@ -18,6 +18,11 @@
 
       <!-- 步骤1：选择模块 -->
       <div v-if="currentStep === 0" class="step-content">
+        <el-form-item label="导入到团队">
+          <el-select v-model="selectedTeamId" clearable placeholder="请选择你负责的团队" style="width: 320px">
+            <el-option v-for="team in manageableTeams" :key="team.id" :label="team.name" :value="team.id" />
+          </el-select>
+        </el-form-item>
         <el-radio-group v-model="selectedModule" class="module-group">
           <el-radio-button
             v-for="(label, key) in IMPORT_MODULE_MAP"
@@ -34,6 +39,19 @@
 
       <!-- 步骤2：上传文件 -->
       <div v-if="currentStep === 1" class="step-content">
+        <el-alert
+          title="这里仅导入结构化表格数据"
+          description="证件照、PPT、计划书等资料不解析成数据行，请按资料敏感程度分别上传。"
+          type="info"
+          :closable="false"
+          show-icon
+          class="mb-16"
+        >
+          <template #default>
+            <el-button link type="primary" @click="router.push('/files')">上传普通文件</el-button>
+            <el-button link type="danger" @click="router.push('/sensitive')">管理证件等敏感资料</el-button>
+          </template>
+        </el-alert>
         <div class="template-guide">
           <div>
             <strong>{{ IMPORT_MODULE_MAP[selectedModule] }}导入模板</strong>
@@ -145,6 +163,9 @@
         <el-table-column prop="module" label="模块" width="100">
           <template #default="{ row }">{{ IMPORT_MODULE_MAP[row.module] || row.module }}</template>
         </el-table-column>
+        <el-table-column prop="team_name" label="所属团队" min-width="130">
+          <template #default="{ row }">{{ row.team_name || '历史未分组' }}</template>
+        </el-table-column>
         <el-table-column prop="file_name" label="文件名" min-width="180" show-overflow-tooltip />
         <el-table-column prop="status" label="状态" width="100">
           <template #default="{ row }">
@@ -204,6 +225,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { UploadFile } from 'element-plus'
 import {
@@ -219,13 +241,17 @@ import type { ImportModule, ImportPreviewResult, ImportTask, FieldMapping } from
 import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import { useDevice } from '@/composables/useDevice'
+import { getTeams, type Team } from '@/api/teams'
 
 const { isMobile } = useDevice()
+const router = useRouter()
 
 const stepTitles = ['选择模块', '上传文件', '字段映射', '预览数据', '确认导入']
 
 const currentStep = ref(0)
 const selectedModule = ref<ImportModule>('members')
+const selectedTeamId = ref<number | undefined>()
+const manageableTeams = ref<Team[]>([])
 const selectedFile = ref<File | null>(null)
 const previewing = ref(false)
 const importing = ref(false)
@@ -265,7 +291,12 @@ async function handlePreview(): Promise<void> {
   if (!selectedFile.value) return
   previewing.value = true
   try {
-    const result = await previewImport(selectedFile.value, selectedModule.value)
+    const result = await previewImport(
+      selectedFile.value,
+      selectedModule.value,
+      undefined,
+      selectedTeamId.value,
+    )
     previewData.value = result
     // 初始化映射行（后端返回 field_mapping: { sourceField: targetField }）
     const mapping = result.field_mapping || {}
@@ -356,6 +387,7 @@ function handleReset(): void {
   currentStep.value = 0
   selectedFile.value = null
   selectedModule.value = 'members'
+  selectedTeamId.value = manageableTeams.value.length === 1 ? manageableTeams.value[0].id : undefined
   previewData.value = {
     task_id: 0,
     headers: [],
@@ -399,6 +431,14 @@ async function loadImportTasks(): Promise<void> {
 
 onMounted(() => {
   loadImportTasks()
+  getTeams()
+    .then((response) => {
+      manageableTeams.value = response.results.filter((team) => team.can_manage)
+      if (manageableTeams.value.length === 1) selectedTeamId.value = manageableTeams.value[0].id
+    })
+    .catch(() => {
+      manageableTeams.value = []
+    })
 })
 </script>
 

@@ -277,6 +277,21 @@ class ApprovalRequestViewSet(MultiSerializerMixin, ModelViewSet):
         ):
             return False
 
+        if req.flow.flow_type == 'sensitive':
+            from apps.sensitive.models import SensitiveAccessRequest
+            from apps.sensitive.permissions import can_review_sensitive_request
+
+            access_request = SensitiveAccessRequest.objects.select_related(
+                'sensitive_data',
+                'sensitive_data__team',
+            ).filter(
+                pk=(req.metadata or {}).get('access_request_id'),
+            ).first()
+            return bool(
+                access_request
+                and can_review_sensitive_request(user, access_request)
+            )
+
         steps = req.flow.steps or []
         step = (
             steps[req.current_step]

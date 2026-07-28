@@ -6,10 +6,15 @@
 放在独立文件中，避免迁移冲突。通过 apps/common/models.py 导入。
 """
 from django.db import models
+from django.core.exceptions import ValidationError
 
 
 class Team(models.Model):
     """团队"""
+
+    class TeamType(models.TextChoices):
+        ORGANIZATION = 'organization', '总团队'
+        SQUAD = 'squad', '小团队'
 
     # 团队名称
     name = models.CharField('团队名称', max_length=200)
@@ -20,6 +25,20 @@ class Team(models.Model):
     contact_email = models.EmailField('联系邮箱', blank=True, default='')
     join_message = models.TextField('加入我们说明', blank=True, default='')
     is_active = models.BooleanField('是否启用', default=True)
+    parent = models.ForeignKey(
+        'self',
+        on_delete=models.PROTECT,
+        related_name='child_teams',
+        verbose_name='上级团队',
+        null=True,
+        blank=True,
+    )
+    team_type = models.CharField(
+        '团队类型',
+        max_length=20,
+        choices=TeamType.choices,
+        default=TeamType.ORGANIZATION,
+    )
     # 创建人
     owner = models.ForeignKey(
         'users.User',
@@ -46,12 +65,34 @@ class Team(models.Model):
     def __str__(self):
         return self.name
 
+    def clean(self):
+        super().clean()
+        errors = {}
+        if self.parent_id:
+            if self.pk and self.parent_id == self.pk:
+                errors['parent'] = '团队不能将自己设为上级团队'
+            elif self.parent and self.parent.parent_id:
+                errors['parent'] = '团队组织最多支持“总团队—小团队”两级'
+            elif self.pk and self.child_teams.exists():
+                errors['parent'] = '已有直属小团队的总团队不能再设为其他团队的下级'
+            if self.team_type != self.TeamType.SQUAD:
+                errors['team_type'] = '设置上级团队后，团队类型必须为小团队'
+        elif self.team_type != self.TeamType.ORGANIZATION:
+            errors['team_type'] = '没有上级团队时，团队类型必须为总团队'
+        if errors:
+            raise ValidationError(errors)
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
 
 class TeamMember(models.Model):
     """团队成员"""
 
     class Role(models.TextChoices):
         OWNER = 'owner', '负责人'
+        CO_LEAD = 'co_lead', '共同负责人'
         ADMIN = 'admin', '团队管理员'
         TEACHER = 'teacher', '指导老师'
         MEMBER = 'member', '团队成员'

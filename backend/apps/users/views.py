@@ -71,9 +71,9 @@ class UserViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet):
     }
 
     filterset_fields = [
-        'global_role', 'membership_status', 'is_student', 'is_active', 'grade', 'major'
+        'global_role', 'membership_status', 'is_student', 'is_active', 'school', 'grade', 'major'
     ]
-    search_fields = ['username', 'email', 'name', 'phone']
+    search_fields = ['username', 'email', 'name', 'phone', 'school']
     ordering_fields = ['date_joined', 'name', 'email']
 
     def create(self, request, *args, **kwargs):
@@ -302,7 +302,10 @@ class MyProfileView(RetrieveUpdateAPIView):
         serializer = self.get_serializer(instance, data=request.data, partial=partial)
         serializer.is_valid(raise_exception=True)
         user = serializer.save()
-        return success_response(MyProfileSerializer(user).data, message='个人信息更新成功')
+        return success_response(
+            MyProfileSerializer(user, context=self.get_serializer_context()).data,
+            message='个人信息更新成功',
+        )
 
 
 class LoginView(APIView):

@@ -1,6 +1,10 @@
 import request from './request'
 import { get } from './request'
-import type { Contribution, PaginatedResponse } from '@/types'
+import type {
+  Contribution,
+  PaginatedResponse,
+  ProjectContributionReviewer,
+} from '@/types'
 
 // 贡献记录模块基础路径
 const BASE = '/contributions'
@@ -61,6 +65,22 @@ export const getPendingReview = (params: Record<string, unknown> = {}) =>
 
 /** 按项目获取贡献记录 */
 export const getContributionsByProject = (projectId: number) => request.get(`${BASE}/contributions/by_project/`, { params: { project: projectId } })
+
+/** 获取项目贡献审核人池。 */
+export const getProjectContributionReviewers = (
+  projectId: number,
+): Promise<PaginatedResponse<ProjectContributionReviewer> | ProjectContributionReviewer[]> =>
+  request.get(`${BASE}/project-reviewers/`, { params: { project: projectId, page_size: 100 } })
+
+/** 配置贡献审核人；独立审核人可审核项目负责人的自报贡献。 */
+export const createProjectContributionReviewer = (
+  data: Pick<ProjectContributionReviewer, 'project' | 'user' | 'is_independent' | 'priority'>,
+): Promise<ProjectContributionReviewer> =>
+  request.post(`${BASE}/project-reviewers/`, data)
+
+/** 移除项目贡献审核人。 */
+export const deleteProjectContributionReviewer = (id: number): Promise<any> =>
+  request.delete(`${BASE}/project-reviewers/${id}/`)
 
 // ============================================
 // 成员排序 API

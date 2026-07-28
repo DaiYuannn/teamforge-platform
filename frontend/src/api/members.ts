@@ -5,6 +5,8 @@ import type { Member, MemberUpdateParams, PaginatedResponse, PaginationParams } 
 export interface MemberQueryParams extends PaginationParams {
   grade?: string
   major?: string
+  school?: string
+  team?: number
   project?: number
   membership_status?: string
   is_active?: boolean
@@ -55,22 +57,26 @@ export const deleteMemberSkill = (id: number) => del(`/members/member-skills/${i
 export const getMemberSkillsByUser = (userId: number) => get('/members/member-skills/by_user/', { user_id: userId })
 
 // ============================================
-// 灵活工作时间 API
+// 可投入安排 API
 // ============================================
 
-/** 获取我的灵活工作时间列表 */
+/** 获取我的可投入安排列表 */
 export const getMySchedules = () => get('/members/flexible-schedules/')
 
-/** 创建灵活工作时间 */
+/** 创建可投入安排 */
 export const createSchedule = (data: any) => post('/members/flexible-schedules/', data)
+
+/** 修改可投入安排 */
+export const updateSchedule = (id: number, data: any) =>
+  patch(`/members/flexible-schedules/${id}/`, data)
 
 /** 获取当前半月周期信息 */
 export const getCurrentPeriod = () => get('/members/flexible-schedules/current_period/')
 
-/** 获取所有成员最新灵活工作时间 */
+/** 获取所有成员最新可投入安排 */
 export const getAllLatestSchedules = () => get('/members/flexible-schedules/all_latest/')
 
-/** 按用户获取灵活工作时间 */
+/** 按用户获取可投入安排 */
 export const getScheduleByUser = (userId: number) => get('/members/flexible-schedules/by_user/', { user_id: userId })
 
 // ============================================

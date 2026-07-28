@@ -8,24 +8,128 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from common.response import success_response, error_response
 from common.mixins import MultiSerializerMixin
+from common.project_access import active_user_root_team_ids
 from .team_models import Team, TeamMember, TeamMembershipEvent
 
 
+def _visible_teams_for(user):
+    """仅让仍在队/暂离的内部成员看到自己的组织及相邻两级上下文。"""
+    if (
+        not user
+        or not user.is_authenticated
+        or not user.is_active
+        or getattr(user, 'membership_status', '') not in {'active', 'on_leave'}
+    ):
+        return Team.objects.none()
+    if user.global_role == 'sys_admin':
+        return Team.objects.all()
+
+    visible_statuses = [TeamMember.Status.ACTIVE, TeamMember.Status.ON_LEAVE]
+    return Team.objects.filter(
+        Q(owner=user)
+        | Q(
+            teammember__user=user,
+            teammember__status__in=visible_statuses,
+        )
+        | Q(parent__owner=user)
+        | Q(
+            parent__teammember__user=user,
+            parent__teammember__role__in=[
+                TeamMember.Role.OWNER,
+                TeamMember.Role.CO_LEAD,
+                TeamMember.Role.ADMIN,
+            ],
+            parent__teammember__status=TeamMember.Status.ACTIVE,
+        )
+        | Q(child_teams__owner=user)
+        | Q(
+            child_teams__teammember__user=user,
+            child_teams__teammember__status__in=visible_statuses,
+        )
+    ).distinct()
+
+
 def _is_team_manager(team, user):
-    return (
+    manages_team = (
         user.global_role == 'sys_admin'
         or team.owner_id == user.id
         or TeamMember.objects.filter(
             team=team,
             user=user,
-            role__in=[TeamMember.Role.OWNER, TeamMember.Role.ADMIN],
+            role__in=[
+                TeamMember.Role.OWNER,
+                TeamMember.Role.CO_LEAD,
+                TeamMember.Role.ADMIN,
+            ],
             status=TeamMember.Status.ACTIVE,
         ).exists()
     )
+    if manages_team or not team.parent_id:
+        return manages_team
+    return (
+        team.parent.owner_id == user.id
+        or TeamMember.objects.filter(
+            team=team.parent,
+            user=user,
+            role__in=[
+                TeamMember.Role.OWNER,
+                TeamMember.Role.CO_LEAD,
+                TeamMember.Role.ADMIN,
+            ],
+            status=TeamMember.Status.ACTIVE,
+        ).exists()
+    )
+
+
+def _can_assign_team_leadership(team, user):
+    """共同负责人属于提权操作，只允许主负责人或上级总团队负责人授予。"""
+    if user.global_role == 'sys_admin' or team.owner_id == user.id:
+        return True
+    parent = getattr(team, 'parent', None)
+    if not parent:
+        return False
+    if parent.owner_id == user.id:
+        return True
+    return TeamMember.objects.filter(
+        team=parent,
+        user=user,
+        role__in=[TeamMember.Role.OWNER, TeamMember.Role.CO_LEAD],
+        status=TeamMember.Status.ACTIVE,
+    ).exists()
+
+
+def _user_can_join_team_organization(team, user, role, actor):
+    """限制普通成员只能加入同一根团队，保留单根部署的待分组成员兼容。"""
+    if actor.global_role == 'sys_admin':
+        return bool(user and user.is_active)
+    if not user or not user.is_active:
+        return False
+    membership_status = getattr(user, 'membership_status', '')
+    if membership_status == 'external':
+        return role == TeamMember.Role.EXTERNAL
+    if membership_status not in {'active', 'on_leave'}:
+        return False
+
+    target_root_id = team.parent_id or team.id
+    user_root_ids = active_user_root_team_ids(user)
+    if target_root_id in user_root_ids:
+        return True
+    if user_root_ids:
+        return False
+
+    # 升级后的单根团队部署中，尚未分组的旧用户仍可由负责人首次加入。
+    active_root_ids = list(
+        Team.objects.filter(
+            parent__isnull=True,
+            is_active=True,
+        ).values_list('id', flat=True)[:2]
+    )
+    return len(active_root_ids) == 1 and active_root_ids[0] == target_root_id
 
 
 # ============ 序列化器 ============
@@ -34,6 +138,10 @@ class TeamMemberSerializer(serializers.ModelSerializer):
     """团队成员序列化器"""
     user_name = serializers.CharField(source='user.name', read_only=True, default='')
     user_email = serializers.CharField(source='user.email', read_only=True, default='')
+    user_avatar = serializers.ImageField(source='user.avatar', read_only=True)
+    user_school = serializers.CharField(source='user.school', read_only=True, default='')
+    user_grade = serializers.CharField(source='user.grade', read_only=True, default='')
+    user_major = serializers.CharField(source='user.major', read_only=True, default='')
     team_name = serializers.CharField(source='team.name', read_only=True, default='')
     role_display = serializers.CharField(source='get_role_display', read_only=True)
     status_display = serializers.CharField(source='get_status_display', read_only=True)
@@ -43,6 +151,7 @@ class TeamMemberSerializer(serializers.ModelSerializer):
         model = TeamMember
         fields = (
             'id', 'team', 'team_name', 'user', 'user_name', 'user_email',
+            'user_avatar', 'user_school', 'user_grade', 'user_major',
             'role', 'role_display', 'status', 'status_display', 'joined_at',
             'left_at', 'exit_reason', 'handover_to', 'handover_to_name',
             'handover_notes',
@@ -69,7 +178,10 @@ class TeamMembershipEventSerializer(serializers.ModelSerializer):
 class TeamSerializer(serializers.ModelSerializer):
     """团队序列化器"""
     owner_name = serializers.CharField(source='owner.name', read_only=True, default='')
+    parent_name = serializers.CharField(source='parent.name', read_only=True, default='')
+    team_type_display = serializers.CharField(source='get_team_type_display', read_only=True)
     member_count = serializers.SerializerMethodField()
+    child_count = serializers.SerializerMethodField()
     current_user_role = serializers.SerializerMethodField()
     can_manage = serializers.SerializerMethodField()
 
@@ -78,6 +190,7 @@ class TeamSerializer(serializers.ModelSerializer):
         fields = (
             'id', 'name', 'code', 'description', 'logo', 'contact_email',
             'join_message', 'is_active', 'owner', 'owner_name', 'member_count',
+            'parent', 'parent_name', 'team_type', 'team_type_display', 'child_count',
             'current_user_role', 'can_manage', 'created_at',
         )
         read_only_fields = ('id', 'owner', 'created_at')
@@ -85,11 +198,18 @@ class TeamSerializer(serializers.ModelSerializer):
     def get_member_count(self, obj) -> int:
         return obj.teammember_set.filter(status=TeamMember.Status.ACTIVE).count()
 
+    def get_child_count(self, obj) -> int:
+        return obj.child_teams.filter(is_active=True).count()
+
     def get_current_user_role(self, obj) -> str:
         request = self.context.get('request')
         if not request or not request.user.is_authenticated:
             return ''
-        membership = TeamMember.objects.filter(team=obj, user=request.user).first()
+        membership = TeamMember.objects.filter(
+            team=obj,
+            user=request.user,
+            status__in=[TeamMember.Status.ACTIVE, TeamMember.Status.ON_LEAVE],
+        ).first()
         return membership.role if membership else ''
 
     def get_can_manage(self, obj) -> bool:
@@ -107,9 +227,40 @@ class TeamCreateSerializer(serializers.ModelSerializer):
         model = Team
         fields = (
             'id', 'name', 'code', 'description', 'logo', 'contact_email',
-            'join_message', 'is_active',
+            'join_message', 'is_active', 'parent', 'team_type',
         )
         read_only_fields = ('id',)
+
+    def validate(self, attrs):
+        request = self.context.get('request')
+        instance = self.instance
+        parent = attrs.get('parent', getattr(instance, 'parent', None))
+        if (
+            instance
+            and 'parent' in attrs
+            and instance.parent_id != getattr(parent, 'pk', None)
+            and request
+            and instance.parent
+            and not _is_team_manager(instance.parent, request.user)
+        ):
+            raise serializers.ValidationError({
+                'parent': '调整或解除小团队归属需经原总团队负责人操作'
+            })
+        if parent:
+            if instance and parent.pk == instance.pk:
+                raise serializers.ValidationError({'parent': '团队不能将自己设为上级团队'})
+            if instance and instance.child_teams.exists():
+                raise serializers.ValidationError({
+                    'parent': '已有下级团队的总团队不能再改为其他团队的下级'
+                })
+            if parent.parent_id:
+                raise serializers.ValidationError({'parent': '团队组织最多支持“总团队—小团队”两级'})
+            if request and not _is_team_manager(parent, request.user):
+                raise serializers.ValidationError({'parent': '只有总团队负责人可以创建或调整其小团队'})
+            attrs['team_type'] = Team.TeamType.SQUAD
+        else:
+            attrs['team_type'] = Team.TeamType.ORGANIZATION
+        return attrs
 
 
 # ============ ViewSet ============
@@ -137,11 +288,10 @@ class TeamViewSet(MultiSerializerMixin, ModelViewSet):
     def get_queryset(self):
         if getattr(self, 'swagger_fake_view', False):
             return self.queryset.none()
-        user = self.request.user
-        # 当前用户拥有或加入的团队
-        owned = self.queryset.filter(owner=user)
-        joined = Team.objects.filter(members=user)
-        return (owned | joined).distinct()
+        # 当前用户可见自己有效加入的团队，并补充相邻的两级组织上下文。
+        return _visible_teams_for(
+            self.request.user,
+        ).select_related('owner', 'parent').order_by('-created_at')
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
@@ -211,8 +361,38 @@ class TeamViewSet(MultiSerializerMixin, ModelViewSet):
             return error_response(message='请提供 user（成员用户ID）', code=2401)
         if role not in TeamMember.Role.values:
             return error_response(message='团队角色不合法', code=2404)
+        if role == TeamMember.Role.OWNER:
+            return error_response(
+                message='主负责人只能通过负责人转让设置',
+                code=2405,
+            )
+        if (
+            role == TeamMember.Role.CO_LEAD
+            and not _can_assign_team_leadership(team, request.user)
+        ):
+            return error_response(
+                message='只有主负责人或上级总团队负责人可以设置共同负责人',
+                code=1003,
+                http_status=status.HTTP_403_FORBIDDEN,
+            )
+        from apps.users.models import User
+
+        target_user = User.objects.filter(pk=user_id).first()
+        if target_user is None:
+            return error_response(message='成员用户不存在', code=2403)
+        if not _user_can_join_team_organization(
+            team,
+            target_user,
+            role,
+            request.user,
+        ):
+            return error_response(
+                message='只能添加同一总团队的成员；外部协作者需使用外部协作者角色',
+                code=2409,
+                http_status=status.HTTP_400_BAD_REQUEST,
+            )
         member, created = TeamMember.objects.get_or_create(
-            team=team, user_id=user_id,
+            team=team, user=target_user,
             defaults={'role': role},
         )
         if not created:
@@ -267,6 +447,20 @@ class TeamViewSet(MultiSerializerMixin, ModelViewSet):
             return error_response(message='角色或成员状态不合法', code=2404)
         if member.role == TeamMember.Role.OWNER and status_value == TeamMember.Status.EXITED:
             return error_response(message='团队负责人不能直接退出，请先转让团队负责人', code=2405)
+        if member.role == TeamMember.Role.OWNER and role_value != TeamMember.Role.OWNER:
+            return error_response(message='主负责人角色只能通过负责人转让进行变更', code=2405)
+        if member.role != TeamMember.Role.OWNER and role_value == TeamMember.Role.OWNER:
+            return error_response(message='主负责人只能通过负责人转让设置', code=2405)
+        if (
+            TeamMember.Role.CO_LEAD in {member.role, role_value}
+            and member.role != role_value
+            and not _can_assign_team_leadership(team, request.user)
+        ):
+            return error_response(
+                message='只有主负责人或上级总团队负责人可以授予或撤销共同负责人',
+                code=1003,
+                http_status=status.HTTP_403_FORBIDDEN,
+            )
         handover = None
         if request.data.get('handover_to'):
             handover = TeamMember.objects.filter(
@@ -324,10 +518,46 @@ class TeamViewSet(MultiSerializerMixin, ModelViewSet):
 
         users = User.objects.exclude(
             membership_status=User.MembershipStatus.EXITED
-        ).order_by('name')
+        ).filter(is_active=True)
+        if request.user.global_role != 'sys_admin':
+            root_id = team.parent_id or team.id
+            visible_statuses = [
+                TeamMember.Status.ACTIVE,
+                TeamMember.Status.ON_LEAVE,
+            ]
+            same_root_user_ids = TeamMember.objects.filter(
+                Q(team_id=root_id) | Q(team__parent_id=root_id),
+                status__in=visible_statuses,
+            ).values_list('user_id', flat=True)
+            same_root_owner_ids = Team.objects.filter(
+                Q(id=root_id) | Q(parent_id=root_id),
+            ).values_list('owner_id', flat=True)
+            active_root_ids = list(
+                Team.objects.filter(
+                    parent__isnull=True,
+                    is_active=True,
+                ).values_list('id', flat=True)[:2]
+            )
+            allowed_ids = set(same_root_user_ids) | set(same_root_owner_ids)
+            if len(active_root_ids) == 1 and active_root_ids[0] == root_id:
+                assigned_user_ids = set(
+                    TeamMember.objects.filter(
+                        status__in=visible_statuses,
+                    ).values_list('user_id', flat=True)
+                )
+                owned_user_ids = set(
+                    Team.objects.values_list('owner_id', flat=True)
+                )
+                unassigned_ids = set(
+                    users.exclude(
+                        id__in=assigned_user_ids | owned_user_ids
+                    ).values_list('id', flat=True)
+                )
+                allowed_ids.update(unassigned_ids)
+            users = users.filter(id__in=allowed_ids)
+        users = users.order_by('name')
         search = request.query_params.get('search', '').strip()
         if search:
-            from django.db.models import Q
             users = users.filter(
                 Q(name__icontains=search)
                 | Q(email__icontains=search)
@@ -367,7 +597,7 @@ class TeamViewSet(MultiSerializerMixin, ModelViewSet):
             return error_response(message='该成员已经是团队负责人', code=2408)
         if old_owner:
             previous_role = old_owner.role
-            old_owner.role = TeamMember.Role.ADMIN
+            old_owner.role = TeamMember.Role.CO_LEAD
             old_owner.save(update_fields=['role'])
             TeamMembershipEvent.objects.create(
                 membership=old_owner,
@@ -449,7 +679,9 @@ class TeamMemberViewSet(ModelViewSet):
         user = self.request.user
         if user.global_role == 'sys_admin':
             return self.queryset
-        return self.queryset.filter(team__members=user).distinct()
+        return self.queryset.filter(
+            team__in=_visible_teams_for(user),
+        ).distinct()
 
     def create(self, request, *args, **kwargs):
         team = Team.objects.filter(pk=request.data.get('team')).first()
@@ -458,6 +690,37 @@ class TeamMemberViewSet(ModelViewSet):
                 message='无权管理该团队',
                 code=1003,
                 http_status=status.HTTP_403_FORBIDDEN,
+            )
+        if request.data.get('role') == TeamMember.Role.OWNER:
+            return error_response(
+                message='主负责人只能通过负责人转让设置',
+                code=2405,
+            )
+        if (
+            request.data.get('role') == TeamMember.Role.CO_LEAD
+            and not _can_assign_team_leadership(team, request.user)
+        ):
+            return error_response(
+                message='只有主负责人或上级总团队负责人可以设置共同负责人',
+                code=1003,
+                http_status=status.HTTP_403_FORBIDDEN,
+            )
+        from apps.users.models import User
+
+        role = request.data.get('role', TeamMember.Role.MEMBER)
+        target_user = User.objects.filter(pk=request.data.get('user')).first()
+        if target_user is None:
+            return error_response(message='成员用户不存在', code=2403)
+        if not _user_can_join_team_organization(
+            team,
+            target_user,
+            role,
+            request.user,
+        ):
+            return error_response(
+                message='只能添加同一总团队的成员；外部协作者需使用外部协作者角色',
+                code=2409,
+                http_status=status.HTTP_400_BAD_REQUEST,
             )
         return super().create(request, *args, **kwargs)
 

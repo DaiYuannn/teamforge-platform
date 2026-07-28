@@ -11,6 +11,7 @@ from rest_framework.test import APIClient
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from apps.audit.models import OperationLog
+from apps.common.team_models import Team, TeamMember
 from apps.files.models import FileAsset, FileVersion
 from apps.files.share_models import FileShareLink
 from apps.projects.models import ProjectMember
@@ -60,7 +61,7 @@ def stored_attachment(settings, tmp_path, make_project, make_user):
 @pytest.mark.api
 @pytest.mark.django_db
 class TestSensitiveCatalogue:
-    def test_internal_member_sees_other_users_masked_metadata(
+    def test_internal_member_cannot_see_unscoped_other_users_metadata(
         self,
         member_client,
         make_sensitive_data,
@@ -70,16 +71,13 @@ class TestSensitiveCatalogue:
         response = member_client.get('/api/v1/sensitive/data/')
 
         assert response.status_code == 200, response.json()
-        row = next(item for item in extract_results(response) if item['id'] == sensitive.id)
-        assert row['title'] == '他人证件资料'
-        assert row['owner_name']
-        assert row['masked_value'] != '测试敏感明文内容'
-        assert 'encrypted_content' not in row
-        assert 'plaintext' not in row
+        assert all(
+            item['id'] != sensitive.id
+            for item in extract_results(response)
+        )
 
         detail = member_client.get(f'/api/v1/sensitive/data/{sensitive.id}/')
-        assert detail.status_code == 200
-        assert extract_data(detail)['masked_value'] != '测试敏感明文内容'
+        assert detail.status_code == 404
 
     def test_external_collaborator_cannot_browse_team_sensitive_catalogue(
         self,
@@ -96,6 +94,50 @@ class TestSensitiveCatalogue:
 @pytest.mark.api
 @pytest.mark.django_db
 class TestSensitiveAttachmentProtection:
+    def test_member_cannot_reclassify_another_users_file_as_sensitive(
+        self,
+        member_client,
+        stored_attachment,
+        make_user,
+    ):
+        team = Team.objects.create(
+            name='附件安全小组',
+            code='ATTACHMENT-SAFE',
+            owner=member_client.user,
+        )
+        TeamMember.objects.create(
+            team=team,
+            user=member_client.user,
+            role=TeamMember.Role.OWNER,
+        )
+        link = FileShareLink.objects.create(
+            file=stored_attachment,
+            created_by=make_user(email='attachment-share@test.com'),
+            token=FileShareLink.generate_token(),
+        )
+
+        response = member_client.post(
+            '/api/v1/sensitive/data/',
+            {
+                'data_type': SensitiveData.DataType.ID_CARD,
+                'title': '越权附件绑定',
+                'plaintext': '110101200001011234',
+                'team': team.id,
+                'subject_user': member_client.user.id,
+                'file_attachment': stored_attachment.id,
+            },
+            format='json',
+        )
+
+        assert response.status_code == 400, response.json()
+        stored_attachment.refresh_from_db()
+        link.refresh_from_db()
+        assert stored_attachment.level == FileAsset.Level.PUBLIC
+        assert link.is_active is True
+        assert not SensitiveData.objects.filter(
+            file_attachment=stored_attachment,
+        ).exists()
+
     def test_linking_attachment_marks_sensitive_and_revokes_shares(
         self,
         stored_attachment,

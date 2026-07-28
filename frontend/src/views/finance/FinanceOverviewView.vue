@@ -2,10 +2,16 @@
   <div class="page-container finance-page">
     <PageHeader title="经费管理" subtitle="查看团队预算使用、支出结构和需要关注的项目">
       <template #actions>
+        <el-button v-if="canSetBudget" :icon="Setting" @click="openBudgetDialog">
+          设置预算
+        </el-button>
         <el-button v-if="canRegisterIncome" :icon="Plus" @click="() => openIncomeDialog()">
           登记收入
         </el-button>
-        <el-button type="primary" :icon="CameraFilled" @click="openOCRDialog">
+        <el-button type="primary" :icon="Plus" @click="openExpenseDialog">
+          新增支出
+        </el-button>
+        <el-button :icon="CameraFilled" @click="openOCRDialog">
           票据 OCR
         </el-button>
         <el-dropdown @command="handleExport">
@@ -31,24 +37,24 @@
 
     <section v-loading="loading" class="metric-strip" aria-label="经费概览">
       <div class="metric-item">
-        <span>累计收入</span>
-        <strong class="tabular-nums">{{ formatMoneyWithComma(totalBudget) }}</strong>
-        <small>{{ incomeList.length }} 笔可追溯流水</small>
+        <span>核定预算上限</span>
+        <strong class="tabular-nums">{{ formatMoneyWithComma(totalPlanned) }}</strong>
+        <small>未单独设置的项目暂按累计入账控制</small>
       </div>
       <div class="metric-item">
-        <span>已付款支出</span>
-        <strong class="tabular-nums">{{ formatMoneyWithComma(totalExpense) }}</strong>
-        <small>{{ paidExpenseCount }} 笔完成付款</small>
+        <span>已发生支出</span>
+        <strong class="tabular-nums">{{ formatMoneyWithComma(totalCommitted) }}</strong>
+        <small>已完成 {{ formatMoneyWithComma(totalExpense) }}，流程中 {{ formatMoneyWithComma(totalPending) }}</small>
       </div>
-      <div class="metric-item" :class="{ 'metric-item--danger': totalRemaining < 0 }">
-        <span>预算余额</span>
-        <strong class="tabular-nums">{{ formatMoneyWithComma(totalRemaining) }}</strong>
-        <small>{{ totalRemaining < 0 ? '当前已超出预算' : '可继续使用' }}</small>
+      <div class="metric-item" :class="{ 'metric-item--danger': totalAvailable < 0 }">
+        <span>可用额度</span>
+        <strong class="tabular-nums">{{ formatMoneyWithComma(totalAvailable) }}</strong>
+        <small>{{ totalAvailable < 0 ? '当前已超出核定预算' : '扣除审核中和待打款支出' }}</small>
       </div>
-      <div class="metric-item" :class="{ 'metric-item--warning': utilizationRate >= 80 }">
-        <span>待报销金额</span>
-        <strong class="tabular-nums">{{ formatMoneyWithComma(totalPending) }}</strong>
-        <small>{{ pendingExpenseCount }} 笔正在审核或待付款</small>
+      <div class="metric-item">
+        <span>累计入账</span>
+        <strong class="tabular-nums">{{ formatMoneyWithComma(totalIncome) }}</strong>
+        <small>{{ incomeList.length }} 笔收入流水；不等同于核定预算</small>
       </div>
     </section>
 
@@ -86,7 +92,7 @@
             <div class="project-budget-head">
               <div>
                 <h3>{{ item.projectName }}</h3>
-                <span>已用 {{ formatMoneyWithComma(item.expense) }} / {{ formatMoneyWithComma(item.budget) }}</span>
+                <span>已发生 {{ formatMoneyWithComma(item.expense) }} / 上限 {{ formatMoneyWithComma(item.budget) }}</span>
               </div>
               <span class="utilization" :data-tone="item.tone">{{ item.rate }}%</span>
             </div>
@@ -126,6 +132,14 @@
           <el-option v-for="project in projectOptions" :key="project.id" :label="project.name" :value="project.id" />
         </el-select>
       </header>
+
+      <el-alert
+        class="workflow-explanation"
+        type="info"
+        :closable="false"
+        show-icon
+        title="报销流程：保存草稿 → 待报销审核 → 审核通过、待打款 → 已打款、报销完成。这里的“已打款”指团队向申请人完成报销，不是申请人向商家付款。"
+      />
 
       <el-tabs v-model="financeTab" class="finance-tabs">
         <el-tab-pane :label="`支出与报销（${expenseList.length}）`" name="expenses">
@@ -171,6 +185,97 @@
         </el-tab-pane>
       </el-tabs>
     </section>
+
+    <el-dialog v-model="budgetDialogVisible" title="设置项目核定预算" width="520px" append-to-body>
+      <el-alert
+        title="核定预算是预计允许支出的上限，与奖金、拨款等实际入账分开统计。"
+        type="info"
+        :closable="false"
+        show-icon
+      />
+      <el-form :model="budgetForm" label-position="top">
+        <el-form-item label="所属项目" required>
+          <el-select v-model="budgetForm.project" filterable @change="syncBudgetForm">
+            <el-option
+              v-for="project in projectOptions"
+              :key="project.id"
+              :label="project.name"
+              :value="project.id"
+              :disabled="!canConfigureProjectBudget(project.id)"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="核定预算上限" required>
+          <el-input-number
+            v-model="budgetForm.planned_amount"
+            :min="0"
+            :precision="2"
+            :controls="false"
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="budgetDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="budgetSaving" @click="saveBudget">保存预算</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="expenseDialogVisible" title="新增支出" width="620px" append-to-body>
+      <el-alert
+        title="先记录已经发生的支出，保存后为草稿；确认票据和信息无误后再提交报销。"
+        type="info"
+        :closable="false"
+        show-icon
+      />
+      <el-form :model="expenseForm" label-position="top">
+        <div class="ocr-form-grid">
+          <el-form-item label="所属项目" required>
+            <el-select v-model="expenseForm.project" filterable>
+              <el-option v-for="project in projectOptions" :key="project.id" :label="project.name" :value="project.id" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="金额" required>
+            <el-input-number v-model="expenseForm.amount" :min="0.01" :precision="2" :controls="false" />
+          </el-form-item>
+          <el-form-item label="支出日期" required>
+            <el-date-picker v-model="expenseForm.expense_date" type="date" value-format="YYYY-MM-DD" />
+          </el-form-item>
+          <el-form-item label="类别" required>
+            <el-select v-model="expenseForm.category">
+              <el-option label="材料费" value="material" />
+              <el-option label="设备费" value="equipment" />
+              <el-option label="打印费" value="printing" />
+              <el-option label="差旅费" value="travel" />
+              <el-option label="软件费" value="software" />
+              <el-option label="比赛报名费" value="competition_fee" />
+              <el-option label="推广费" value="promotion" />
+              <el-option label="劳务费" value="labor" />
+              <el-option label="其他" value="other" />
+            </el-select>
+          </el-form-item>
+        </div>
+        <el-form-item label="支出标题" required>
+          <el-input v-model="expenseForm.title" maxlength="200" />
+        </el-form-item>
+        <el-form-item label="用途说明">
+          <el-input v-model="expenseForm.purpose" type="textarea" :rows="2" />
+        </el-form-item>
+        <el-form-item label="票据（选填）">
+          <el-upload
+            :auto-upload="false"
+            :limit="1"
+            :on-change="handleManualReceiptChange"
+            :on-remove="handleManualReceiptRemove"
+          >
+            <el-button>选择票据图片</el-button>
+          </el-upload>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="expenseDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="expenseSaving" @click="saveExpense">保存为草稿</el-button>
+      </template>
+    </el-dialog>
 
     <el-dialog
       v-model="incomeDialogVisible"
@@ -240,7 +345,7 @@
       </template>
     </el-dialog>
 
-    <el-dialog v-model="paymentDialogVisible" title="登记付款" width="520px" append-to-body>
+    <el-dialog v-model="paymentDialogVisible" title="登记报销打款" width="520px" append-to-body>
       <el-form :model="paymentForm" label-position="top">
         <el-form-item label="付款方式" required>
           <el-select v-model="paymentForm.payment_method">
@@ -257,7 +362,7 @@
       </el-form>
       <template #footer>
         <el-button @click="paymentDialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="workflowSaving" @click="savePayment">确认已付款</el-button>
+        <el-button type="primary" :loading="workflowSaving" @click="savePayment">确认已向申请人打款</el-button>
       </template>
     </el-dialog>
 
@@ -392,8 +497,9 @@ import { computed, nextTick, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import * as echarts from 'echarts'
 import { ElMessage, ElMessageBox, type UploadFile } from 'element-plus'
-import { ArrowDown, CameraFilled, Download, Plus, UploadFilled, WarningFilled } from '@element-plus/icons-vue'
+import { ArrowDown, CameraFilled, Download, Plus, Setting, UploadFilled, WarningFilled } from '@element-plus/icons-vue'
 import {
+  createFinanceBudget,
   createFinanceIncome,
   createFinanceExpense,
   deleteFinanceExpense,
@@ -407,6 +513,7 @@ import {
   reviewReimbursement,
   submitReimbursement,
   updateFinanceIncome,
+  updateFinanceBudget,
   updateFinanceExpense,
   uploadReceipt,
   type FinanceExportFormat,
@@ -465,6 +572,11 @@ const ocrSaving = ref(false)
 const receiptFile = ref<File | null>(null)
 const ocrResult = ref<OCRReceiptResult | null>(null)
 const ocrDraftExpenseId = ref<number | null>(null)
+const budgetDialogVisible = ref(false)
+const budgetSaving = ref(false)
+const expenseDialogVisible = ref(false)
+const expenseSaving = ref(false)
+const manualReceiptFile = ref<File | null>(null)
 const incomeDialogVisible = ref(false)
 const incomeSaving = ref(false)
 const editingIncome = ref<FinanceIncome | null>(null)
@@ -485,6 +597,18 @@ const incomeForm = reactive({
 })
 const reviewForm = reactive({ approved: true, opinion: '' })
 const paymentForm = reactive({ payment_method: '银行转账', payment_reference: '' })
+const budgetForm = reactive({
+  project: undefined as number | undefined,
+  planned_amount: undefined as number | undefined,
+})
+const expenseForm = reactive({
+  project: undefined as number | undefined,
+  amount: undefined as number | undefined,
+  expense_date: '',
+  category: 'other' as FinanceCategory,
+  title: '',
+  purpose: '',
+})
 const ocrForm = reactive({
   project: undefined as number | undefined,
   amount: undefined as number | undefined,
@@ -505,20 +629,20 @@ const paidExpenses = computed(() =>
   expenseList.value.filter((item) => ['paid', 'not_required'].includes(item.reimbursement_status || 'draft')),
 )
 const totalExpense = computed(() => paidExpenses.value.reduce((sum, item) => sum + toAmount(item.amount), 0))
-const paidExpenseCount = computed(() => paidExpenses.value.length)
 const pendingExpenses = computed(() =>
   expenseList.value.filter((item) => ['pending', 'approved'].includes(item.reimbursement_status || 'draft')),
 )
 const totalPending = computed(() => pendingExpenses.value.reduce((sum, item) => sum + toAmount(item.amount), 0))
-const pendingExpenseCount = computed(() => pendingExpenses.value.length)
-const totalBudget = computed(() =>
+const totalCommitted = computed(() => totalExpense.value + totalPending.value)
+const totalIncome = computed(() =>
   budgetList.value.reduce((sum, item) => sum + toAmount(item.bonus_amount) + toAmount(item.other_income), 0),
 )
-const totalRemaining = computed(() => totalBudget.value - totalExpense.value)
-const utilizationRate = computed(() => {
-  if (!totalBudget.value) return 0
-  return Math.round((totalExpense.value / totalBudget.value) * 100)
-})
+const totalPlanned = computed(() =>
+  budgetList.value.reduce((sum, item) => sum + toAmount(item.budget_basis), 0),
+)
+const totalAvailable = computed(() =>
+  budgetList.value.reduce((sum, item) => sum + toAmount(item.available_amount), 0),
+)
 
 const categoryBreakdown = computed(() => {
   const totals = new Map<string, number>()
@@ -542,18 +666,8 @@ const projectFinance = computed<ProjectFinanceRow[]>(() => {
       budget: 0,
       expense: 0,
     }
-    current.budget += toAmount(item.bonus_amount) + toAmount(item.other_income)
-    rows.set(item.project, current)
-  })
-
-  expenseList.value.forEach((item) => {
-    const current = rows.get(item.project) || {
-      projectId: item.project,
-      projectName: item.project_name || `项目 ${item.project}`,
-      budget: 0,
-      expense: 0,
-    }
-    current.expense += toAmount(item.amount)
+    current.budget += toAmount(item.budget_basis)
+    current.expense += toAmount(item.committed_amount)
     rows.set(item.project, current)
   })
 
@@ -600,6 +714,7 @@ async function loadData(): Promise<void> {
 
 function isFinanceManager(): boolean {
   return ['teacher', 'sys_admin'].includes(userStore.userInfo?.global_role || '')
+    || Boolean(userStore.userInfo?.permission_codes?.includes('finance.manage'))
 }
 
 function projectLeaderId(projectId: number): number | undefined {
@@ -607,13 +722,29 @@ function projectLeaderId(projectId: number): number | undefined {
 }
 
 function canManageProjectFinance(projectId: number): boolean {
-  return isFinanceManager() || projectLeaderId(projectId) === userStore.userInfo?.id
+  return isFinanceManager()
+    || Boolean(projectOptions.value.find((item) => item.id === projectId)?.can_manage)
+}
+
+function canCreateProjectFinance(projectId: number): boolean {
+  return ['teacher', 'sys_admin'].includes(userStore.userInfo?.global_role || '')
+    || Boolean(userStore.userInfo?.permission_codes?.includes('finance.create'))
+    || Boolean(projectOptions.value.find((item) => item.id === projectId)?.can_manage)
 }
 
 const canRegisterIncome = computed(() =>
-  isFinanceManager()
-  || projectOptions.value.some((item) => item.leader === userStore.userInfo?.id),
+  projectOptions.value.some((item) => canCreateProjectFinance(item.id)),
 )
+const canSetBudget = computed(() =>
+  projectOptions.value.some((item) => canConfigureProjectBudget(item.id)),
+)
+
+function canConfigureProjectBudget(projectId: number): boolean {
+  const existing = budgetList.value.some((item) => item.project === projectId)
+  return existing
+    ? canManageProjectFinance(projectId)
+    : canCreateProjectFinance(projectId)
+}
 
 function canSubmitExpense(expense: FinanceExpense): boolean {
   if (!['draft', 'rejected'].includes(expense.reimbursement_status || 'draft')) return false
@@ -627,11 +758,109 @@ function canSubmitExpense(expense: FinanceExpense): boolean {
 
 function canReviewExpense(expense: FinanceExpense): boolean {
   if (expense.reimbursement_status !== 'pending') return false
-  return isFinanceManager() || projectLeaderId(expense.project) === userStore.userInfo?.id
+  return canManageProjectFinance(expense.project)
 }
 
 function canPayExpense(expense: FinanceExpense): boolean {
   return expense.reimbursement_status === 'approved' && isFinanceManager()
+}
+
+function openBudgetDialog(): void {
+  budgetForm.project = filterProject.value
+    && canConfigureProjectBudget(filterProject.value)
+    ? filterProject.value
+    : projectOptions.value.find((item) => canConfigureProjectBudget(item.id))?.id
+  syncBudgetForm()
+  budgetDialogVisible.value = true
+}
+
+function syncBudgetForm(): void {
+  const existing = budgetList.value.find((item) => item.project === budgetForm.project)
+  budgetForm.planned_amount = existing
+    ? toAmount(existing.planned_amount)
+    : undefined
+}
+
+async function saveBudget(): Promise<void> {
+  if (!budgetForm.project || budgetForm.planned_amount === undefined) {
+    ElMessage.warning('请选择项目并填写核定预算上限')
+    return
+  }
+  budgetSaving.value = true
+  try {
+    const existing = budgetList.value.find((item) => item.project === budgetForm.project)
+    if (existing) {
+      await updateFinanceBudget(existing.id, {
+        planned_amount: budgetForm.planned_amount,
+      })
+    } else {
+      await createFinanceBudget({
+        project: budgetForm.project,
+        planned_amount: budgetForm.planned_amount,
+      })
+    }
+    budgetDialogVisible.value = false
+    ElMessage.success('项目核定预算已保存')
+    await loadData()
+  } finally {
+    budgetSaving.value = false
+  }
+}
+
+function openExpenseDialog(): void {
+  Object.assign(expenseForm, {
+    project: filterProject.value,
+    amount: undefined,
+    expense_date: new Date().toISOString().slice(0, 10),
+    category: 'other',
+    title: '',
+    purpose: '',
+  })
+  manualReceiptFile.value = null
+  expenseDialogVisible.value = true
+}
+
+function handleManualReceiptChange(file: UploadFile): void {
+  manualReceiptFile.value = file.raw || null
+}
+
+function handleManualReceiptRemove(): void {
+  manualReceiptFile.value = null
+}
+
+async function saveExpense(): Promise<void> {
+  if (
+    !expenseForm.project
+    || !expenseForm.amount
+    || !expenseForm.expense_date
+    || !expenseForm.title.trim()
+  ) {
+    ElMessage.warning('请补全项目、金额、日期和支出标题')
+    return
+  }
+  expenseSaving.value = true
+  try {
+    const expense = await createFinanceExpense({
+      project: expenseForm.project,
+      amount: expenseForm.amount,
+      expense_date: expenseForm.expense_date,
+      category: expenseForm.category,
+      title: expenseForm.title.trim(),
+      purpose: expenseForm.purpose.trim(),
+    })
+    if (manualReceiptFile.value) {
+      try {
+        await uploadReceipt(expense.id, manualReceiptFile.value)
+      } catch {
+        ElMessage.warning('支出草稿已保存，但票据上传失败，可稍后重新上传')
+      }
+    }
+    expenseDialogVisible.value = false
+    ElMessage.success('支出已保存为草稿，请核对后提交报销')
+    await loadData()
+  } finally {
+    expenseSaving.value = false
+  }
 }
 
 function openIncomeDialog(income?: FinanceIncome): void {
@@ -735,6 +964,23 @@ function openPaymentDialog(expense: FinanceExpense): void {
   paymentDialogVisible.value = true
 }
 
+function openRequestedTodo(): void {
+  const expenseId = Number(route.query.expense_id)
+  const action = String(route.query.action || '')
+  if (!Number.isInteger(expenseId) || expenseId <= 0) return
+  const expense = expenseList.value.find((item) => item.id === expenseId)
+  if (!expense) return
+  financeTab.value = 'expenses'
+  if (action === 'finance_review' && expense.reimbursement_status === 'pending') {
+    openReviewDialog(expense)
+  } else if (
+    action === 'finance_payment'
+    && expense.reimbursement_status === 'approved'
+  ) {
+    openPaymentDialog(expense)
+  }
+}
+
 async function savePayment(): Promise<void> {
   if (!workflowExpense.value || !paymentForm.payment_method) return
   workflowSaving.value = true
@@ -744,7 +990,7 @@ async function savePayment(): Promise<void> {
       paymentForm.payment_method,
       paymentForm.payment_reference.trim(),
     )
-    ElMessage.success('付款已登记，预算汇总已更新')
+    ElMessage.success('报销打款已登记，预算汇总已更新')
     paymentDialogVisible.value = false
     await loadData()
   } finally {
@@ -938,9 +1184,9 @@ async function handleExport(format: string | number | object): Promise<void> {
   }
 }
 
-onMounted(() => {
-  loadProjects()
-  loadData()
+onMounted(async () => {
+  await Promise.all([loadProjects(), loadData()])
+  openRequestedTodo()
 })
 
 onUnmounted(() => {

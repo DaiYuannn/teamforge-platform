@@ -13,10 +13,11 @@ from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.permissions import IsAuthenticated
+from django.db.models import Q
 
 from common.response import success_response, error_response
 from common.mixins import MultiSerializerMixin, MultiPermissionMixin
-from common.permissions import IsTeacherOrAdmin
+from apps.common.team_models import Team, TeamMember
 from .models import ImportTask
 from .serializers import (
     ImportTaskSerializer, ImportTaskListSerializer,
@@ -43,17 +44,55 @@ class ImportTaskViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet
     }
 
     permission_classes_by_action = {
-        'list': [IsTeacherOrAdmin],
-        'retrieve': [IsTeacherOrAdmin],
-        'preview': [IsTeacherOrAdmin],
-        'confirm': [IsTeacherOrAdmin],
-        'rollback': [IsTeacherOrAdmin],
-        'destroy': [IsTeacherOrAdmin],
+        'list': [IsAuthenticated],
+        'retrieve': [IsAuthenticated],
+        'preview': [IsAuthenticated],
+        'confirm': [IsAuthenticated],
+        'rollback': [IsAuthenticated],
+        'destroy': [IsAuthenticated],
     }
 
     filterset_fields = ['module', 'status', 'created_by']
     search_fields = ['module', 'file_path']
     ordering_fields = ['created_at', 'updated_at']
+
+    @staticmethod
+    def _managed_team_ids(user):
+        membership_ids = TeamMember.objects.filter(
+            user=user,
+            role__in=[
+                TeamMember.Role.OWNER,
+                TeamMember.Role.CO_LEAD,
+                TeamMember.Role.ADMIN,
+            ],
+            status=TeamMember.Status.ACTIVE,
+        ).values_list('team_id', flat=True)
+        direct_ids = set(membership_ids) | set(
+            Team.objects.filter(owner=user).values_list('id', flat=True)
+        )
+        child_ids = Team.objects.filter(
+            parent_id__in=direct_ids,
+        ).values_list('id', flat=True)
+        return direct_ids | set(child_ids)
+
+    def get_queryset(self):
+        queryset = super().get_queryset().select_related('team', 'created_by')
+        user = self.request.user
+        if user.global_role == 'sys_admin':
+            return queryset
+        managed_ids = self._managed_team_ids(user)
+        # 旧任务没有团队字段；仅原创建人可继续查看和处理。
+        return queryset.filter(
+            Q(team_id__in=managed_ids)
+            | Q(team__isnull=True, created_by=user)
+        ).distinct()
+
+    def update(self, request, *args, **kwargs):
+        return error_response(
+            message='导入任务不可直接修改，请重新上传预览',
+            code=2407,
+            http_status=status.HTTP_405_METHOD_NOT_ALLOWED,
+        )
 
     @action(detail=False, methods=['post'])
     def preview(self, request):
@@ -68,7 +107,26 @@ class ImportTaskViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet
 
         file = serializer.validated_data['file']
         module = serializer.validated_data['module']
+        team_id = serializer.validated_data.get('team')
         custom_mapping = serializer.validated_data.get('field_mapping', {})
+
+        managed_ids = self._managed_team_ids(request.user)
+        team = Team.objects.filter(pk=team_id).first() if team_id else None
+        if team_id and team is None:
+            return error_response(message='所选团队不存在', http_status=status.HTTP_400_BAD_REQUEST)
+        if team and request.user.global_role != 'sys_admin' and team.id not in managed_ids:
+            return error_response(
+                message='只有团队主负责人、共同负责人或管理员可以向该团队导入数据',
+                http_status=status.HTTP_403_FORBIDDEN,
+            )
+        if team is None and len(managed_ids) == 1:
+            team = Team.objects.filter(pk=next(iter(managed_ids))).first()
+        if team is None and request.user.global_role not in ['sys_admin', 'teacher']:
+            return error_response(
+                message='只有团队负责人或管理员可以导入数据',
+                code=1003,
+                http_status=status.HTTP_403_FORBIDDEN,
+            )
 
         # 保存文件到临时目录
         upload_dir = os.path.join(settings.MEDIA_ROOT, 'imports')
@@ -117,6 +175,7 @@ class ImportTaskViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet
             error_rows=len(error_details),
             error_details=error_details,
             created_by=request.user,
+            team=team,
         )
 
         return success_response({
@@ -152,7 +211,11 @@ class ImportTaskViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet
         import_task.save()
 
         # 执行导入
-        success, result = import_service.confirm_import(import_task, field_mapping)
+        success, result = import_service.confirm_import(
+            import_task,
+            field_mapping,
+            operator=request.user,
+        )
 
         if not success:
             return error_response(message=result)

@@ -32,7 +32,7 @@
               :loading="projectsLoading"
             >
               <el-option
-                v-for="project in projectOptions"
+                v-for="project in selectableProjectOptions"
                 :key="project.id"
                 :label="`${project.name}（${project.code}）`"
                 :value="project.id"
@@ -92,6 +92,103 @@
             </el-select>
           </el-form-item>
         </div>
+      </section>
+
+      <section class="form-section" aria-labelledby="competition-roster-title">
+        <div class="section-heading">
+          <div>
+            <h3 id="competition-roster-title">实际参赛名单</h3>
+            <p>逐人记录比赛角色、计划/确认/退出状态与实际分工；退出人员保留历史，不直接删除。</p>
+          </div>
+        </div>
+        <div class="roster-add-row">
+          <el-form-item label="添加项目成员">
+            <el-select
+              v-model="newParticipantUserId"
+              filterable
+              clearable
+              placeholder="选择要加入名单的成员"
+              :loading="membersLoading"
+            >
+              <el-option
+                v-for="member in availableParticipantOptions"
+                :key="member.user"
+                :label="participantMemberName(member)"
+                :value="member.user"
+              />
+            </el-select>
+          </el-form-item>
+          <el-button
+            type="primary"
+            plain
+            :disabled="!newParticipantUserId"
+            @click="addParticipantDraft"
+          >
+            加入名单
+          </el-button>
+        </div>
+
+        <el-table
+          v-if="participantDrafts.length"
+          :data="participantDrafts"
+          size="small"
+          class="roster-table"
+        >
+          <el-table-column label="成员" min-width="120">
+            <template #default="{ row }">
+              <strong>{{ row.user_name }}</strong>
+            </template>
+          </el-table-column>
+          <el-table-column label="比赛角色" min-width="128">
+            <template #default="{ row }">
+              <el-select v-model="row.role">
+                <el-option label="比赛负责人" value="leader" />
+                <el-option label="参赛成员" value="member" />
+                <el-option label="指导人员" value="advisor" />
+              </el-select>
+            </template>
+          </el-table-column>
+          <el-table-column label="参与状态" min-width="124">
+            <template #default="{ row }">
+              <el-select v-model="row.participation_status">
+                <el-option label="计划参与" value="planned" />
+                <el-option label="已确认" value="confirmed" />
+                <el-option label="已退出" value="withdrawn" />
+              </el-select>
+            </template>
+          </el-table-column>
+          <el-table-column label="具体分工" min-width="210">
+            <template #default="{ row }">
+              <el-input
+                v-model="row.responsibility"
+                maxlength="500"
+                show-word-limit
+                placeholder="如材料撰写、数据分析、答辩"
+              />
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="92" align="right">
+            <template #default="{ row }">
+              <el-button
+                v-if="row.participation_status !== 'withdrawn'"
+                text
+                type="danger"
+                @click="withdrawParticipant(row)"
+              >
+                {{ row.id ? '标记退出' : '移除' }}
+              </el-button>
+              <el-button
+                v-else
+                text
+                type="primary"
+                @click="row.participation_status = 'confirmed'"
+              >
+                恢复
+              </el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+        <el-empty v-else :image-size="56" description="尚未添加参赛人员" />
       </section>
 
       <section class="form-section" aria-labelledby="competition-milestone-title">
@@ -288,8 +385,14 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
-import { createCompetition, updateCompetition } from '@/api/competitions'
-import { getProjects } from '@/api/projects'
+import {
+  addCompetitionParticipant,
+  createCompetition,
+  getCompetitionParticipants,
+  updateCompetition,
+  updateCompetitionParticipant,
+} from '@/api/competitions'
+import { getProjectMembers, getProjects } from '@/api/projects'
 import {
   COMPETITION_LEVEL_MAP,
   COMPETITION_STAGE_OPTIONS,
@@ -300,11 +403,24 @@ import type {
   Competition,
   CompetitionFormData,
   CompetitionLevel,
+  CompetitionParticipant,
   Project,
+  ProjectMember,
 } from '@/types'
 
 interface CompetitionEditorForm extends Omit<CompetitionFormData, 'project'> {
   project?: number
+  leader_user_ids: number[]
+  member_user_ids: number[]
+}
+
+interface CompetitionParticipantDraft {
+  id?: number
+  user: number
+  user_name: string
+  role: CompetitionParticipant['role']
+  participation_status: CompetitionParticipant['participation_status']
+  responsibility: string
 }
 
 const props = defineProps<{
@@ -322,10 +438,17 @@ const formRef = ref<FormInstance>()
 const submitting = ref(false)
 const projectsLoading = ref(false)
 const projectOptions = ref<Project[]>([])
+const membersLoading = ref(false)
+const participantOptions = ref<ProjectMember[]>([])
+const loadedParticipants = ref<Competition['participants']>([])
+const participantDrafts = ref<CompetitionParticipantDraft[]>([])
+const newParticipantUserId = ref<number>()
 
 function makeDefaultForm(): CompetitionEditorForm {
   return {
     project: undefined,
+    leader_user_ids: [],
+    member_user_ids: [],
     name: '',
     level: 'school',
     status: 'preparing',
@@ -360,6 +483,16 @@ const dialogVisible = computed({
 const showNotPromotedReason = computed(
   () => !form.is_promoted && (form.status === 'completed' || Boolean(form.not_promoted_reason)),
 )
+const availableParticipantOptions = computed(() => {
+  const selectedIds = new Set(participantDrafts.value.map((item) => item.user))
+  return participantOptions.value.filter((member) => !selectedIds.has(member.user))
+})
+const selectableProjectOptions = computed(() =>
+  projectOptions.value.filter((project) =>
+    project.can_manage
+    || (isEdit.value && project.id === props.formData?.project),
+  ),
+)
 
 const rules: FormRules<CompetitionEditorForm> = {
   project: [{ required: true, message: '请选择所属项目', trigger: 'change' }],
@@ -386,7 +519,10 @@ function showStageDate(target: Exclude<CompetitionLevel, 'school'>): boolean {
 
 function syncForm(value: Competition | null): void {
   Object.assign(form, makeDefaultForm())
+  participantDrafts.value = []
+  newParticipantUserId.value = undefined
   if (!value) return
+  participantDrafts.value = (value.participants || []).map(toParticipantDraft)
   Object.assign(form, {
     project: value.project,
     name: value.name ?? '',
@@ -410,7 +546,71 @@ function syncForm(value: Competition | null): void {
     not_promoted_reason: value.not_promoted_reason ?? '',
     improvement_suggestion: value.improvement_suggestion ?? '',
     review_summary: value.review_summary ?? '',
+    leader_user_ids: (value.participants || [])
+      .filter((item) => item.role === 'leader' && item.participation_status !== 'withdrawn')
+      .map((item) => item.user),
+    member_user_ids: (value.participants || [])
+      .filter((item) => item.role === 'member' && item.participation_status !== 'withdrawn')
+      .map((item) => item.user),
   })
+}
+
+function participantMemberName(member: ProjectMember): string {
+  return member.user_detail?.name || member.user_name || `成员 ${member.user}`
+}
+
+function toParticipantDraft(
+  participant: CompetitionParticipant,
+): CompetitionParticipantDraft {
+  return {
+    id: participant.id,
+    user: participant.user,
+    user_name: participant.user_detail?.name || `成员 ${participant.user}`,
+    role: participant.role,
+    participation_status: participant.participation_status,
+    responsibility: participant.responsibility || '',
+  }
+}
+
+function syncLegacyRosterFields(): void {
+  form.leader_user_ids = participantDrafts.value
+    .filter((item) =>
+      item.role === 'leader'
+      && item.participation_status !== 'withdrawn',
+    )
+    .map((item) => item.user)
+  form.member_user_ids = participantDrafts.value
+    .filter((item) =>
+      item.role === 'member'
+      && item.participation_status !== 'withdrawn',
+    )
+    .map((item) => item.user)
+}
+
+function addParticipantDraft(): void {
+  if (!newParticipantUserId.value) return
+  const member = participantOptions.value.find(
+    (item) => item.user === newParticipantUserId.value,
+  )
+  if (!member) return
+  participantDrafts.value.push({
+    user: member.user,
+    user_name: participantMemberName(member),
+    role: 'member',
+    participation_status: 'planned',
+    responsibility: '',
+  })
+  newParticipantUserId.value = undefined
+}
+
+function withdrawParticipant(row: any): void {
+  if (row.id) {
+    row.participation_status = 'withdrawn'
+    return
+  }
+  participantDrafts.value = participantDrafts.value.filter(
+    (item) => item !== row,
+  )
 }
 
 async function loadProjects(): Promise<void> {
@@ -426,6 +626,80 @@ async function loadProjects(): Promise<void> {
   }
 }
 
+async function loadProjectMembers(projectId?: number): Promise<void> {
+  participantOptions.value = []
+  if (!projectId) return
+  membersLoading.value = true
+  try {
+    participantOptions.value = (await getProjectMembers(projectId)).filter(
+      (member) => !member.status || member.status === 'active',
+    )
+  } catch {
+    // 请求错误已由拦截器处理。
+  } finally {
+    membersLoading.value = false
+  }
+}
+
+async function loadCompetitionRoster(competitionId: number): Promise<void> {
+  try {
+    const participants = await getCompetitionParticipants(competitionId)
+    loadedParticipants.value = participants
+    participantDrafts.value = participants.map(toParticipantDraft)
+    syncLegacyRosterFields()
+  } catch {
+    loadedParticipants.value = props.formData?.participants || []
+    participantDrafts.value = (loadedParticipants.value || []).map(toParticipantDraft)
+    syncLegacyRosterFields()
+  }
+}
+
+async function syncCompetitionRoster(competitionId: number): Promise<void> {
+  const desired = new Map(
+    participantDrafts.value.map((item) => [item.user, item]),
+  )
+  const current = loadedParticipants.value || []
+
+  await Promise.all(
+    current
+      .filter(
+        (item) =>
+          !desired.has(item.user)
+          && item.participation_status !== 'withdrawn',
+      )
+      .map((item) =>
+        updateCompetitionParticipant(competitionId, item.id, {
+          participation_status: 'withdrawn',
+        }),
+      ),
+  )
+  await Promise.all(
+    Array.from(desired.entries()).map(async ([user, draft]) => {
+      const existing = current.find((item) => item.user === user)
+      if (!existing) {
+        await addCompetitionParticipant(competitionId, {
+          user,
+          role: draft.role,
+          participation_status: draft.participation_status,
+          responsibility: draft.responsibility.trim(),
+        })
+        return
+      }
+      if (
+        existing.role !== draft.role
+        || existing.participation_status !== draft.participation_status
+        || (existing.responsibility || '') !== draft.responsibility.trim()
+      ) {
+        await updateCompetitionParticipant(competitionId, existing.id, {
+          role: draft.role,
+          participation_status: draft.participation_status,
+          responsibility: draft.responsibility.trim(),
+        })
+      }
+    }),
+  )
+}
+
 watch(
   () => props.formData,
   (value) => syncForm(value),
@@ -433,12 +707,37 @@ watch(
 )
 
 watch(
+  participantDrafts,
+  () => syncLegacyRosterFields(),
+  { deep: true },
+)
+
+watch(
   () => props.visible,
-  (visible) => {
+  async (visible) => {
     if (visible) {
       syncForm(props.formData)
-      loadProjects()
+      await Promise.all([
+        loadProjects(),
+        loadProjectMembers(form.project),
+        props.formData?.id
+          ? loadCompetitionRoster(props.formData.id)
+          : Promise.resolve(),
+      ])
     }
+  },
+)
+
+watch(
+  () => form.project,
+  (projectId, previousProjectId) => {
+    if (!dialogVisible.value || projectId === previousProjectId) return
+    form.leader_user_ids = []
+    form.member_user_ids = []
+    participantDrafts.value = []
+    loadedParticipants.value = []
+    newParticipantUserId.value = undefined
+    loadProjectMembers(projectId)
   },
 )
 
@@ -456,10 +755,12 @@ async function handleSubmit(): Promise<void> {
   const payload = buildPayload(form.project)
   try {
     if (isEdit.value && props.formData?.id) {
-      await updateCompetition(props.formData.id, payload)
+      const competition = await updateCompetition(props.formData.id, payload)
+      await syncCompetitionRoster(competition.id)
       ElMessage.success('比赛全流程记录已更新')
     } else {
-      await createCompetition(payload)
+      const competition = await createCompetition(payload)
+      await syncCompetitionRoster(competition.id)
       ElMessage.success('比赛创建成功')
     }
     emit('success')
@@ -500,6 +801,10 @@ function buildPayload(project: number = form.project as number): CompetitionForm
 
 function handleClose(): void {
   formRef.value?.clearValidate()
+  participantOptions.value = []
+  loadedParticipants.value = []
+  participantDrafts.value = []
+  newParticipantUserId.value = undefined
   syncForm(null)
 }
 

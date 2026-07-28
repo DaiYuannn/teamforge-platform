@@ -15,7 +15,7 @@ from common.storage import protected_media_response
 from common.mixins import MultiSerializerMixin, MultiPermissionMixin
 from .audit import record_download_audit
 from .models import FileAsset
-from .permissions import user_can_access_file
+from .permissions import scope_file_queryset, user_can_access_file
 from .share_models import FileShareLink
 from .share_serializers import (
     FileShareLinkSerializer,
@@ -59,13 +59,18 @@ class FileShareLinkViewSet(
     ordering_fields = ['created_at', 'view_count']
 
     def get_queryset(self):
-        """普通用户只能查看自己创建的分享链接；管理员可查看全部"""
+        """分享管理列表与文件中心使用同一登录态组织边界。"""
         queryset = super().get_queryset().exclude(
             file__level=FileAsset.Level.SENSITIVE
         )
         user = self.request.user
         if not user.is_authenticated:
             return queryset.none()
+        visible_file_ids = scope_file_queryset(
+            FileAsset.objects.all(),
+            user,
+        ).values_list('id', flat=True)
+        queryset = queryset.filter(file_id__in=visible_file_ids)
         if user.global_role in ['sys_admin', 'teacher']:
             return queryset
         return queryset.filter(created_by=user)

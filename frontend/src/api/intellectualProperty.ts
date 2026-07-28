@@ -2,6 +2,7 @@ import request from './request'
 import type {
   IPApplication,
   IPApplicationListItem,
+  IPApplicationCandidate,
   IPContributor,
   IPMaterialVersion,
   IPObjection,
@@ -54,6 +55,35 @@ export const syncIPContribution = (id: number): Promise<{ synced_count: number }
 
 /** 获取我的待办 */
 export const getMyIPTodo = (): Promise<IPTodoResponse> => request.get(`${BASE}/applications/my_todo/`)
+
+/** 获取拟申报/正式提交名单；接口不会返回身份证等敏感明文。 */
+export const getIPCandidates = (applicationId: number): Promise<IPApplicationCandidate[]> =>
+  request.get(`${BASE}/applications/${applicationId}/candidates/`)
+
+/** 添加拟申报成员。 */
+export const addIPCandidate = (
+  applicationId: number,
+  data: Pick<IPApplicationCandidate, 'user' | 'legal_role'> &
+    Partial<Pick<IPApplicationCandidate, 'planned_order' | 'status' | 'identity_check_status' | 'note'>>,
+): Promise<IPApplicationCandidate> =>
+  request.post(`${BASE}/applications/${applicationId}/candidates/`, data)
+
+/** 更新名单状态、署名顺序或身份核验结果。 */
+export const updateIPCandidate = (
+  applicationId: number,
+  candidateId: number,
+  data: Partial<Pick<IPApplicationCandidate, 'legal_role' | 'planned_order' | 'status' | 'identity_check_status' | 'note'>>,
+): Promise<IPApplicationCandidate> =>
+  request.patch(`${BASE}/applications/${applicationId}/candidates/`, {
+    candidate_id: candidateId,
+    ...data,
+  })
+
+/** 移除拟申报名单记录。 */
+export const deleteIPCandidate = (applicationId: number, candidateId: number): Promise<any> =>
+  request.delete(`${BASE}/applications/${applicationId}/candidates/`, {
+    params: { candidate_id: candidateId },
+  })
 
 // ============================================
 // 责任分工

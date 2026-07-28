@@ -9,13 +9,18 @@ from rest_framework.decorators import action
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.permissions import IsAuthenticated
 from django.shortcuts import get_object_or_404
-from django.db.models import Count, Q
+from django.db.models import Count, Prefetch, Q
 
 from common.response import success_response, error_response
 from common.mixins import MultiSerializerMixin, MultiPermissionMixin
 from common.permissions import IsInternalTeamMember
 from common.permissions import user_has_custom_permission
-from common.project_access import is_external_collaborator, scope_project_queryset
+from common.project_access import (
+    is_external_collaborator,
+    project_can_manage,
+    scope_project_queryset,
+    user_can_join_project,
+)
 from .models import Project, ProjectMember, ProjectMembershipEvent, ProjectStageLog
 from .serializers import (
     ProjectSerializer, ProjectListSerializer, ProjectCreateSerializer,
@@ -71,6 +76,13 @@ class ProjectViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet):
             super()
             .get_queryset()
             .select_related('leader')
+            .prefetch_related(
+                'teams',
+                Prefetch(
+                    'members',
+                    queryset=ProjectMember.objects.select_related('user'),
+                ),
+            )
             .annotate(
                 active_member_count=Count(
                     'members',
@@ -82,12 +94,12 @@ class ProjectViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet):
             )
         )
         user = self.request.user
-        if getattr(user, 'membership_status', '') == User.MembershipStatus.EXTERNAL:
-            queryset = queryset.filter(
-                members__user=user,
-                members__status=ProjectMember.Status.ACTIVE,
-            )
-        else:
+        queryset = scope_project_queryset(
+            queryset,
+            user,
+            project_lookup='',
+        )
+        if getattr(user, 'membership_status', '') != User.MembershipStatus.EXTERNAL:
             queryset = queryset.prefetch_related('budgets')
         if self.request.query_params.get('scope') == 'mine':
             queryset = queryset.filter(
@@ -105,7 +117,10 @@ class ProjectViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet):
         serializer.is_valid(raise_exception=True)
         project = serializer.save()
         return success_response(
-            ProjectSerializer(project).data,
+            ProjectSerializer(
+                project,
+                context=self.get_serializer_context(),
+            ).data,
             message='项目创建成功',
             http_status=status.HTTP_201_CREATED,
         )
@@ -119,7 +134,13 @@ class ProjectViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet):
         serializer = self.get_serializer(instance, data=request.data, partial=partial)
         serializer.is_valid(raise_exception=True)
         project = serializer.save()
-        return success_response(ProjectSerializer(project).data, message='项目更新成功')
+        return success_response(
+            ProjectSerializer(
+                project,
+                context=self.get_serializer_context(),
+            ).data,
+            message='项目更新成功',
+        )
 
     def destroy(self, request, *args, **kwargs):
         """删除项目（软删除，移入回收站）"""
@@ -164,7 +185,10 @@ class ProjectViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet):
             return error_response(message=result)
 
         return success_response(
-            ProjectSerializer(result).data,
+            ProjectSerializer(
+                result,
+                context=self.get_serializer_context(),
+            ).data,
             message='阶段推进成功',
         )
 
@@ -190,7 +214,10 @@ class ProjectViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet):
             return error_response(message=result)
 
         return success_response(
-            ProjectSerializer(result).data,
+            ProjectSerializer(
+                result,
+                context=self.get_serializer_context(),
+            ).data,
             message='打卡更新成功',
         )
 
@@ -208,8 +235,7 @@ class ProjectViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet):
         """
         project = self.get_object()
         can_manage_members = (
-            project.leader_id == request.user.id
-            or request.user.global_role in ['sys_admin', 'teacher']
+            project_can_manage(request.user, project)
             or user_has_custom_permission(
                 request.user, 'project.manage', project_id=project.id,
             )
@@ -248,6 +274,16 @@ class ProjectViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet):
 
             if role_in_project not in ProjectMember.RoleInProject.values:
                 return error_response(message='项目角色不合法', code=1001)
+            if not user_can_join_project(
+                user,
+                project,
+                role=role_in_project,
+            ):
+                return error_response(
+                    message='项目成员必须属于同一总团队；外部协作者请使用外部协作者角色',
+                    code=1005,
+                    http_status=status.HTTP_400_BAD_REQUEST,
+                )
 
             success, result = project_service.add_member(
                 project, user, role_in_project, operator=request.user
@@ -281,6 +317,20 @@ class ProjectViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet):
                 return error_response(message='项目角色不合法', code=1001)
             if status_value and status_value not in ProjectMember.Status.values:
                 return error_response(message='成员状态不合法', code=1001)
+            candidate_role = role_value or member.role_in_project
+            if (
+                role_value
+                or status_value == ProjectMember.Status.ACTIVE
+            ) and not user_can_join_project(
+                member.user,
+                project,
+                role=candidate_role,
+            ):
+                return error_response(
+                    message='项目成员必须属于同一总团队；外部协作者请使用外部协作者角色',
+                    code=1005,
+                    http_status=status.HTTP_400_BAD_REQUEST,
+                )
             handover = None
             if request.data.get('handover_to'):
                 handover = project.members.filter(
@@ -292,6 +342,16 @@ class ProjectViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet):
             if member.user_id == project.leader_id and status_value == ProjectMember.Status.EXITED:
                 if not handover:
                     return error_response(message='项目负责人退出前必须指定交接成员', code=1001)
+                if not user_can_join_project(
+                    handover.user,
+                    project,
+                    role=ProjectMember.RoleInProject.LEADER,
+                ):
+                    return error_response(
+                        message='接任负责人必须是同一总团队的在队成员',
+                        code=1005,
+                        http_status=status.HTTP_400_BAD_REQUEST,
+                    )
                 project.leader = handover.user
                 project.save(update_fields=['leader', 'updated_at'])
                 handover.role_in_project = ProjectMember.RoleInProject.LEADER

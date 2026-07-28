@@ -45,6 +45,7 @@ class UnifiedTodoView(APIView):
                 enum=[
                     'task', 'overdue_task', 'approval',
                     'contribution_review', 'ip_todo',
+                    'finance_review', 'finance_payment',
                 ],
                 required=False,
             ),
@@ -96,19 +97,22 @@ class UnifiedTodoView(APIView):
         if not filter_type or filter_type in ('task', 'overdue_task'):
             todos.extend(self._collect_tasks(user, filter_type))
 
-        # 3. 待审批敏感资料申请（审批人角色）
+        # 3. 待审批敏感资料申请（按小团队实际审批范围）
         if not filter_type or filter_type == 'approval':
-            if user.global_role in ('sens_approver', 'teacher', 'sys_admin'):
-                todos.extend(self._collect_sensitive_approvals(user))
+            todos.extend(self._collect_sensitive_approvals(user))
 
-        # 4. 待审核贡献：老师/管理员看全部，负责人看自己负责项目。
+        # 4. 待审核贡献：只发给明确分派的审核人；系统管理员保留兜底。
         if not filter_type or filter_type == 'contribution_review':
-            if user.global_role in ('teacher', 'sys_admin') or user.led_projects.exists():
-                todos.extend(self._collect_contribution_reviews(user))
+            todos.extend(self._collect_contribution_reviews(user))
 
         # 5. 知识产权流程待办
         if not filter_type or filter_type == 'ip_todo':
             todos.extend(self._collect_ip_todos(user))
+
+        # 6. 经费流程待办。只按项目负责人/显式财务权限路由，
+        # 不把所有老师都广播为经费审核人。
+        if not filter_type or filter_type in ('finance_review', 'finance_payment'):
+            todos.extend(self._collect_finance_todos(user, filter_type))
 
         # 按优先级降序、截止时间升序排序
         todos.sort(
@@ -181,13 +185,30 @@ class UnifiedTodoView(APIView):
     def _collect_sensitive_approvals(self, user):
         """采集待审批的敏感资料访问申请"""
         from apps.sensitive.models import SensitiveAccessRequest
+        from apps.sensitive.permissions import (
+            can_review_sensitive_request,
+            sensitive_review_team_ids,
+        )
 
         todos = []
+        review_filter = Q(
+            sensitive_data__team_id__in=sensitive_review_team_ids(user),
+        )
+        if (
+            user.global_role == 'sens_approver'
+            and user.membership_status in {'active', 'on_leave'}
+        ):
+            review_filter |= Q(sensitive_data__team__isnull=True)
         qs = SensitiveAccessRequest.objects.filter(
+            review_filter,
             status=SensitiveAccessRequest.Status.PENDING,
-        ).select_related('sensitive_data', 'applicant')
+        ).exclude(
+            applicant=user,
+        ).select_related('sensitive_data', 'sensitive_data__team', 'applicant')
 
         for req in qs:
+            if not can_review_sensitive_request(user, req):
+                continue
             todos.append({
                 'id': req.id,
                 'type': 'approval',
@@ -210,8 +231,28 @@ class UnifiedTodoView(APIView):
         qs = Contribution.objects.filter(
             status=Contribution.Status.PENDING,
         ).select_related('user', 'project')
-        if user.global_role not in ('teacher', 'sys_admin'):
-            qs = qs.filter(project__leader=user)
+        if user.global_role != 'sys_admin':
+            from apps.projects.models import ProjectMember
+
+            qs = qs.filter(
+                Q(reviewer=user)
+                | Q(
+                    reviewer__isnull=True,
+                    project__leader=user,
+                )
+                | Q(
+                    reviewer__isnull=True,
+                    project__members__user=user,
+                    project__members__role_in_project=(
+                        ProjectMember.RoleInProject.LEADER
+                    ),
+                    project__members__status=ProjectMember.Status.ACTIVE,
+                )
+            ).exclude(
+                user=user,
+            ).exclude(
+                filled_by=user,
+            ).distinct()
 
         for contrib in qs:
             todos.append({
@@ -278,5 +319,74 @@ class UnifiedTodoView(APIView):
                 ),
                 'status': application.status,
                 'status_display': application.get_status_display(),
+            })
+        return todos
+
+    def _collect_finance_todos(self, user, filter_type=''):
+        """采集待审核报销与待打款事项，并沿用经费模块的项目级权限。"""
+        from apps.finance.models import FinanceExpense
+        from common.permissions import user_has_custom_permission
+        from common.project_access import has_active_project_leadership
+
+        todos = []
+        queryset = (
+            FinanceExpense.objects.filter(
+                reimbursement_status__in=[
+                    FinanceExpense.ReimbursementStatus.PENDING,
+                    FinanceExpense.ReimbursementStatus.APPROVED,
+                ],
+            )
+            .select_related('project', 'spender', 'applied_by')
+            .order_by('applied_at', 'created_at')
+        )
+        for expense in queryset:
+            can_manage_project = user_has_custom_permission(
+                user,
+                'finance.manage',
+                project_id=expense.project_id,
+            )
+            if expense.reimbursement_status == FinanceExpense.ReimbursementStatus.PENDING:
+                item_type = 'finance_review'
+                is_assignee = (
+                    expense.project.leader_id == user.id
+                    or has_active_project_leadership(user, expense.project)
+                    or can_manage_project
+                )
+                title = f'待审核报销：{expense.title}（{expense.amount} 元）'
+                priority = 'high'
+                due_at = expense.applied_at or expense.created_at
+            else:
+                item_type = 'finance_payment'
+                is_assignee = (
+                    user.global_role == 'sys_admin'
+                    or can_manage_project
+                )
+                title = f'待登记打款：{expense.title}（{expense.amount} 元）'
+                priority = 'medium'
+                due_at = expense.reviewed_at or expense.created_at
+
+            if not is_assignee or (filter_type and filter_type != item_type):
+                continue
+            todos.append({
+                'id': expense.id,
+                'type': item_type,
+                'title': title,
+                'url': (
+                    f'/finance?project_id={expense.project_id}'
+                    f'&expense_id={expense.id}&action={item_type}'
+                ),
+                'route_name': 'FinanceOverview',
+                'route_params': {},
+                'route_query': {
+                    'project_id': expense.project_id,
+                    'expense_id': expense.id,
+                    'action': item_type,
+                },
+                'priority': priority,
+                'due_date': due_at.isoformat() if due_at else None,
+                'project_id': expense.project_id,
+                'project_name': expense.project.name,
+                'status': expense.reimbursement_status,
+                'status_display': expense.get_reimbursement_status_display(),
             })
         return todos

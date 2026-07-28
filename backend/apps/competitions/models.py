@@ -34,6 +34,13 @@ class Competition(models.Model):
         related_name='competitions',
         verbose_name='所属项目',
     )
+    participant_users = models.ManyToManyField(
+        settings.AUTH_USER_MODEL,
+        through='CompetitionParticipant',
+        related_name='competition_participations',
+        verbose_name='参赛成员',
+        blank=True,
+    )
     # 比赛名称
     name = models.CharField('比赛名称', max_length=200)
     # 比赛类型
@@ -99,6 +106,64 @@ class Competition(models.Model):
 
     def __str__(self):
         return f'{self.project.name} - {self.name}({self.get_level_display()})'
+
+
+class CompetitionParticipant(models.Model):
+    """比赛实际组织名单，独立于项目成员和获奖人名单。"""
+
+    class Role(models.TextChoices):
+        LEADER = 'leader', '比赛负责人'
+        MEMBER = 'member', '参赛成员'
+        ADVISOR = 'advisor', '指导成员'
+
+    class ParticipationStatus(models.TextChoices):
+        PLANNED = 'planned', '拟参赛'
+        CONFIRMED = 'confirmed', '已确认'
+        WITHDRAWN = 'withdrawn', '已退出'
+
+    competition = models.ForeignKey(
+        Competition,
+        on_delete=models.CASCADE,
+        related_name='participants',
+        verbose_name='比赛',
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name='competition_participant_records',
+        verbose_name='成员',
+    )
+    role = models.CharField(
+        '比赛角色',
+        max_length=20,
+        choices=Role.choices,
+        default=Role.MEMBER,
+    )
+    participation_status = models.CharField(
+        '参与状态',
+        max_length=20,
+        choices=ParticipationStatus.choices,
+        default=ParticipationStatus.PLANNED,
+        db_index=True,
+    )
+    responsibility = models.TextField('比赛分工', blank=True, default='')
+    joined_at = models.DateTimeField('加入时间', auto_now_add=True)
+    updated_at = models.DateTimeField('更新时间', auto_now=True)
+
+    class Meta:
+        db_table = 'competition_participants'
+        verbose_name = '比赛参赛成员'
+        verbose_name_plural = verbose_name
+        ordering = ['role', 'joined_at', 'id']
+        constraints = [
+            models.UniqueConstraint(
+                fields=('competition', 'user'),
+                name='uniq_competition_participant_user',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.competition.name} - {self.user.name}'
 
 
 from .award_models import CompetitionAward  # noqa: E402,F401

@@ -84,7 +84,9 @@ def test_project_list_summary_uses_fixed_query_count(
 
     assert response.status_code == 200
     assert len(extract_results(response)) >= 6
-    assert len(captured) <= 6
+    # 两级团队可见范围解析会增加固定的团队成员、团队负责人和根团队查询；
+    # 这里仍约束项目数量增长时不得出现逐项目查询。
+    assert len(captured) <= 9
 
 
 @pytest.mark.api

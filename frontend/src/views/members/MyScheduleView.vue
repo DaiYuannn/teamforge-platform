@@ -1,14 +1,13 @@
 <template>
   <div class="page-container schedule-page">
-    <PageHeader title="我的灵活工时" subtitle="按半月周期登记可投入时间与工作方式">
+    <PageHeader title="我的可投入安排" subtitle="登记近期可参与工作的日期范围和大致投入量，不统计实际工时">
       <template #actions>
         <el-button
           type="primary"
           :icon="Plus"
-          :disabled="currentPeriod?.is_filled"
           @click="handleOpenForm"
         >
-          {{ currentPeriod?.is_filled ? '本期已填写' : '填写本期工时' }}
+          {{ currentPeriod?.is_filled ? '修改本期安排' : '填写本期安排' }}
         </el-button>
       </template>
     </PageHeader>
@@ -16,7 +15,7 @@
     <el-alert
       v-if="loadFailed"
       class="load-alert"
-      title="工时数据暂时无法加载"
+      title="可投入安排暂时无法加载"
       type="error"
       :closable="false"
       show-icon
@@ -39,8 +38,8 @@
 
       <dl class="period-summary">
         <div class="period-summary__primary">
-          <dt>可投入工时</dt>
-          <dd>{{ currentSchedule ? scheduleHours(currentSchedule) : '-' }}<small>小时</small></dd>
+          <dt>预计可投入</dt>
+          <dd>{{ currentSchedule ? totalCapacityDays(currentSchedule) : '-' }}<small>天</small></dd>
         </div>
         <div>
           <dt>负载状态</dt>
@@ -60,8 +59,8 @@
           <dd>{{ currentSchedule ? (currentSchedule.can_urgent ? '可以' : '不可') : '-' }}</dd>
         </div>
         <div class="period-summary__notes">
-          <dt>备注</dt>
-          <dd>{{ currentSchedule ? scheduleNotes(currentSchedule) || '-' : '-' }}</dd>
+          <dt>可投入日期</dt>
+          <dd>{{ currentSchedule ? availabilitySummary(currentSchedule) : '-' }}</dd>
         </div>
       </dl>
     </section>
@@ -70,21 +69,21 @@
       <header class="section-heading">
         <div>
           <h2 id="schedule-history-title">历史记录</h2>
-          <p>{{ scheduleList.length }} 个周期</p>
+          <p>{{ scheduleList.length }} 个周期，仅记录计划安排</p>
         </div>
       </header>
 
       <el-table v-if="!isMobile" :data="scheduleList" table-layout="fixed" size="small">
         <template #empty>
-          <EmptyState v-if="!loading" text="暂无工时记录" compact />
+          <EmptyState v-if="!loading" text="暂无可投入安排" compact />
         </template>
         <el-table-column label="周期" min-width="190">
           <template #default="{ row }">
             {{ displayDate(row.period_start) }} - {{ displayDate(row.period_end) }}
           </template>
         </el-table-column>
-        <el-table-column label="可投入工时" width="110" align="right">
-          <template #default="{ row }">{{ scheduleHours(row as ScheduleRecord) }} 小时</template>
+        <el-table-column label="预计投入" width="100" align="right">
+          <template #default="{ row }">{{ totalCapacityDays(row as ScheduleRecord) }} 天</template>
         </el-table-column>
         <el-table-column label="线下" width="76" align="center">
           <template #default="{ row }">{{ row.can_offline ? '可以' : '不可' }}</template>
@@ -99,8 +98,8 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="备注" min-width="160" show-overflow-tooltip>
-          <template #default="{ row }">{{ scheduleNotes(row as ScheduleRecord) || '-' }}</template>
+        <el-table-column label="可投入日期" min-width="220" show-overflow-tooltip>
+          <template #default="{ row }">{{ availabilitySummary(row as ScheduleRecord) }}</template>
         </el-table-column>
         <el-table-column label="填写时间" width="118">
           <template #default="{ row }">{{ displayDate(scheduleFilledAt(row as ScheduleRecord)) }}</template>
@@ -108,7 +107,7 @@
       </el-table>
 
       <div v-else class="mobile-schedule-list">
-        <EmptyState v-if="!loading && scheduleList.length === 0" text="暂无工时记录" compact />
+        <EmptyState v-if="!loading && scheduleList.length === 0" text="暂无可投入安排" compact />
         <article v-for="item in scheduleList" :key="item.id" class="schedule-card">
           <header>
             <div>
@@ -121,16 +120,16 @@
           </header>
           <dl>
             <div>
-              <dt>可投入工时</dt>
-              <dd>{{ scheduleHours(item) }} 小时</dd>
+              <dt>预计可投入</dt>
+              <dd>{{ totalCapacityDays(item) }} 天</dd>
             </div>
             <div>
               <dt>线下 / 紧急</dt>
               <dd>{{ item.can_offline ? '可线下' : '不可线下' }} / {{ item.can_urgent ? '可紧急' : '不可紧急' }}</dd>
             </div>
-            <div v-if="scheduleNotes(item)" class="schedule-card__notes">
-              <dt>备注</dt>
-              <dd>{{ scheduleNotes(item) }}</dd>
+            <div class="schedule-card__notes">
+              <dt>日期安排</dt>
+              <dd>{{ availabilitySummary(item) }}</dd>
             </div>
           </dl>
         </article>
@@ -139,14 +138,57 @@
 
     <el-dialog
       v-model="formVisible"
-      title="填写本期工时"
+      title="填写本期可投入安排"
       :width="dialogWidth"
       :close-on-click-modal="false"
       @close="handleClose"
     >
       <el-form ref="formRef" :model="form" :rules="rules" label-position="top">
-        <el-form-item label="可投入时间（小时）" prop="work_hours">
-          <el-input-number v-model="form.work_hours" :min="0" :max="200" :precision="1" />
+        <el-alert
+          title="这里填的是未来大致能投入的日期和容量，不要求事后补填实际工作时长。"
+          type="info"
+          :closable="false"
+          show-icon
+        />
+        <el-form-item label="可投入日期与大致容量" prop="windows">
+          <div class="availability-editor">
+            <article v-for="(window, index) in form.windows" :key="index" class="availability-window">
+              <el-date-picker
+                v-model="window.dateRange"
+                type="daterange"
+                range-separator="至"
+                start-placeholder="开始日期"
+                end-placeholder="结束日期"
+                value-format="YYYY-MM-DD"
+                :disabled-date="disableOutsideCurrentPeriod"
+              />
+              <div class="capacity-row">
+                <span>这段时间大约能投入</span>
+                <el-input-number
+                  v-model="window.capacity_days"
+                  :min="0.5"
+                  :max="periodDayCount"
+                  :step="0.5"
+                  :precision="1"
+                />
+                <span>天</span>
+                <el-button
+                  v-if="form.windows.length > 1"
+                  link
+                  type="danger"
+                  @click="removeWindow(index)"
+                >
+                  删除
+                </el-button>
+              </div>
+              <el-input
+                v-model="window.note"
+                maxlength="200"
+                placeholder="可选：例如晚间可线上、23 日全天可线下"
+              />
+            </article>
+            <el-button plain @click="addWindow">增加一段日期</el-button>
+          </div>
         </el-form-item>
         <div class="switch-grid">
           <el-form-item label="可以线下协作" prop="can_offline">
@@ -159,8 +201,8 @@
             <el-switch v-model="form.is_saturated" />
           </el-form-item>
         </div>
-        <el-form-item label="备注" prop="notes">
-          <el-input v-model="form.notes" type="textarea" :rows="3" maxlength="500" show-word-limit />
+        <el-form-item label="其他说明" prop="notes">
+          <el-input v-model="form.notes" type="textarea" :rows="2" maxlength="500" show-word-limit />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -177,17 +219,30 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
-import { createSchedule, getCurrentPeriod, getMySchedules } from '@/api/members'
+import { createSchedule, getCurrentPeriod, getMySchedules, updateSchedule } from '@/api/members'
 import { formatDate } from '@/utils/format'
 import { useDevice } from '@/composables/useDevice'
-import type { FlexibleWorkSchedule } from '@/types'
+import type { AvailabilityWindow, FlexibleWorkSchedule } from '@/types'
 import EmptyState from '@/components/EmptyState.vue'
 import PageHeader from '@/components/PageHeader.vue'
 
 type ScheduleRecord = FlexibleWorkSchedule & {
   notes?: string
   filled_at?: string
-  detail?: Record<string, unknown>
+}
+
+interface AvailabilityWindowForm {
+  dateRange: [string, string] | []
+  capacity_days: number
+  note: string
+}
+
+interface AvailabilityForm {
+  windows: AvailabilityWindowForm[]
+  can_offline: boolean
+  can_urgent: boolean
+  is_saturated: boolean
+  notes: string
 }
 
 interface CurrentPeriod {
@@ -219,25 +274,73 @@ const periodLabel = computed(() =>
     ? `${displayDate(currentPeriod.value.period_start)} - ${displayDate(currentPeriod.value.period_end)}`
     : '周期信息加载中',
 )
+const periodDayCount = computed(() => {
+  if (!currentPeriod.value) return 31
+  const start = new Date(`${currentPeriod.value.period_start}T00:00:00`)
+  const end = new Date(`${currentPeriod.value.period_end}T00:00:00`)
+  return Math.max(1, Math.floor((end.getTime() - start.getTime()) / 86_400_000) + 1)
+})
 
-const defaultForm = {
-  work_hours: 40,
-  can_offline: true,
-  can_urgent: false,
-  is_saturated: false,
-  notes: '',
+function emptyWindow(): AvailabilityWindowForm {
+  return {
+    dateRange: currentPeriod.value
+      ? [currentPeriod.value.period_start, currentPeriod.value.period_end]
+      : [],
+    capacity_days: 0.5,
+    note: '',
+  }
 }
-const form = reactive({ ...defaultForm })
+
+function createDefaultForm(): AvailabilityForm {
+  return {
+    windows: [emptyWindow()],
+    can_offline: true,
+    can_urgent: false,
+    is_saturated: false,
+    notes: '',
+  }
+}
+
+const form = reactive<AvailabilityForm>(createDefaultForm())
 const rules: FormRules = {
-  work_hours: [{ required: true, message: '请输入可投入时间', trigger: 'blur' }],
+  windows: [{
+    validator: (_rule: unknown, value: AvailabilityWindowForm[], callback: (error?: Error) => void) => {
+      const invalid = !value.length || value.some(
+        (item) => item.dateRange.length !== 2 || !item.capacity_days || item.capacity_days <= 0,
+      )
+      callback(invalid ? new Error('请完整填写至少一段可投入日期和大致容量') : undefined)
+    },
+    trigger: 'change',
+  }],
 }
 
 function displayDate(value?: string | null): string {
   return value ? formatDate(value) : '-'
 }
 
-function scheduleHours(item: ScheduleRecord): number | string {
-  return item.work_hours ?? item.available_hours ?? '-'
+function availabilityWindows(item: ScheduleRecord): AvailabilityWindow[] {
+  const windows = item.detail?.availability_windows
+  return Array.isArray(windows) ? windows : []
+}
+
+function totalCapacityDays(item: ScheduleRecord): number | string {
+  const windows = availabilityWindows(item)
+  if (windows.length) {
+    return windows.reduce((sum, window) => sum + Number(window.capacity_days || 0), 0)
+  }
+  const legacyHours = Number(item.work_hours ?? item.available_hours)
+  return Number.isFinite(legacyHours) ? Number((legacyHours / 8).toFixed(1)) : '-'
+}
+
+function availabilitySummary(item: ScheduleRecord): string {
+  const windows = availabilityWindows(item)
+  if (!windows.length) return '旧记录未填写具体日期'
+  return windows.map((window) => {
+    const range = window.start_date === window.end_date
+      ? displayDate(window.start_date)
+      : `${displayDate(window.start_date)} 至 ${displayDate(window.end_date)}`
+    return `${range}（约 ${window.capacity_days} 天）${window.note ? `：${window.note}` : ''}`
+  }).join('；')
 }
 
 function scheduleNotes(item: ScheduleRecord): string {
@@ -272,7 +375,44 @@ function handleOpenForm(): void {
     ElMessage.warning('当前周期尚未加载完成')
     return
   }
+  const existing = currentSchedule.value
+  if (existing) {
+    const windows = availabilityWindows(existing)
+    Object.assign(form, {
+      windows: windows.length
+        ? windows.map((window) => ({
+            dateRange: [window.start_date, window.end_date] as [string, string],
+            capacity_days: Number(window.capacity_days),
+            note: window.note || '',
+          }))
+        : [emptyWindow()],
+      can_offline: existing.can_offline,
+      can_urgent: existing.can_urgent,
+      is_saturated: existing.is_saturated,
+      notes: scheduleNotes(existing),
+    })
+  } else {
+    Object.assign(form, createDefaultForm())
+  }
   formVisible.value = true
+}
+
+function addWindow(): void {
+  form.windows.push(emptyWindow())
+}
+
+function removeWindow(index: number): void {
+  form.windows.splice(index, 1)
+}
+
+function disableOutsideCurrentPeriod(date: Date): boolean {
+  if (!currentPeriod.value) return false
+  const value = [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, '0'),
+    String(date.getDate()).padStart(2, '0'),
+  ].join('-')
+  return value < currentPeriod.value.period_start || value > currentPeriod.value.period_end
 }
 
 async function handleSubmit(): Promise<void> {
@@ -282,12 +422,28 @@ async function handleSubmit(): Promise<void> {
 
   submitting.value = true
   try {
-    await createSchedule({
+    const payload = {
       period_start: currentPeriod.value.period_start,
       period_end: currentPeriod.value.period_end,
-      ...form,
-    })
-    ElMessage.success('本期工时已提交')
+      detail: {
+        availability_windows: form.windows.map((window) => ({
+          start_date: window.dateRange[0],
+          end_date: window.dateRange[1],
+          capacity_days: window.capacity_days,
+          note: window.note.trim(),
+        })),
+      },
+      can_offline: form.can_offline,
+      can_urgent: form.can_urgent,
+      is_saturated: form.is_saturated,
+      notes: form.notes.trim(),
+    }
+    if (currentSchedule.value) {
+      await updateSchedule(currentSchedule.value.id, payload)
+    } else {
+      await createSchedule(payload)
+    }
+    ElMessage.success('本期可投入安排已保存')
     formVisible.value = false
     await loadData()
   } catch {
@@ -299,7 +455,7 @@ async function handleSubmit(): Promise<void> {
 
 function handleClose(): void {
   formRef.value?.clearValidate()
-  Object.assign(form, defaultForm)
+  Object.assign(form, createDefaultForm())
 }
 
 onMounted(loadData)
@@ -455,6 +611,32 @@ onMounted(loadData)
   grid-column: 1 / -1;
 }
 
+.availability-editor {
+  display: grid;
+  width: 100%;
+  gap: 10px;
+}
+
+.availability-window {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  background: var(--color-surface-subtle);
+  border: 1px solid var(--color-border-light);
+  border-radius: 6px;
+}
+
+.capacity-row {
+  display: grid;
+  grid-template-columns: auto 120px auto 1fr;
+  align-items: center;
+  gap: 8px;
+
+  :deep(.el-button) {
+    justify-self: end;
+  }
+}
+
 .switch-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -526,6 +708,15 @@ onMounted(loadData)
   .switch-grid {
     grid-template-columns: minmax(0, 1fr);
     gap: 0;
+  }
+
+  .capacity-row {
+    grid-template-columns: minmax(0, 1fr) 104px auto;
+
+    :deep(.el-button) {
+      grid-column: 1 / -1;
+      justify-self: start;
+    }
   }
 
   .dialog-actions {

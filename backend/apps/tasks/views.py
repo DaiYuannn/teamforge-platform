@@ -13,11 +13,10 @@ from django.db.models import Q
 from common.response import success_response, error_response
 from common.mixins import MultiSerializerMixin, MultiPermissionMixin
 from common.permissions import IsProjectLeaderOrTeacherOrAdmin, user_has_custom_permission
+from common.project_access import scope_project_queryset
 from .models import Task
 from .serializers import TaskSerializer, TaskListSerializer, TaskCreateSerializer
 from .services import task_service
-from apps.projects.models import ProjectMember
-from apps.users.models import User
 
 
 class TaskViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet):
@@ -55,14 +54,14 @@ class TaskViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet):
     ]
 
     def get_queryset(self):
-        queryset = super().get_queryset()
+        queryset = scope_project_queryset(
+            super().get_queryset().select_related(
+                'project', 'assignee', 'creator', 'reviewer',
+            ).prefetch_related('collaborators'),
+            self.request.user,
+            project_lookup='project',
+        )
         user = self.request.user
-        if getattr(user, 'membership_status', '') == User.MembershipStatus.EXTERNAL:
-            project_ids = ProjectMember.objects.filter(
-                user=user,
-                status=ProjectMember.Status.ACTIVE,
-            ).values_list('project_id', flat=True)
-            queryset = queryset.filter(project_id__in=project_ids)
         if self.request.query_params.get('scope') == 'mine':
             queryset = queryset.filter(
                 Q(assignee=user)

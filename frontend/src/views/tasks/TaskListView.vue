@@ -82,10 +82,10 @@
           </el-select>
         </el-form-item>
 
-        <el-form-item label="负责人" class="filter-assignee">
+        <el-form-item label="任务负责人" class="filter-assignee">
           <el-select
             v-model="queryParams.assignee"
-            placeholder="全部负责人"
+            placeholder="全部任务负责人"
             filterable
             clearable
           >
@@ -135,7 +135,7 @@
       <header class="workspace-header">
         <div class="workspace-heading">
           <h2>{{ activeView === 'table' ? '任务清单' : '任务看板' }}</h2>
-          <p>{{ activeView === 'table' ? '按项目、负责人和期限汇总' : '按主流程状态组织当前任务' }}</p>
+          <p>{{ activeView === 'table' ? '按项目、任务负责人和期限汇总' : '按主流程状态组织当前任务' }}</p>
         </div>
         <span class="result-count">共 {{ total }} 项</span>
       </header>
@@ -174,12 +174,21 @@
             </template>
           </el-table-column>
 
-          <el-table-column prop="assignee_name" label="负责人" width="132">
+          <el-table-column prop="assignee_name" label="任务负责人" width="132">
             <template #default="{ row }">
               <span class="assignee-cell">
                 <el-avatar :size="24">{{ getInitial(row.assignee_name) }}</el-avatar>
                 <span>{{ row.assignee_name || '-' }}</span>
               </span>
+            </template>
+          </el-table-column>
+
+          <el-table-column label="协作执行 / 验收" min-width="170">
+            <template #default="{ row }">
+              <div class="milestone-cell">
+                <span>{{ row.collaborator_names?.join('、') || '无协作执行人' }}</span>
+                <span><small>验收</small>{{ row.reviewer_name || '项目负责人' }}</span>
+              </div>
             </template>
           </el-table-column>
 

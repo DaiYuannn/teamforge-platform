@@ -205,6 +205,15 @@
         <el-form-item label="手机号" prop="phone">
           <el-input v-model="form.phone" placeholder="请输入手机号" />
         </el-form-item>
+        <el-form-item label="学校">
+          <el-input v-model="form.school" placeholder="请输入学校" />
+        </el-form-item>
+        <el-form-item label="年级">
+          <el-input v-model="form.grade" placeholder="例如 2024级" />
+        </el-form-item>
+        <el-form-item label="专业">
+          <el-input v-model="form.major" placeholder="请输入专业" />
+        </el-form-item>
         <el-form-item label="角色" prop="global_role">
           <el-select v-model="form.global_role" placeholder="选择角色" style="width: 100%">
             <el-option
@@ -359,6 +368,9 @@ const defaultForm: UserFormData = {
   name: '',
   global_role: 'member' as UserRole,
   phone: '',
+  school: '',
+  grade: '',
+  major: '',
   password: '',
   password_confirm: '',
   is_active: true,
@@ -449,6 +461,9 @@ function handleEdit(row: User): void {
     name: row.name,
     global_role: row.global_role,
     phone: row.phone || '',
+    school: row.school || '',
+    grade: row.grade || '',
+    major: row.major || '',
     password: '',
     password_confirm: '',
     is_active: row.is_active,

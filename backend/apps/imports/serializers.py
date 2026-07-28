@@ -21,6 +21,7 @@ class ImportTaskSerializer(serializers.ModelSerializer):
     module_display = serializers.CharField(source='get_module_display', read_only=True)
     status_display = serializers.CharField(source='get_status_display', read_only=True)
     created_by_name = serializers.CharField(source='created_by.name', read_only=True, default='')
+    team_name = serializers.CharField(source='team.name', read_only=True, default='')
     file_name = serializers.SerializerMethodField()
     can_rollback = serializers.SerializerMethodField()
 
@@ -28,13 +29,15 @@ class ImportTaskSerializer(serializers.ModelSerializer):
         model = ImportTask
         fields = (
             'id', 'module', 'module_display', 'file_path', 'file_name',
+            'team', 'team_name',
             'status', 'status_display', 'can_rollback',
             'field_mapping', 'preview_data', 'snapshot',
             'total_rows', 'valid_rows', 'error_rows', 'error_details',
             'created_by', 'created_by_name', 'created_at', 'updated_at',
         )
         read_only_fields = (
-            'id', 'status', 'preview_data', 'snapshot',
+            'id', 'module', 'file_path', 'team', 'field_mapping',
+            'status', 'preview_data', 'snapshot',
             'total_rows', 'valid_rows', 'error_rows', 'error_details',
             'created_by', 'created_at', 'updated_at',
         )
@@ -51,13 +54,15 @@ class ImportTaskListSerializer(serializers.ModelSerializer):
     module_display = serializers.CharField(source='get_module_display', read_only=True)
     status_display = serializers.CharField(source='get_status_display', read_only=True)
     created_by_name = serializers.CharField(source='created_by.name', read_only=True, default='')
+    team_name = serializers.CharField(source='team.name', read_only=True, default='')
     file_name = serializers.SerializerMethodField()
     can_rollback = serializers.SerializerMethodField()
 
     class Meta:
         model = ImportTask
         fields = (
-            'id', 'module', 'module_display', 'file_name', 'status', 'status_display',
+            'id', 'module', 'module_display', 'file_name', 'team', 'team_name',
+            'status', 'status_display',
             'total_rows', 'valid_rows', 'error_rows',
             'error_details', 'created_by_name', 'can_rollback', 'created_at', 'updated_at',
         )
@@ -74,6 +79,7 @@ class ImportPreviewSerializer(serializers.Serializer):
     """导入预览请求序列化器"""
     file = serializers.FileField(required=True)
     module = serializers.ChoiceField(choices=ImportTask.Module.choices, required=True)
+    team = serializers.IntegerField(required=False, allow_null=True)
     field_mapping = serializers.JSONField(required=False, default=dict)
 
 

@@ -2,7 +2,7 @@
   <div class="page-container collaboration-page">
     <PageHeader
       :title="task?.title || '任务协作详情'"
-      :subtitle="task ? `${task.project_name || '所属项目'} · ${task.assignee_name || '未分配负责人'}` : '检查清单、依赖关系与协作讨论'"
+      :subtitle="task ? `${task.project_name || '所属项目'} · 任务负责人：${task.assignee_name || '未分配'}` : '检查清单、依赖关系与协作讨论'"
     >
       <template #actions>
         <el-button :icon="ArrowLeft" @click="router.back()">返回</el-button>
@@ -42,6 +42,14 @@
         <div>
           <span>协作进度</span>
           <strong>{{ completedSubTasks }}/{{ subTasks.length }} 项完成</strong>
+        </div>
+        <div>
+          <span>协作执行人</span>
+          <strong>{{ task.collaborators_detail?.map((item) => item.name).join('、') || '无' }}</strong>
+        </div>
+        <div>
+          <span>任务验收人</span>
+          <strong>{{ task.reviewer_name || '项目负责人' }}</strong>
         </div>
       </section>
 
@@ -253,7 +261,7 @@
           <el-input v-model="subTaskForm.title" maxlength="200" show-word-limit autofocus />
         </el-form-item>
         <div class="dialog-grid">
-          <el-form-item label="负责人">
+          <el-form-item label="子任务执行人">
             <el-select v-model="subTaskForm.assignee" clearable filterable placeholder="暂不分配">
               <el-option v-for="member in members" :key="member.id" :label="member.name" :value="member.id" />
             </el-select>
@@ -337,7 +345,7 @@ import {
 import { getProject, getProjectMembers } from '@/api/projects'
 import { useUserStore } from '@/stores/user'
 import { formatDateTime, getTaskPriorityLabel, getTaskStatusLabel, getTaskStatusTagType } from '@/utils/format'
-import type { Project, Task, User } from '@/types'
+import type { Project, ProjectMember, Task, User } from '@/types'
 
 const route = useRoute()
 const router = useRouter()
@@ -355,6 +363,7 @@ const dependencies = ref<TaskDependency[]>([])
 const comments = ref<TaskComment[]>([])
 const projectTasks = ref<Task[]>([])
 const members = ref<User[]>([])
+const projectMemberships = ref<ProjectMember[]>([])
 
 const subTaskDialogVisible = ref(false)
 const editingSubTask = ref<SubTask | null>(null)
@@ -372,7 +381,14 @@ const commentEditDraft = ref('')
 
 const canManage = computed(() => {
   const userId = userStore.userInfo?.id
-  return ['teacher', 'sys_admin'].includes(userStore.role) || project.value?.leader === userId
+  return ['teacher', 'sys_admin'].includes(userStore.role)
+    || project.value?.leader === userId
+    || projectMemberships.value.some(
+      (membership) =>
+        membership.user === userId
+        && membership.role_in_project === 'leader'
+        && membership.status !== 'exited',
+    )
 })
 const completedSubTasks = computed(() => subTasks.value.filter((item) => item.is_completed).length)
 const subTaskProgress = computed(() => subTasks.value.length
@@ -420,6 +436,7 @@ async function loadWorkspace(): Promise<void> {
     dependencies.value = dependencyPage.results
     comments.value = commentPage.results
     projectTasks.value = tasks
+    projectMemberships.value = memberships
     members.value = memberships
       .filter((membership) => membership.status !== 'exited')
       .map((membership) => membership.user_detail as User)

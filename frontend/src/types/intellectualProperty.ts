@@ -37,7 +37,11 @@ export interface IPApplication {
   ip_type: IPType
   related_project?: number | null
   related_project_name?: string
+  related_project_ids?: number[]
+  related_project_names?: string[]
+  project_links?: IPApplicationProjectLink[]
   status: IPStatus
+  status_note?: string
   main_writer?: number | null
   main_writer_name?: string
   main_writer_detail?: any
@@ -68,6 +72,7 @@ export interface IPApplication {
   updated_at: string
   // 详情才有的嵌套数据
   contributors?: IPContributor[]
+  candidates?: IPApplicationCandidate[]
   return_records?: IPReturnRecord[]
   material_versions?: IPMaterialVersion[]
   objections?: IPObjection[]
@@ -82,8 +87,11 @@ export interface IPApplicationListItem {
   ip_type_display?: string
   related_project?: number | null
   related_project_name?: string
+  related_project_ids?: number[]
+  related_project_names?: string[]
   status: IPStatus
   status_display?: string
+  status_note?: string
   main_writer?: number | null
   main_writer_name?: string
   applicant_executor?: number | null
@@ -91,6 +99,37 @@ export interface IPApplicationListItem {
   return_count: number
   created_at: string
   updated_at: string
+}
+
+export interface IPApplicationProjectLink {
+  id: number
+  application: number
+  project: number
+  project_name?: string
+  relation_type: 'primary' | 'source' | 'used_by'
+  relation_type_display?: string
+  note?: string
+  created_at?: string
+}
+
+export interface IPApplicationCandidate {
+  id: number
+  application: number
+  user: number
+  user_detail?: IPParticipantOption
+  legal_role: 'inventor' | 'author' | 'applicant' | 'other'
+  legal_role_display?: string
+  planned_order: number
+  status: 'proposed' | 'identity_pending' | 'confirmed' | 'submitted' | 'withdrawn'
+  status_display?: string
+  identity_check_status: 'pending' | 'matched' | 'mismatched' | 'not_required'
+  identity_check_status_display?: string
+  checked_by?: number | null
+  checked_by_name?: string
+  checked_at?: string | null
+  note?: string
+  created_at?: string
+  updated_at?: string
 }
 
 // 责任分工

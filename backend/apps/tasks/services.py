@@ -4,6 +4,7 @@
 from django.db import transaction
 from django.utils import timezone
 
+from common.project_access import project_can_manage
 from .models import Task, TaskLog
 
 
@@ -92,14 +93,8 @@ class TaskService:
 
     @staticmethod
     def is_manager(task, operator):
-        """老师、管理员或该任务所属项目负责人是任务管理者。"""
-        return bool(
-            operator
-            and (
-                operator.global_role in ('sys_admin', 'teacher')
-                or task.project.leader_id == operator.id
-            )
-        )
+        """老师、管理员、牵头负责人或共同负责人是任务管理者。"""
+        return project_can_manage(operator, task.project)
 
     @classmethod
     def can_access_status_action(cls, task, operator):

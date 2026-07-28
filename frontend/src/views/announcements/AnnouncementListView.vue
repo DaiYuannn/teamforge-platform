@@ -21,6 +21,10 @@
           <el-option label="系统公告" value="system" />
           <el-option label="项目公告" value="project" />
           <el-option label="活动公告" value="activity" />
+          <el-option label="常见问题" value="faq" />
+          <el-option label="计划书与PPT模板" value="template" />
+          <el-option label="会议回放" value="meeting" />
+          <el-option label="新闻与资料" value="news" />
           <el-option label="其他" value="other" />
         </el-select>
       </div>
@@ -36,7 +40,7 @@
           <template #default="{ row }">
             <div class="announcement-title">
               <el-icon v-if="row.is_pinned" class="pin-icon"><Top /></el-icon>
-              <span>{{ row.title }}</span>
+              <el-button link type="primary" @click="openDetail(row)">{{ row.title }}</el-button>
             </div>
           </template>
         </el-table-column>
@@ -73,10 +77,10 @@
         <el-empty v-if="announcements.length === 0 && !loading" description="暂无公告" />
         <article v-for="row in announcements" :key="row.id" class="mobile-announcement">
           <div class="mobile-title-row">
-            <h2 class="mobile-title">
+            <button type="button" class="mobile-title" @click="openDetail(row)">
               <el-icon v-if="row.is_pinned" class="pin-icon"><Top /></el-icon>
               <span>{{ row.title }}</span>
-            </h2>
+            </button>
             <el-tag
               :type="row.status === 'published' ? 'success' : row.status === 'archived' ? 'info' : 'warning'"
               size="small"
@@ -132,11 +136,36 @@
             <el-option label="系统公告" value="system" />
             <el-option label="项目公告" value="project" />
             <el-option label="活动公告" value="activity" />
+            <el-option label="常见问题" value="faq" />
+            <el-option label="计划书与PPT模板" value="template" />
+            <el-option label="会议回放" value="meeting" />
+            <el-option label="新闻与资料" value="news" />
             <el-option label="其他" value="other" />
           </el-select>
         </el-form-item>
         <el-form-item label="内容" prop="content">
           <el-input v-model="form.content" type="textarea" :rows="6" placeholder="请输入公告内容" />
+        </el-form-item>
+        <el-form-item label="资源链接">
+          <div class="resource-editor">
+            <div
+              v-for="(resource, index) in form.resource_links"
+              :key="index"
+              class="resource-editor-row"
+            >
+              <el-input v-model="resource.title" placeholder="资源名称，如：会议回放" />
+              <el-input v-model="resource.url" placeholder="https://..." />
+              <el-button text type="danger" @click="form.resource_links.splice(index, 1)">移除</el-button>
+            </div>
+            <el-button
+              v-if="form.resource_links.length < 20"
+              text
+              type="primary"
+              @click="form.resource_links.push({ title: '', url: '' })"
+            >
+              + 添加资源链接
+            </el-button>
+          </div>
         </el-form-item>
         <el-form-item label="状态">
           <el-radio-group v-model="form.status">
@@ -146,7 +175,7 @@
         </el-form-item>
         <el-form-item label="公开">
           <el-switch v-model="form.is_public" />
-          <span class="form-tip">公开公告可在无需登录的展示页查看</span>
+          <span class="form-tip">开启后互联网未登录访客也可见；关闭时仅实践团队登录成员可见。</span>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -154,6 +183,34 @@
         <el-button type="primary" :loading="submitting" @click="handleSubmit">确定</el-button>
       </template>
     </el-dialog>
+
+    <el-drawer
+      v-model="detailVisible"
+      :title="selectedAnnouncement?.title || '公告详情'"
+      :size="isMobile ? '100%' : '520px'"
+      append-to-body
+    >
+      <template v-if="selectedAnnouncement">
+        <div class="detail-meta">
+          <el-tag size="small">{{ selectedAnnouncement.category_display }}</el-tag>
+          <span>{{ selectedAnnouncement.author_name || '-' }}</span>
+          <span>{{ formatDate(selectedAnnouncement.published_at || selectedAnnouncement.created_at) }}</span>
+        </div>
+        <div class="announcement-content">{{ selectedAnnouncement.content }}</div>
+        <section v-if="selectedAnnouncement.resource_links?.length" class="announcement-resources">
+          <h3>相关资源</h3>
+          <a
+            v-for="(resource, index) in selectedAnnouncement.resource_links"
+            :key="`${resource.url}_${index}`"
+            :href="resource.url"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            {{ resource.title }}
+          </a>
+        </section>
+      </template>
+    </el-drawer>
   </div>
 </template>
 
@@ -164,15 +221,24 @@ import { Bottom, Delete, Plus, Top } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { useUserStore } from '@/stores/user'
 import { get, post, del } from '@/api/request'
+import { getTeams } from '@/api/teams'
 import { formatDate } from '@/utils/format'
 import { useDevice } from '@/composables/useDevice'
 
 const userStore = useUserStore()
-const canCreate = computed(() => userStore.isAdmin || userStore.isTeacher)
+const managesTeam = ref(false)
+const canCreate = computed(() =>
+  userStore.isAdmin
+  || userStore.isTeacher
+  || Boolean(userStore.userInfo?.permission_codes?.includes('announcement.manage'))
+  || managesTeam.value,
+)
 const { isMobile } = useDevice()
 
 const loading = ref(false)
 const announcements = ref<any[]>([])
+const detailVisible = ref(false)
+const selectedAnnouncement = ref<any | null>(null)
 const page = ref(1)
 const pageSize = userStore.itemsPerPage
 const total = ref(0)
@@ -187,6 +253,7 @@ const form = reactive({
   category: 'system',
   status: 'published',
   is_public: false,
+  resource_links: [] as Array<{ title: string; url: string }>,
 })
 const rules: FormRules = {
   title: [{ required: true, message: '请输入标题', trigger: 'blur' }],
@@ -208,6 +275,22 @@ async function loadData(): Promise<void> {
   }
 }
 
+async function loadManagePermission(): Promise<void> {
+  if (
+    userStore.isAdmin
+    || userStore.isTeacher
+    || userStore.userInfo?.permission_codes?.includes('announcement.manage')
+  ) {
+    managesTeam.value = true
+    return
+  }
+  try {
+    managesTeam.value = (await getTeams()).results.some((team) => team.can_manage)
+  } catch {
+    managesTeam.value = false
+  }
+}
+
 function handleCategoryChange(): void {
   page.value = 1
   loadData()
@@ -226,11 +309,24 @@ async function handleSubmit(): Promise<void> {
     form.category = 'system'
     form.status = 'published'
     form.is_public = false
+    form.resource_links.splice(0)
     loadData()
   } catch {
     // handled
   } finally {
     submitting.value = false
+  }
+}
+
+async function openDetail(row: any): Promise<void> {
+  selectedAnnouncement.value = row
+  detailVisible.value = true
+  try {
+    selectedAnnouncement.value = await get<any>(
+      `/notifications/announcements/${row.id}/`,
+    )
+  } catch {
+    // 列表数据仍可作为详情降级展示。
   }
 }
 
@@ -257,6 +353,7 @@ async function handleDelete(row: any): Promise<void> {
 
 onMounted(() => {
   loadData()
+  loadManagePermission()
 })
 </script>
 
@@ -320,6 +417,56 @@ onMounted(() => {
   margin-left: 8px;
   font-size: 12px;
   color: var(--color-text-muted);
+}
+
+.resource-editor {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.resource-editor-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.75fr) minmax(180px, 1.4fr) auto;
+  gap: 8px;
+}
+
+.detail-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
+.announcement-content {
+  margin-top: 20px;
+  color: var(--color-text);
+  line-height: 1.8;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.announcement-resources {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  margin-top: 24px;
+  padding-top: 18px;
+  border-top: 1px solid var(--color-border-light);
+}
+
+.announcement-resources h3 {
+  margin: 0 0 2px;
+  font-size: 14px;
+}
+
+.announcement-resources a {
+  color: var(--color-primary);
+  text-decoration: none;
+  overflow-wrap: anywhere;
 }
 
 .mobile-list {
@@ -395,6 +542,10 @@ onMounted(() => {
     display: block;
     margin: 6px 0 0;
     line-height: 1.5;
+  }
+
+  .resource-editor-row {
+    grid-template-columns: 1fr;
   }
 }
 </style>

@@ -156,3 +156,71 @@ class TestFinanceWorkflow:
         assert response.status_code == 200
         budget.refresh_from_db()
         assert budget.used_amount == Decimal('0')
+
+    def test_planned_budget_uses_committed_expenses_not_drafts(
+        self,
+        teacher_client,
+        make_project,
+    ):
+        project = make_project(leader=teacher_client.user)
+        response = teacher_client.post('/api/v1/finance/budgets/', {
+            'project': project.id,
+            'planned_amount': '1000.00',
+            'period': '2026',
+        }, format='json')
+        assert response.status_code == 201, response.json()
+
+        for title, amount, reimbursement_status in [
+            ('草稿不占用', '100.00', FinanceExpense.ReimbursementStatus.DRAFT),
+            ('待审核占用', '300.00', FinanceExpense.ReimbursementStatus.PENDING),
+            ('待打款占用', '250.00', FinanceExpense.ReimbursementStatus.APPROVED),
+            ('已打款占用', '200.00', FinanceExpense.ReimbursementStatus.PAID),
+            ('驳回不占用', '90.00', FinanceExpense.ReimbursementStatus.REJECTED),
+        ]:
+            FinanceExpense.objects.create(
+                project=project,
+                title=title,
+                amount=amount,
+                expense_date='2026-07-20',
+                reimbursement_status=reimbursement_status,
+            )
+
+        budget = FinanceBudget.objects.get(project=project)
+        assert budget.planned_amount == Decimal('1000.00')
+        assert budget.used_amount == Decimal('200.00')
+        assert budget.pending_reimbursement == Decimal('550.00')
+        assert budget.committed_amount == Decimal('750.00')
+        assert budget.available_amount == Decimal('250.00')
+        assert budget.status == FinanceBudget.Status.NORMAL
+
+        FinanceExpense.objects.create(
+            project=project,
+            title='追加待审核',
+            amount='100.00',
+            expense_date='2026-07-21',
+            reimbursement_status=FinanceExpense.ReimbursementStatus.PENDING,
+        )
+        budget.refresh_from_db()
+        assert budget.committed_amount == Decimal('850.00')
+        assert budget.available_amount == Decimal('150.00')
+        assert budget.status == FinanceBudget.Status.WARNING
+
+        detail = teacher_client.get(f'/api/v1/finance/budgets/{budget.id}/')
+        assert detail.status_code == 200
+        payload = response_data(detail)
+        assert payload['budget_basis'] == '1000.00'
+        assert payload['committed_amount'] == '850.00'
+        assert payload['available_amount'] == '150.00'
+
+    def test_planned_budget_cannot_be_negative(
+        self,
+        teacher_client,
+        make_project,
+    ):
+        project = make_project(leader=teacher_client.user)
+        response = teacher_client.post('/api/v1/finance/budgets/', {
+            'project': project.id,
+            'planned_amount': '-1.00',
+        }, format='json')
+
+        assert response.status_code == 400

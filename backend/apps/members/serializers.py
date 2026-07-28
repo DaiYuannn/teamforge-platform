@@ -2,6 +2,8 @@
 成员序列化器
 包含技能标签、成员技能、灵活工时、成员详情等序列化器
 """
+from decimal import Decimal, InvalidOperation
+
 from rest_framework import serializers
 from drf_spectacular.utils import extend_schema_field
 
@@ -9,6 +11,35 @@ from apps.users.models import User
 from apps.users.serializers import UserListSerializer
 from apps.projects.serializers import ProjectListSerializer
 from .models import SkillTag, MemberSkill, FlexibleWorkSchedule
+
+
+def _viewer(serializer):
+    request = serializer.context.get('request')
+    return getattr(request, 'user', None)
+
+
+def _get_active_team_memberships(user):
+    """返回成员当前所在小组；一个成员可同时属于多个团队。"""
+    from apps.common.team_models import TeamMember
+
+    memberships = getattr(user, 'prefetched_active_team_memberships', None)
+    if memberships is None:
+        memberships = TeamMember.objects.filter(
+            user=user,
+            status=TeamMember.Status.ACTIVE,
+        ).select_related('team', 'team__parent')
+    return [
+        {
+            'team_id': membership.team_id,
+            'team_name': membership.team.name,
+            'parent_id': membership.team.parent_id,
+            'parent_name': membership.team.parent.name if membership.team.parent else '',
+            'role': membership.role,
+            'role_display': membership.get_role_display(),
+            'status': membership.status,
+        }
+        for membership in memberships
+    ]
 
 
 class SkillTagSerializer(serializers.ModelSerializer):
@@ -33,7 +64,7 @@ class MemberSkillSerializer(serializers.ModelSerializer):
 
 
 class FlexibleWorkScheduleSerializer(serializers.ModelSerializer):
-    """灵活工时序列化器"""
+    """成员可投入安排序列化器。"""
     user_name = serializers.CharField(source='user.name', read_only=True)
 
     class Meta:
@@ -47,7 +78,7 @@ class FlexibleWorkScheduleSerializer(serializers.ModelSerializer):
 
 
 class FlexibleWorkScheduleCreateSerializer(serializers.ModelSerializer):
-    """灵活工时创建序列化器（用户填写当前半月周期）"""
+    """成员可投入安排创建序列化器（用户填写当前半月周期）。"""
 
     class Meta:
         model = FlexibleWorkSchedule
@@ -58,18 +89,92 @@ class FlexibleWorkScheduleCreateSerializer(serializers.ModelSerializer):
         )
         read_only_fields = ('id',)
 
-    def validate_proficiency_range(self, value):
-        """校验工时范围"""
+    def validate_work_hours(self, value):
+        """兼容旧客户端的工时字段，禁止绕过前端提交负数。"""
         if value < 0:
             raise serializers.ValidationError('可用工时不能为负数')
         return value
 
     def validate(self, attrs):
-        """校验时段"""
-        period_start = attrs.get('period_start')
-        period_end = attrs.get('period_end')
+        """校验周期及 detail.availability_windows 结构。"""
+        period_start = attrs.get(
+            'period_start',
+            getattr(self.instance, 'period_start', None),
+        )
+        period_end = attrs.get(
+            'period_end',
+            getattr(self.instance, 'period_end', None),
+        )
         if period_start and period_end and period_end <= period_start:
             raise serializers.ValidationError({'period_end': '时段结束必须晚于时段开始'})
+
+        detail = attrs.get('detail', getattr(self.instance, 'detail', {})) or {}
+        if not isinstance(detail, dict):
+            raise serializers.ValidationError({'detail': '可投入安排必须为对象'})
+        windows = detail.get('availability_windows', [])
+        if not isinstance(windows, list):
+            raise serializers.ValidationError({'detail': '可投入日期必须为列表'})
+
+        normalized_windows = []
+        total_capacity_days = Decimal('0')
+        date_field = serializers.DateField()
+        for index, window in enumerate(windows):
+            if not isinstance(window, dict):
+                raise serializers.ValidationError({
+                    'detail': f'第 {index + 1} 个可投入日期格式不正确',
+                })
+            try:
+                start_date = date_field.to_internal_value(window.get('start_date'))
+                end_date = date_field.to_internal_value(window.get('end_date'))
+            except serializers.ValidationError as exc:
+                raise serializers.ValidationError({
+                    'detail': f'第 {index + 1} 个可投入日期无效',
+                }) from exc
+            if end_date < start_date:
+                raise serializers.ValidationError({
+                    'detail': f'第 {index + 1} 个日期区间结束时间不能早于开始时间',
+                })
+            if period_start and start_date < period_start:
+                raise serializers.ValidationError({
+                    'detail': f'第 {index + 1} 个日期区间不能早于当前周期',
+                })
+            if period_end and end_date > period_end:
+                raise serializers.ValidationError({
+                    'detail': f'第 {index + 1} 个日期区间不能晚于当前周期',
+                })
+            try:
+                capacity_days = Decimal(str(window.get('capacity_days')))
+            except (InvalidOperation, TypeError, ValueError):
+                raise serializers.ValidationError({
+                    'detail': f'第 {index + 1} 个预计投入量无效',
+                })
+            if capacity_days <= 0 or capacity_days % Decimal('0.5') != 0:
+                raise serializers.ValidationError({
+                    'detail': f'第 {index + 1} 个预计投入量须为大于 0 的 0.5 天倍数',
+                })
+            inclusive_days = (end_date - start_date).days + 1
+            if capacity_days > inclusive_days:
+                raise serializers.ValidationError({
+                    'detail': f'第 {index + 1} 个预计投入量不能超过日期区间天数',
+                })
+            note = str(window.get('note') or '').strip()
+            if len(note) > 200:
+                raise serializers.ValidationError({
+                    'detail': f'第 {index + 1} 个安排备注不能超过 200 字',
+                })
+            normalized_windows.append({
+                'start_date': start_date.isoformat(),
+                'end_date': end_date.isoformat(),
+                'capacity_days': float(capacity_days),
+                'note': note,
+            })
+            total_capacity_days += capacity_days
+
+        detail['availability_windows'] = normalized_windows
+        attrs['detail'] = detail
+        # 旧报表和接口仍读取 work_hours；按每天 8 小时生成兼容值，
+        # 页面不再把它展示为实际投入时长。
+        attrs['work_hours'] = total_capacity_days * Decimal('8')
         return attrs
 
     def create(self, validated_data):
@@ -107,20 +212,26 @@ class MemberTaskSummarySerializer(serializers.Serializer):
 class MemberListSerializer(serializers.ModelSerializer):
     """成员列表精简序列化器（返回用户基本信息+联系方式）"""
     global_role_display = serializers.CharField(source='get_global_role_display', read_only=True)
+    team_memberships = serializers.SerializerMethodField()
 
     class Meta:
         model = User
         fields = (
             'id', 'username', 'name', 'email', 'phone', 'avatar',
-            'global_role', 'global_role_display', 'is_student', 'grade', 'major',
+            'global_role', 'global_role_display', 'is_student', 'school', 'grade', 'major',
             'membership_status', 'team_joined_at', 'team_left_at', 'is_active',
+            'team_memberships',
         )
         read_only_fields = fields
+
+    def get_team_memberships(self, obj):
+        return _get_active_team_memberships(obj)
 
 
 class MemberSerializer(serializers.ModelSerializer):
     """成员详情序列化器（返回用户基本信息+参与项目+联系方式）"""
     global_role_display = serializers.CharField(source='get_global_role_display', read_only=True)
+    team_memberships = serializers.SerializerMethodField()
     # 参与的项目
     projects = serializers.SerializerMethodField()
     # 参与的项目数量
@@ -130,10 +241,10 @@ class MemberSerializer(serializers.ModelSerializer):
         model = User
         fields = (
             'id', 'username', 'name', 'email', 'phone', 'avatar',
-            'global_role', 'global_role_display', 'is_student', 'grade', 'major',
+            'global_role', 'global_role_display', 'is_student', 'school', 'grade', 'major',
             'membership_status', 'team_joined_at', 'team_left_at', 'exit_reason',
             'handover_to', 'handover_notes', 'is_active',
-            'projects', 'project_count', 'date_joined',
+            'projects', 'project_count', 'team_memberships', 'date_joined',
         )
         read_only_fields = fields
 
@@ -141,7 +252,18 @@ class MemberSerializer(serializers.ModelSerializer):
     def get_projects(self, obj):
         """获取用户参与的项目列表"""
         from apps.projects.models import ProjectMember
-        memberships = ProjectMember.objects.filter(user=obj).select_related('project', 'user')
+        from common.project_access import scope_project_queryset
+
+        memberships = ProjectMember.objects.filter(
+            user=obj,
+        ).select_related('project', 'user')
+        viewer = _viewer(self)
+        if viewer is not None:
+            memberships = scope_project_queryset(
+                memberships,
+                viewer,
+                project_lookup='project',
+            )
         result = []
         for membership in memberships:
             project = membership.project
@@ -162,9 +284,22 @@ class MemberSerializer(serializers.ModelSerializer):
     def get_project_count(self, obj) -> int:
         """获取用户参与的项目数量"""
         from apps.projects.models import ProjectMember
-        return ProjectMember.objects.filter(
+        from common.project_access import scope_project_queryset
+
+        memberships = ProjectMember.objects.filter(
             user=obj, status=ProjectMember.Status.ACTIVE
-        ).count()
+        )
+        viewer = _viewer(self)
+        if viewer is not None:
+            memberships = scope_project_queryset(
+                memberships,
+                viewer,
+                project_lookup='project',
+            )
+        return memberships.count()
+
+    def get_team_memberships(self, obj):
+        return _get_active_team_memberships(obj)
 
 
 class MemberDetailSerializer(serializers.ModelSerializer):
@@ -173,6 +308,7 @@ class MemberDetailSerializer(serializers.ModelSerializer):
     返回用户基本信息 + 技能列表 + 灵活工作时间 + 参与项目 + 任务
     """
     global_role_display = serializers.CharField(source='get_global_role_display', read_only=True)
+    team_memberships = serializers.SerializerMethodField()
     # 技能列表
     skills = serializers.SerializerMethodField()
     # 灵活工作时间（最新一条）
@@ -190,11 +326,11 @@ class MemberDetailSerializer(serializers.ModelSerializer):
         model = User
         fields = (
             'id', 'username', 'name', 'email', 'phone', 'avatar',
-            'global_role', 'global_role_display', 'is_student', 'grade', 'major',
+            'global_role', 'global_role_display', 'is_student', 'school', 'grade', 'major',
             'membership_status', 'team_joined_at', 'team_left_at', 'exit_reason',
             'handover_to', 'handover_notes', 'is_active',
             'skills', 'latest_work_schedule',
-            'projects', 'project_count',
+            'projects', 'project_count', 'team_memberships',
             'tasks', 'task_count',
             'date_joined',
         )
@@ -218,7 +354,18 @@ class MemberDetailSerializer(serializers.ModelSerializer):
     def get_projects(self, obj):
         """获取用户参与的项目列表"""
         from apps.projects.models import ProjectMember
-        memberships = ProjectMember.objects.filter(user=obj).select_related('project', 'user')
+        from common.project_access import scope_project_queryset
+
+        memberships = ProjectMember.objects.filter(
+            user=obj,
+        ).select_related('project', 'user')
+        viewer = _viewer(self)
+        if viewer is not None:
+            memberships = scope_project_queryset(
+                memberships,
+                viewer,
+                project_lookup='project',
+            )
         result = []
         for membership in memberships:
             project = membership.project
@@ -239,18 +386,38 @@ class MemberDetailSerializer(serializers.ModelSerializer):
     def get_project_count(self, obj) -> int:
         """获取用户参与的项目数量"""
         from apps.projects.models import ProjectMember
-        return ProjectMember.objects.filter(
+        from common.project_access import scope_project_queryset
+
+        memberships = ProjectMember.objects.filter(
             user=obj, status=ProjectMember.Status.ACTIVE
-        ).count()
+        )
+        viewer = _viewer(self)
+        if viewer is not None:
+            memberships = scope_project_queryset(
+                memberships,
+                viewer,
+                project_lookup='project',
+            )
+        return memberships.count()
 
     @extend_schema_field(MemberTaskSummarySerializer(many=True))
     def get_tasks(self, obj):
         """获取分配给用户的任务列表（进行中/待办）"""
         from apps.tasks.models import Task
+        from common.project_access import scope_project_queryset
+
         tasks = Task.objects.filter(
             assignee=obj,
             status__in=['todo', 'doing', 'pending_review'],
-        ).select_related('project').order_by('-created_at')[:20]
+        ).select_related('project')
+        viewer = _viewer(self)
+        if viewer is not None:
+            tasks = scope_project_queryset(
+                tasks,
+                viewer,
+                project_lookup='project',
+            )
+        tasks = tasks.order_by('-created_at')[:20]
         result = []
         for task in tasks:
             result.append({
@@ -268,7 +435,20 @@ class MemberDetailSerializer(serializers.ModelSerializer):
     def get_task_count(self, obj) -> int:
         """获取分配给用户的未完成任务数量"""
         from apps.tasks.models import Task
-        return Task.objects.filter(
+        from common.project_access import scope_project_queryset
+
+        tasks = Task.objects.filter(
             assignee=obj,
             status__in=['todo', 'doing', 'pending_review'],
-        ).count()
+        )
+        viewer = _viewer(self)
+        if viewer is not None:
+            tasks = scope_project_queryset(
+                tasks,
+                viewer,
+                project_lookup='project',
+            )
+        return tasks.count()
+
+    def get_team_memberships(self, obj):
+        return _get_active_team_memberships(obj)

@@ -8,6 +8,7 @@
 """
 
 from django.utils import timezone
+from django.db.models import Prefetch
 from drf_spectacular.utils import OpenApiParameter, extend_schema, inline_serializer
 from rest_framework import serializers
 from rest_framework import status
@@ -19,7 +20,10 @@ from rest_framework.views import APIView
 from common.response import success_response, error_response
 from common.mixins import MultiSerializerMixin, MultiPermissionMixin
 from common.permissions import IsSysAdmin
-from common.project_access import is_external_collaborator
+from common.project_access import (
+    is_external_collaborator,
+    scope_organization_users,
+)
 from common.schema import success_response_schema
 from apps.users.models import User
 from apps.users.serializers import ExternalCollaboratorUserSerializer
@@ -52,15 +56,33 @@ class MemberViewSet(MultiSerializerMixin, ReadOnlyModelViewSet):
     permission_classes = [IsAuthenticated]
 
     filterset_fields = [
-        'global_role', 'membership_status', 'is_active', 'is_student', 'grade', 'major'
+        'global_role', 'membership_status', 'is_active', 'is_student',
+        'school', 'grade', 'major',
     ]
     search_fields = ['username', 'name', 'email', 'phone']
     ordering_fields = ['date_joined', 'name']
 
     def get_queryset(self):
-        queryset = super().get_queryset()
+        from apps.common.team_models import TeamMember
+
+        queryset = super().get_queryset().prefetch_related(
+            Prefetch(
+                'teammember_set',
+                queryset=TeamMember.objects.filter(
+                    status=TeamMember.Status.ACTIVE,
+                ).select_related('team', 'team__parent'),
+                to_attr='prefetched_active_team_memberships',
+            )
+        )
         if is_external_collaborator(self.request.user):
             return queryset.filter(pk=self.request.user.pk)
+        queryset = scope_organization_users(queryset, self.request.user)
+        team_id = self.request.query_params.get('team')
+        if team_id:
+            queryset = queryset.filter(
+                teammember__team_id=team_id,
+                teammember__status=TeamMember.Status.ACTIVE,
+            ).distinct()
         return queryset
 
     def get_serializer_class(self):
@@ -251,7 +273,10 @@ class MemberSkillViewSet(MultiSerializerMixin, ModelViewSet):
             )
 
         try:
-            user = User.objects.get(id=user_id, is_active=True)
+            user = scope_organization_users(
+                User.objects.filter(is_active=True),
+                request.user,
+            ).get(id=user_id)
         except User.DoesNotExist:
             return error_response(message='用户不存在', code=1004,
                                   http_status=status.HTTP_404_NOT_FOUND)
@@ -398,7 +423,10 @@ class FlexibleWorkScheduleViewSet(MultiSerializerMixin, ModelViewSet):
             )
 
         # 获取所有活跃用户的最新灵活工时
-        users = User.objects.filter(is_active=True).order_by('name')
+        users = scope_organization_users(
+            User.objects.filter(is_active=True),
+            request.user,
+        ).order_by('name')
         result = []
         for user in users:
             schedule = FlexibleWorkSchedule.objects.filter(user=user).first()
@@ -426,7 +454,10 @@ class FlexibleWorkScheduleViewSet(MultiSerializerMixin, ModelViewSet):
             )
 
         try:
-            user = User.objects.get(id=user_id, is_active=True)
+            user = scope_organization_users(
+                User.objects.filter(is_active=True),
+                request.user,
+            ).get(id=user_id)
         except User.DoesNotExist:
             return error_response(message='用户不存在', code=1004,
                                   http_status=status.HTTP_404_NOT_FOUND)
@@ -475,12 +506,18 @@ class MemberDetailView(APIView):
             )
 
         try:
-            user = User.objects.get(id=user_id, is_active=True)
+            user = scope_organization_users(
+                User.objects.filter(is_active=True),
+                request.user,
+            ).get(id=user_id)
         except User.DoesNotExist:
             return error_response(message='用户不存在', code=1004,
                                   http_status=status.HTTP_404_NOT_FOUND)
 
-        serializer = MemberDetailSerializer(user)
+        serializer = MemberDetailSerializer(
+            user,
+            context={'request': request},
+        )
         return success_response(serializer.data)
 
 
@@ -547,7 +584,15 @@ class MemberGrowthTimelineView(APIView):
             IPApplicationContributor,
         )
         from apps.tasks.models import Task
-        from apps.projects.models import ProjectMember, ProjectMembershipEvent
+        from apps.projects.models import (
+            Project,
+            ProjectMember,
+            ProjectMembershipEvent,
+        )
+        from common.project_access import scope_project_queryset
+        from apps.intellectual_property.permissions import (
+            accessible_ip_applications,
+        )
         from apps.users.models import UserLifecycleEvent
 
         user_id = request.query_params.get('user_id') or request.user.id
@@ -562,15 +607,26 @@ class MemberGrowthTimelineView(APIView):
             )
 
         try:
-            user = User.objects.get(id=user_id)
+            user = scope_organization_users(
+                User.objects.all(),
+                request.user,
+            ).get(id=user_id)
         except User.DoesNotExist:
             return error_response(message='用户不存在', code=1004,
                                   http_status=status.HTTP_404_NOT_FOUND)
 
         events = []
+        visible_project_ids = scope_project_queryset(
+            Project.objects.all(),
+            request.user,
+            project_lookup='',
+        ).values_list('id', flat=True)
 
         # 1. 贡献记录
-        contribs = Contribution.objects.filter(user=user).select_related('project').order_by('-created_at')
+        contribs = Contribution.objects.filter(
+            user=user,
+            project_id__in=visible_project_ids,
+        ).select_related('project').order_by('-created_at')
         contrib_summary = {
             'total': contribs.count(),
             'approved': contribs.filter(status='approved').count(),
@@ -594,7 +650,10 @@ class MemberGrowthTimelineView(APIView):
             })
 
         # 2. 项目参与
-        memberships = ProjectMember.objects.filter(user=user).select_related('project').order_by('-joined_at')
+        memberships = ProjectMember.objects.filter(
+            user=user,
+            project_id__in=visible_project_ids,
+        ).select_related('project').order_by('-joined_at')
         for m in memberships:
             events.append({
                 'id': f'project_join_{m.id}',
@@ -612,7 +671,8 @@ class MemberGrowthTimelineView(APIView):
 
         # 2.1 项目角色、暂离、退出和交接记录
         membership_events = ProjectMembershipEvent.objects.filter(
-            membership__user=user
+            membership__user=user,
+            membership__project_id__in=visible_project_ids,
         ).select_related('membership__project', 'handover_to__user', 'operator')
         for item in membership_events:
             if item.event_type == ProjectMembershipEvent.EventType.JOINED:
@@ -662,7 +722,10 @@ class MemberGrowthTimelineView(APIView):
             })
 
         # 3. 比赛参与(通过项目关联)
-        comp_qs = Competition.objects.filter(project__members__user=user).select_related('project').distinct()
+        comp_qs = Competition.objects.filter(
+            project__members__user=user,
+            project_id__in=visible_project_ids,
+        ).select_related('project').distinct()
         for comp in comp_qs:
             if comp.result_date:
                 events.append({
@@ -682,7 +745,12 @@ class MemberGrowthTimelineView(APIView):
                 })
 
         # 4. 知识产权贡献
-        ip_contribs = IPApplicationContributor.objects.filter(user=user).select_related(
+        ip_contribs = IPApplicationContributor.objects.filter(
+            user=user,
+            application_id__in=accessible_ip_applications(
+                request.user,
+            ).values_list('id', flat=True),
+        ).select_related(
             'application'
         ).order_by('-created_at')
         for ic in ip_contribs:
@@ -702,7 +770,11 @@ class MemberGrowthTimelineView(APIView):
             })
 
         # 5. 任务完成
-        done_tasks = Task.objects.filter(assignee=user, status='done').select_related('project').order_by('-completed_at')
+        done_tasks = Task.objects.filter(
+            assignee=user,
+            status='done',
+            project_id__in=visible_project_ids,
+        ).select_related('project').order_by('-completed_at')
         for t in done_tasks[:50]:
             events.append({
                 'id': f'task_done_{t.id}',

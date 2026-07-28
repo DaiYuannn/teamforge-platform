@@ -13,7 +13,7 @@
           导出 Excel
         </el-button>
         <el-button
-          v-permission="['teacher', 'sys_admin']"
+          v-if="canCreateProject"
           type="primary"
           :icon="Plus"
           @click="handleCreate"
@@ -85,7 +85,7 @@
         <el-collapse-transition>
           <div v-show="advancedVisible" class="advanced-search">
             <el-form :inline="true" :model="queryParams" @submit.prevent>
-              <el-form-item label="负责人">
+              <el-form-item label="牵头负责人">
                 <el-input
                   v-model="queryParams.leader"
                   placeholder="姓名或 ID"
@@ -162,7 +162,7 @@
             >
               <template #action>
                 <el-button
-                  v-permission="['teacher', 'sys_admin']"
+                  v-if="canCreateProject"
                   type="primary"
                   :icon="Plus"
                   @click="handleCreate"
@@ -201,8 +201,18 @@
               </span>
             </template>
           </el-table-column>
-          <el-table-column prop="leader_name" label="负责人" width="108">
-            <template #default="{ row }">{{ row.leader_name || '-' }}</template>
+          <el-table-column label="项目负责人" min-width="150">
+            <template #default="{ row }">
+              {{ row.leader_names?.join('、') || row.leader_name || '-' }}
+            </template>
+          </el-table-column>
+          <el-table-column label="关联小组 / 可见范围" min-width="170">
+            <template #default="{ row }">
+              <div class="project-cell">
+                <span>{{ row.team_names?.join('、') || '未限定小组' }}</span>
+                <span class="project-code">{{ row.visibility_display || '全团队' }}</span>
+              </div>
+            </template>
           </el-table-column>
           <el-table-column label="计划结束" width="116">
             <template #default="{ row }">
@@ -258,7 +268,7 @@
             <template #default="{ row }">
               <el-button :icon="View" type="primary" link @click.stop="handleDetail(row as Project)">查看</el-button>
               <el-button
-                v-permission="['teacher', 'sys_admin']"
+                v-if="row.can_manage"
                 :icon="EditPen"
                 link
                 @click.stop="handleEdit(row as Project)"
@@ -266,7 +276,7 @@
                 编辑
               </el-button>
               <el-button
-                v-permission="['sys_admin']"
+                v-if="row.can_manage"
                 :icon="Delete"
                 type="danger"
                 link
@@ -297,8 +307,12 @@
 
           <dl class="mobile-project-meta">
             <div>
-              <dt>负责人</dt>
-              <dd>{{ item.leader_name || '-' }}</dd>
+              <dt>项目负责人</dt>
+              <dd>{{ item.leader_names?.join('、') || item.leader_name || '-' }}</dd>
+            </div>
+            <div>
+              <dt>关联小组</dt>
+              <dd>{{ item.team_names?.join('、') || '未限定小组' }} · {{ item.visibility_display || '全团队' }}</dd>
             </div>
             <div>
               <dt>当前阶段</dt>
@@ -350,7 +364,7 @@
           <div class="mobile-card-actions">
             <el-button :icon="View" type="primary" link @click="handleDetail(item)">查看</el-button>
             <el-button
-              v-permission="['teacher', 'sys_admin']"
+              v-if="item.can_manage"
               :icon="EditPen"
               link
               @click="handleEdit(item)"
@@ -358,7 +372,7 @@
               编辑
             </el-button>
             <el-button
-              v-permission="['sys_admin']"
+              v-if="item.can_manage"
               :icon="Delete"
               type="danger"
               link
@@ -414,6 +428,7 @@ import {
   View,
 } from '@element-plus/icons-vue'
 import { getProjects, deleteProject, type ProjectQueryParams } from '@/api/projects'
+import { getTeams, type Team } from '@/api/teams'
 import { exportData } from '@/api/exports'
 import {
   downloadBlob,
@@ -461,10 +476,17 @@ const projectList = ref<Project[]>([])
 const total = ref(0)
 const formDialogVisible = ref(false)
 const editingProject = ref<EditableProjectFormData | null>(null)
+const teamOptions = ref<Team[]>([])
 const advancedVisible = ref(false)
 const savingFilterPreference = ref(false)
 const accountDefaultScope: 'mine' | 'team' =
   userStore.preferences?.default_scope === 'team' ? 'team' : 'mine'
+const canCreateProject = computed(() =>
+  userStore.isTeacher
+  || userStore.isAdmin
+  || Boolean(userStore.userInfo?.permission_codes?.includes('project.create'))
+  || teamOptions.value.some((team) => team.can_manage),
+)
 
 // 查询参数
 const queryParams = reactive<ProjectQueryParams>({
@@ -604,6 +626,14 @@ async function loadData(): Promise<void> {
     // 错误已由拦截器处理
   } finally {
     loading.value = false
+  }
+}
+
+async function loadTeamOptions(): Promise<void> {
+  try {
+    teamOptions.value = (await getTeams()).results
+  } catch {
+    teamOptions.value = []
   }
 }
 
@@ -748,10 +778,10 @@ async function handleExport(): Promise<void> {
   }
 }
 
-onMounted(() => {
+onMounted(async () => {
   restoreProjectSavedFilters()
-  loadData()
-  if (route.query.action === 'create') {
+  await Promise.all([loadData(), loadTeamOptions()])
+  if (route.query.action === 'create' && canCreateProject.value) {
     handleCreate()
     router.replace({ path: '/projects' })
   }

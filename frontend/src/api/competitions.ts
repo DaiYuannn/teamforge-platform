@@ -2,6 +2,7 @@ import { get, post, patch, del, download } from './request'
 import type {
   Competition,
   CompetitionFormData,
+  CompetitionParticipant,
   CompetitionLevel,
   CompetitionStatus,
   PaginatedResponse,
@@ -46,6 +47,37 @@ export function updateCompetition(id: number, data: Partial<CompetitionFormData>
 /** 删除比赛 */
 export function deleteCompetition(id: number): Promise<void> {
   return del<void>(`/competitions/${id}/`)
+}
+
+/** 获取比赛负责人和参赛成员名单 */
+export function getCompetitionParticipants(id: number): Promise<CompetitionParticipant[]> {
+  return get<CompetitionParticipant[]>(`/competitions/${id}/participants/`)
+}
+
+/** 添加比赛负责人或参赛成员 */
+export function addCompetitionParticipant(
+  id: number,
+  data: Pick<CompetitionParticipant, 'user' | 'role'> &
+    Partial<Pick<CompetitionParticipant, 'participation_status' | 'responsibility'>>,
+): Promise<CompetitionParticipant> {
+  return post<CompetitionParticipant>(`/competitions/${id}/participants/`, data)
+}
+
+/** 更新比赛名单中的角色、状态或分工 */
+export function updateCompetitionParticipant(
+  id: number,
+  participantId: number,
+  data: Partial<Pick<CompetitionParticipant, 'role' | 'participation_status' | 'responsibility'>>,
+): Promise<CompetitionParticipant> {
+  return patch<CompetitionParticipant>(`/competitions/${id}/participants/`, {
+    participant_id: participantId,
+    ...data,
+  })
+}
+
+/** 从比赛名单中移除成员 */
+export function deleteCompetitionParticipant(id: number, participantId: number): Promise<void> {
+  return del<void>(`/competitions/${id}/participants/?participant_id=${participantId}`)
 }
 
 /** 将当前比赛筛选导出为 Excel。 */

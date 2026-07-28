@@ -8,12 +8,19 @@ from rest_framework import serializers
 
 from .models import (
     IntellectualPropertyApplication,
+    IPApplicationProjectLink,
+    IPApplicationCandidate,
     IPApplicationContributor,
     IPReturnRecord,
     IPMaterialVersion,
     IPObjection,
 )
-from apps.users.serializers import UserListSerializer
+from apps.projects.models import Project
+from apps.users.serializers import (
+    ExternalCollaboratorUserSerializer,
+    UserListSerializer,
+)
+from common.project_access import is_external_collaborator, project_can_manage
 
 
 def _request_user(serializer):
@@ -39,9 +46,15 @@ def _create_internal_file_asset(application, uploaded_file, uploader):
 
 
 def _validate_file_project(file_asset, application, field_name):
-    if file_asset and file_asset.project_id != application.related_project_id:
+    primary_project = getattr(application, 'related_project', None)
+    project_ids = {primary_project.id} if primary_project else set()
+    if getattr(application, 'pk', None):
+        project_ids.update(
+            application.project_links.values_list('project_id', flat=True)
+        )
+    if file_asset and file_asset.project_id not in project_ids:
         raise serializers.ValidationError({
-            field_name: '文件必须属于知识产权申请关联的同一项目'
+            field_name: '文件必须属于知识产权申请的关联项目'
         })
 
 
@@ -57,16 +70,26 @@ def _validate_project_participant(application, user, field_name='user'):
         raise serializers.ValidationError({
             field_name: '所选用户必须是在队或暂离的有效团队成员'
         })
-    if project is None:
+    if project is None and not getattr(application, 'pk', None):
         return
-    if project.leader_id == user.id:
+    project_ids = {project.id} if project else set()
+    if getattr(application, 'pk', None):
+        project_ids.update(
+            application.project_links.values_list('project_id', flat=True)
+        )
+    if any(
+        project_can_manage(user, linked_project)
+        for linked_project in Project.objects.filter(id__in=project_ids)
+    ):
         return
 
     from apps.projects.models import ProjectMember
     if not ProjectMember.objects.filter(
-        project=project, user=user, status=ProjectMember.Status.ACTIVE
+        project_id__in=project_ids,
+        user=user,
+        status=ProjectMember.Status.ACTIVE,
     ).exists():
-        raise serializers.ValidationError({field_name: '所选用户不是关联项目成员'})
+        raise serializers.ValidationError({field_name: '所选用户不是任一关联项目成员'})
 
 
 def _validate_application_roles(attrs, instance=None):
@@ -101,9 +124,9 @@ def _validate_application_roles(attrs, instance=None):
             raise serializers.ValidationError({
                 'project_reviewer': '未关联项目时不能指定项目负责人审核人'
             })
-        if reviewer.id != project.leader_id:
+        if not project_can_manage(reviewer, project):
             raise serializers.ValidationError({
-                'project_reviewer': '项目负责人审核人必须是关联项目负责人'
+                'project_reviewer': '项目审核人必须是关联项目牵头负责人或共同负责人'
             })
 
     validate_confirmer = (
@@ -174,6 +197,80 @@ def _validate_certificate_upload(upload):
         raise serializers.ValidationError({
             'final_certificate_upload': '最终证书文件内容与扩展名不匹配'
         })
+
+
+# ============ 关联项目与拟申报名单 ============
+
+
+class IPApplicationProjectLinkSerializer(serializers.ModelSerializer):
+    project_name = serializers.CharField(source='project.name', read_only=True)
+    relation_type_display = serializers.CharField(
+        source='get_relation_type_display',
+        read_only=True,
+    )
+
+    class Meta:
+        model = IPApplicationProjectLink
+        fields = (
+            'id', 'application', 'project', 'project_name',
+            'relation_type', 'relation_type_display', 'note', 'created_at',
+        )
+        read_only_fields = fields
+
+
+class IPApplicationCandidateSerializer(serializers.ModelSerializer):
+    """申报署名候选人；身份核验只记录结果，不返回证件明文。"""
+
+    user_detail = serializers.SerializerMethodField()
+    legal_role_display = serializers.CharField(source='get_legal_role_display', read_only=True)
+    status_display = serializers.CharField(source='get_status_display', read_only=True)
+    identity_check_status_display = serializers.CharField(
+        source='get_identity_check_status_display',
+        read_only=True,
+    )
+    checked_by_name = serializers.CharField(
+        source='checked_by.name',
+        read_only=True,
+        default='',
+    )
+
+    class Meta:
+        model = IPApplicationCandidate
+        fields = (
+            'id', 'application', 'user', 'user_detail',
+            'legal_role', 'legal_role_display', 'planned_order',
+            'status', 'status_display',
+            'identity_check_status', 'identity_check_status_display',
+            'checked_by', 'checked_by_name', 'checked_at',
+            'note', 'created_at', 'updated_at',
+        )
+        read_only_fields = (
+            'id', 'checked_by', 'checked_at', 'created_at', 'updated_at',
+        )
+
+    def get_user_detail(self, obj):
+        request = self.context.get('request')
+        serializer_class = (
+            ExternalCollaboratorUserSerializer
+            if request and is_external_collaborator(request.user)
+            else UserListSerializer
+        )
+        return serializer_class(obj.user, context=self.context).data
+
+    def validate(self, attrs):
+        application = attrs.get(
+            'application',
+            getattr(self.instance, 'application', None),
+        )
+        if self.instance and 'application' in attrs:
+            if attrs['application'].pk != self.instance.application_id:
+                raise serializers.ValidationError({
+                    'application': '拟申报名单所属申请不可变更'
+                })
+        user = attrs.get('user', getattr(self.instance, 'user', None))
+        if application and user:
+            _validate_project_participant(application, user)
+        return attrs
 
 
 # ============ 责任分工 ============
@@ -523,6 +620,65 @@ class IPObjectionReviewSerializer(serializers.Serializer):
 
 # ============ 知识产权申请 ============
 
+def _related_project_ids(application):
+    project_ids = list(application.project_links.values_list('project_id', flat=True))
+    if application.related_project_id and application.related_project_id not in project_ids:
+        project_ids.insert(0, application.related_project_id)
+    return project_ids
+
+
+def _related_project_names(application):
+    names = list(application.project_links.values_list('project__name', flat=True))
+    if application.related_project_id and application.related_project.name not in names:
+        names.insert(0, application.related_project.name)
+    return names
+
+
+def _sync_related_projects(application, projects):
+    """Keep the compatibility primary project and through links consistent."""
+    ordered_projects = []
+    seen = set()
+    if application.related_project_id:
+        ordered_projects.append(application.related_project)
+        seen.add(application.related_project_id)
+    for project in projects:
+        if project.id not in seen:
+            ordered_projects.append(project)
+            seen.add(project.id)
+
+    application.project_links.exclude(project_id__in=seen).delete()
+    application.project_links.filter(
+        relation_type=IPApplicationProjectLink.RelationType.PRIMARY,
+    ).update(relation_type=IPApplicationProjectLink.RelationType.USED_BY)
+    for project in ordered_projects:
+        relation_type = (
+            IPApplicationProjectLink.RelationType.PRIMARY
+            if project.id == application.related_project_id
+            else IPApplicationProjectLink.RelationType.USED_BY
+        )
+        IPApplicationProjectLink.objects.update_or_create(
+            application=application,
+            project=project,
+            defaults={'relation_type': relation_type},
+        )
+
+
+def _validate_related_projects(serializer, projects):
+    request_user = _request_user(serializer)
+    if not request_user or request_user.global_role in ('teacher', 'sys_admin'):
+        return
+    unauthorized = [
+        project.name for project in projects
+        if not project_can_manage(request_user, project)
+    ]
+    if unauthorized:
+        raise serializers.ValidationError({
+            'related_project_ids': (
+                '只能关联自己负责的项目：' + '、'.join(unauthorized)
+            )
+        })
+
+
 class IPApplicationListSerializer(serializers.ModelSerializer):
     """
     申请列表精简序列化器（公开字段）
@@ -537,17 +693,27 @@ class IPApplicationListSerializer(serializers.ModelSerializer):
     applicant_executor_name = serializers.CharField(
         source='applicant_executor.name', read_only=True, default=''
     )
+    related_project_ids = serializers.SerializerMethodField()
+    related_project_names = serializers.SerializerMethodField()
 
     class Meta:
         model = IntellectualPropertyApplication
         fields = (
             'id', 'title', 'application_code', 'ip_type', 'ip_type_display',
-            'related_project', 'related_project_name', 'status', 'status_display',
+            'related_project', 'related_project_name',
+            'related_project_ids', 'related_project_names',
+            'status', 'status_display', 'status_note',
             'main_writer', 'main_writer_name',
             'applicant_executor', 'applicant_executor_name',
             'return_count', 'created_at', 'updated_at',
         )
         read_only_fields = fields
+
+    def get_related_project_ids(self, obj):
+        return _related_project_ids(obj)
+
+    def get_related_project_names(self, obj):
+        return _related_project_names(obj)
 
 
 class IPApplicationDetailSerializer(serializers.ModelSerializer):
@@ -573,12 +739,18 @@ class IPApplicationDetailSerializer(serializers.ModelSerializer):
     return_records = IPReturnRecordSerializer(many=True, read_only=True)
     material_versions = IPMaterialVersionSerializer(many=True, read_only=True)
     objections = IPObjectionSerializer(many=True, read_only=True)
+    project_links = IPApplicationProjectLinkSerializer(many=True, read_only=True)
+    candidates = IPApplicationCandidateSerializer(many=True, read_only=True)
+    related_project_ids = serializers.SerializerMethodField()
+    related_project_names = serializers.SerializerMethodField()
 
     class Meta:
         model = IntellectualPropertyApplication
         fields = (
             'id', 'title', 'application_code', 'ip_type', 'ip_type_display',
-            'related_project', 'related_project_name', 'status', 'status_display',
+            'related_project', 'related_project_name',
+            'related_project_ids', 'related_project_names', 'project_links',
+            'status', 'status_display', 'status_note',
             'main_writer', 'main_writer_detail',
             'applicant_executor', 'applicant_executor_detail',
             'material_manager', 'material_manager_detail',
@@ -588,37 +760,62 @@ class IPApplicationDetailSerializer(serializers.ModelSerializer):
             'return_count', 'current_problem',
             'final_certificate_file', 'final_certificate_file_name', 'intro',
             'created_by', 'created_by_name', 'created_at', 'updated_at',
-            'contributors', 'return_records', 'material_versions', 'objections',
+            'contributors', 'candidates',
+            'return_records', 'material_versions', 'objections',
         )
         read_only_fields = (
             'id', 'return_count', 'created_by', 'created_at', 'updated_at',
         )
 
+    def get_related_project_ids(self, obj):
+        return _related_project_ids(obj)
+
+    def get_related_project_names(self, obj):
+        return _related_project_names(obj)
+
 
 class IPApplicationCreateSerializer(serializers.ModelSerializer):
     """申请创建序列化器"""
+
+    related_project_ids = serializers.PrimaryKeyRelatedField(
+        queryset=Project.objects.all(),
+        many=True,
+        write_only=True,
+        required=False,
+    )
 
     class Meta:
         model = IntellectualPropertyApplication
         fields = (
             'id', 'title', 'application_code', 'ip_type',
-            'related_project', 'main_writer', 'applicant_executor',
+            'related_project', 'related_project_ids',
+            'main_writer', 'applicant_executor',
             'material_manager', 'project_reviewer', 'teacher_confirmer',
-            'start_date', 'current_problem', 'intro',
+            'start_date', 'current_problem', 'status_note', 'intro',
         )
         read_only_fields = ('id',)
 
     def create(self, validated_data):
         """创建申请时自动设置创建人"""
+        related_projects = validated_data.pop('related_project_ids', [])
+        if not validated_data.get('related_project') and related_projects:
+            validated_data['related_project'] = related_projects[0]
         request = self.context.get('request')
         if request and request.user.is_authenticated:
             validated_data['created_by'] = request.user
         project = validated_data.get('related_project')
         if project and not validated_data.get('project_reviewer'):
             validated_data['project_reviewer'] = project.leader
-        return super().create(validated_data)
+        application = super().create(validated_data)
+        _sync_related_projects(application, related_projects)
+        return application
 
     def validate(self, attrs):
+        related_projects = list(attrs.get('related_project_ids', []))
+        primary_project = attrs.get('related_project')
+        if primary_project and primary_project not in related_projects:
+            related_projects.append(primary_project)
+        _validate_related_projects(self, related_projects)
         _validate_application_roles(attrs)
         return attrs
 
@@ -628,15 +825,22 @@ class IPApplicationUpdateSerializer(serializers.ModelSerializer):
     final_certificate_upload = serializers.FileField(
         write_only=True, required=False
     )
+    related_project_ids = serializers.PrimaryKeyRelatedField(
+        queryset=Project.objects.all(),
+        many=True,
+        write_only=True,
+        required=False,
+    )
 
     class Meta:
         model = IntellectualPropertyApplication
         fields = (
-            'id', 'title', 'application_code', 'ip_type', 'related_project',
+            'id', 'title', 'application_code', 'ip_type',
+            'related_project', 'related_project_ids',
             'main_writer', 'applicant_executor', 'material_manager',
             'project_reviewer', 'teacher_confirmer',
             'start_date', 'submit_date', 'accepted_date', 'authorized_date',
-            'current_problem', 'final_certificate_file',
+            'current_problem', 'status_note', 'final_certificate_file',
             'final_certificate_upload', 'intro',
         )
         read_only_fields = ('id', 'submit_date', 'accepted_date', 'authorized_date')
@@ -645,6 +849,11 @@ class IPApplicationUpdateSerializer(serializers.ModelSerializer):
         user = _request_user(self)
         instance = self.instance
         target_project = attrs.get('related_project', instance.related_project)
+        related_projects = list(attrs.get('related_project_ids', []))
+        if target_project and target_project not in related_projects:
+            related_projects.append(target_project)
+        if 'related_project_ids' in attrs or 'related_project' in attrs:
+            _validate_related_projects(self, related_projects)
         certificate_upload = attrs.get('final_certificate_upload')
         submitted_certificate = attrs.get('final_certificate_file')
 
@@ -656,7 +865,7 @@ class IPApplicationUpdateSerializer(serializers.ModelSerializer):
 
         if 'related_project' in attrs and attrs['related_project'] != instance.related_project:
             if user and user.global_role not in ('sys_admin', 'teacher'):
-                if target_project is None or target_project.leader_id != user.id:
+                if target_project is None or not project_can_manage(user, target_project):
                     raise serializers.ValidationError({
                         'related_project': '只能将申请关联到自己负责的项目'
                     })
@@ -667,7 +876,7 @@ class IPApplicationUpdateSerializer(serializers.ModelSerializer):
                 user.global_role in ('sys_admin', 'teacher')
                 or (
                     instance.related_project
-                    and instance.related_project.leader_id == user.id
+                    and project_can_manage(user, instance.related_project)
                 )
             )
         )
@@ -711,7 +920,14 @@ class IPApplicationUpdateSerializer(serializers.ModelSerializer):
     @transaction.atomic
     def update(self, instance, validated_data):
         certificate_upload = validated_data.pop('final_certificate_upload', None)
+        related_projects_supplied = 'related_project_ids' in validated_data
+        related_projects = validated_data.pop('related_project_ids', [])
+        primary_changed = 'related_project' in validated_data
         application = super().update(instance, validated_data)
+        if related_projects_supplied or primary_changed:
+            if not related_projects_supplied:
+                related_projects = list(application.related_projects.all())
+            _sync_related_projects(application, related_projects)
         if certificate_upload:
             application.final_certificate_file = _create_internal_file_asset(
                 application, certificate_upload, _request_user(self)

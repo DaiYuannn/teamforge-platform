@@ -16,7 +16,7 @@ class UserAdmin(BaseUserAdmin):
     fieldsets = (
         (None, {'fields': ('username', 'password')}),
         ('个人信息', {'fields': ('name', 'email', 'phone', 'avatar', 'global_role',
-                                  'is_student', 'grade', 'major')}),
+                                  'is_student', 'school', 'grade', 'major')}),
         ('权限', {'fields': ('is_active', 'is_staff', 'is_superuser', 'groups', 'user_permissions')}),
         ('重要日期', {'fields': ('last_login', 'date_joined')}),
     )

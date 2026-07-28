@@ -1,6 +1,12 @@
 <template>
   <div class="page-container pending-review-page">
-    <PageHeader title="待我审核" subtitle="处理负责项目中的成员贡献记录" />
+    <PageHeader title="待我审核" subtitle="只接收明确分派给你的贡献记录，老师不会默认收到全部待办">
+      <template #actions>
+        <el-button v-if="projectFilter" :icon="Setting" @click="openReviewerConfig">
+          配置项目审核人
+        </el-button>
+      </template>
+    </PageHeader>
 
     <el-alert
       v-if="projectFilter"
@@ -70,6 +76,13 @@
             </el-tag>
           </template>
         </el-table-column>
+        <el-table-column label="证据来源" width="116">
+          <template #default="{ row }">
+            <el-tag :type="row.source_verified ? 'success' : 'info'" size="small" effect="plain">
+              {{ row.source_type_display || sourceTypeLabel(row.source_type) }}
+            </el-tag>
+          </template>
+        </el-table-column>
         <el-table-column prop="content" label="贡献内容" min-width="260" show-overflow-tooltip />
         <el-table-column label="提交时间" width="118">
           <template #default="{ row }">{{ displayDate(row.created_at) }}</template>
@@ -112,18 +125,67 @@
       :contribution="reviewingContribution"
       @success="loadData"
     />
+
+    <el-dialog v-model="reviewerDialogVisible" title="项目贡献审核人" width="min(680px, 92vw)">
+      <el-alert
+        title="普通成员的申报按优先级分派；项目负责人自报时，只能分给标记为“独立审核”的其他成员。"
+        type="info"
+        :closable="false"
+        show-icon
+      />
+      <div class="reviewer-config-form">
+        <el-select v-model="reviewerForm.user" filterable placeholder="选择组织内有效成员">
+          <el-option
+            v-for="member in reviewerCandidates"
+            :key="member.id"
+            :label="reviewerCandidateLabel(member)"
+            :value="member.id"
+            :disabled="reviewerAssignments.some((item) => item.user === member.id)"
+          />
+        </el-select>
+        <el-input-number v-model="reviewerForm.priority" :min="1" :max="999" controls-position="right" />
+        <el-checkbox v-model="reviewerForm.is_independent">可独立审核负责人申报</el-checkbox>
+        <el-button type="primary" :icon="Plus" :loading="reviewerSaving" @click="addReviewer">
+          添加
+        </el-button>
+      </div>
+      <el-table v-loading="reviewerLoading" :data="reviewerAssignments" size="small">
+        <el-table-column prop="user_name" label="审核人" min-width="130" />
+        <el-table-column prop="priority" label="优先级" width="88" />
+        <el-table-column label="独立审核" width="96">
+          <template #default="{ row }">{{ row.is_independent ? '是' : '否' }}</template>
+        </el-table-column>
+        <el-table-column label="操作" width="72" align="right">
+          <template #default="{ row }">
+            <el-button type="danger" link :icon="Delete" @click="removeReviewer(row.id)">移除</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { EditPen } from '@element-plus/icons-vue'
-import { getPendingReview } from '@/api/contributions'
+import { Delete, EditPen, Plus, Setting } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
+import {
+  createProjectContributionReviewer,
+  deleteProjectContributionReviewer,
+  getPendingReview,
+  getProjectContributionReviewers,
+} from '@/api/contributions'
+import { getProjectMembers } from '@/api/projects'
+import { getMembers } from '@/api/members'
 import { formatDate } from '@/utils/format'
 import { CONTRIBUTION_TYPE_MAP } from '@/utils/constants'
 import { useDevice } from '@/composables/useDevice'
-import type { Contribution } from '@/types'
+import type {
+  Contribution,
+  Member,
+  ProjectContributionReviewer,
+} from '@/types'
 import EmptyState from '@/components/EmptyState.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import ContributionReviewDialog from './ContributionReviewDialog.vue'
@@ -144,6 +206,12 @@ const loadFailed = ref(false)
 const pendingList = ref<Contribution[]>([])
 const reviewDialogVisible = ref(false)
 const reviewingContribution = ref<Contribution | null>(null)
+const reviewerDialogVisible = ref(false)
+const reviewerLoading = ref(false)
+const reviewerSaving = ref(false)
+const reviewerAssignments = ref<ProjectContributionReviewer[]>([])
+const reviewerCandidates = ref<Array<Member & { is_project_member?: boolean }>>([])
+const reviewerForm = ref({ user: undefined as number | undefined, priority: 100, is_independent: false })
 const projectCount = computed(
   () => new Set(pendingList.value.map((item) => item.project)).size,
 )
@@ -157,6 +225,16 @@ function typeLabel(type: string): string {
 
 function typeTagType(type: string): string {
   return CONTRIBUTION_TYPE_MAP[type]?.tagType || 'info'
+}
+
+function sourceTypeLabel(source?: string): string {
+  return {
+    manual: '手工登记',
+    task: '任务验收',
+    competition: '比赛记录',
+    ip: '知识产权流程',
+    system: '系统证据',
+  }[source || 'manual'] || source || '手工登记'
 }
 
 function displayDate(value?: string | null): string {
@@ -192,6 +270,80 @@ async function loadData(): Promise<void> {
 function handleReview(contribution: Contribution): void {
   reviewingContribution.value = contribution
   reviewDialogVisible.value = true
+}
+
+async function loadReviewerConfig(): Promise<void> {
+  if (!projectFilter.value) return
+  reviewerLoading.value = true
+  try {
+    const [reviewers, projectMembers, organizationMembers] = await Promise.all([
+      getProjectContributionReviewers(projectFilter.value),
+      getProjectMembers(projectFilter.value),
+      getMembers({ page: 1, page_size: 500, is_active: true }),
+    ])
+    reviewerAssignments.value = Array.isArray(reviewers) ? reviewers : reviewers.results
+    const projectMemberIds = new Set(
+      projectMembers
+        .filter((member) => !member.status || member.status === 'active')
+        .map((member) => member.user),
+    )
+    reviewerCandidates.value = organizationMembers.results
+      .filter((member) =>
+        member.is_active !== false
+        && ['active', 'on_leave'].includes(member.membership_status || 'active'),
+      )
+      .map((member) => ({
+        ...member,
+        is_project_member: projectMemberIds.has(member.id),
+      }))
+      .sort((left, right) =>
+        Number(Boolean(right.is_project_member)) - Number(Boolean(left.is_project_member))
+        || (left.name || '').localeCompare(right.name || '', 'zh-CN'),
+      )
+  } finally {
+    reviewerLoading.value = false
+  }
+}
+
+function reviewerCandidateLabel(
+  member: Member & { is_project_member?: boolean },
+): string {
+  const scope = member.is_project_member ? '本项目' : '组织内其他小组'
+  const detail = [member.school, member.major].filter(Boolean).join(' · ')
+  return `${member.name || `成员 ${member.id}`}（${scope}）${detail ? ` · ${detail}` : ''}`
+}
+
+async function openReviewerConfig(): Promise<void> {
+  reviewerDialogVisible.value = true
+  await loadReviewerConfig()
+}
+
+async function addReviewer(): Promise<void> {
+  if (!projectFilter.value || !reviewerForm.value.user) {
+    ElMessage.warning('请选择审核人')
+    return
+  }
+  reviewerSaving.value = true
+  try {
+    await createProjectContributionReviewer({
+      project: projectFilter.value,
+      user: reviewerForm.value.user,
+      priority: reviewerForm.value.priority,
+      is_independent: reviewerForm.value.is_independent,
+    })
+    reviewerForm.value.user = undefined
+    reviewerForm.value.is_independent = false
+    await loadReviewerConfig()
+    ElMessage.success('贡献审核人已配置')
+  } finally {
+    reviewerSaving.value = false
+  }
+}
+
+async function removeReviewer(id: number): Promise<void> {
+  await deleteProjectContributionReviewer(id)
+  await loadReviewerConfig()
+  ElMessage.success('贡献审核人已移除')
 }
 
 async function clearProjectFilter(): Promise<void> {
@@ -268,6 +420,14 @@ onMounted(loadData)
       font-variant-numeric: tabular-nums;
     }
   }
+}
+
+.reviewer-config-form {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) 120px auto auto;
+  gap: 10px;
+  align-items: center;
+  margin: 14px 0;
 }
 
 .load-alert {
@@ -381,6 +541,9 @@ onMounted(loadData)
 }
 
 @media screen and (max-width: 768px) {
+  .reviewer-config-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
   .review-summary {
     padding: 14px;
   }

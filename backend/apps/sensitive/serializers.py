@@ -13,12 +13,18 @@ from .models import SensitiveData, SensitiveAccessRequest
 from .services import SensitiveDataService
 from apps.projects.models import Project
 from apps.files.models import FileAsset
+from apps.users.models import User
+from apps.common.team_models import Team, TeamMember
+from common.project_access import project_can_manage
+from .permissions import can_review_sensitive_data, user_can_view_sensitive_metadata
 
 
 class SensitiveDataSerializer(serializers.ModelSerializer):
     """敏感数据脱敏序列化器（列表/详情默认使用，不含明文）"""
     data_type_display = serializers.CharField(source='get_data_type_display', read_only=True)
     owner_name = serializers.CharField(source='uploader.name', read_only=True, default='')
+    subject_name = serializers.CharField(source='subject_user.name', read_only=True, default='')
+    team_name = serializers.CharField(source='team.name', read_only=True, default='')
     project_name = serializers.CharField(source='project.name', read_only=True, default='')
     # 脱敏值
     masked_value = serializers.SerializerMethodField()
@@ -32,12 +38,14 @@ class SensitiveDataSerializer(serializers.ModelSerializer):
         model = SensitiveData
         fields = (
             'id', 'data_type', 'data_type_display', 'title', 'display_name',
-            'owner_name', 'project', 'project_name',
+            'owner_name', 'subject_user', 'subject_name', 'team', 'team_name',
+            'project', 'project_name',
             'masked_value', 'has_file', 'file_attachment_name',
             'key_version', 'is_encrypted', 'created_at', 'updated_at',
         )
         read_only_fields = (
-            'id', 'masked_value', 'has_file', 'is_encrypted',
+            'id', 'data_type', 'subject_user', 'team', 'project',
+            'masked_value', 'has_file', 'is_encrypted',
             'key_version', 'created_at', 'updated_at',
         )
 
@@ -89,9 +97,99 @@ class SensitiveDataCreateSerializer(serializers.Serializer):
     project = serializers.PrimaryKeyRelatedField(
         queryset=Project.objects.all(), required=False, allow_null=True
     )
+    team = serializers.PrimaryKeyRelatedField(
+        queryset=Team.objects.all(), required=False, allow_null=True
+    )
+    subject_user = serializers.PrimaryKeyRelatedField(
+        queryset=User.objects.all(), required=False, allow_null=True
+    )
     file_attachment = serializers.PrimaryKeyRelatedField(
         queryset=FileAsset.objects.all(), required=False, allow_null=True
     )
+
+    def validate(self, attrs):
+        request = self.context.get('request')
+        user = request.user if request and request.user.is_authenticated else None
+        team = attrs.get('team')
+        data_type = attrs.get('data_type')
+        subject_user = attrs.get('subject_user')
+        project = attrs.get('project')
+        file_attachment = attrs.get('file_attachment')
+        personal_types = {
+            SensitiveData.DataType.ID_CARD,
+            SensitiveData.DataType.BANK_ACCOUNT,
+            SensitiveData.DataType.PHONE,
+            SensitiveData.DataType.ADDRESS,
+            SensitiveData.DataType.SIGNATURE,
+        }
+        if data_type in personal_types and subject_user is None:
+            subject_user = user
+            attrs['subject_user'] = user
+        if team is None:
+            if Team.objects.exists():
+                raise serializers.ValidationError({
+                    'team': '已有团队组织时，敏感资料必须选择所属小团队'
+                })
+            reviewer = can_review_sensitive_data(
+                user,
+                SensitiveData(team=None),
+            )
+            if subject_user and subject_user.id != user.id and not reviewer:
+                raise serializers.ValidationError({
+                    'subject_user': '只有明确的敏感资料审批人可以代成员录入历史资料'
+                })
+        else:
+            membership = TeamMember.objects.filter(
+                team=team,
+                user=user,
+                status=TeamMember.Status.ACTIVE,
+            ).first()
+            if membership is None and team.owner_id != user.id:
+                raise serializers.ValidationError({
+                    'team': '只能向自己所在的活动团队提交敏感资料'
+                })
+            if subject_user and not TeamMember.objects.filter(
+                team=team,
+                user=subject_user,
+                status=TeamMember.Status.ACTIVE,
+            ).exists():
+                raise serializers.ValidationError({
+                    'subject_user': '资料所属成员必须是该团队的活动成员'
+                })
+            reviewer = can_review_sensitive_data(
+                user,
+                SensitiveData(team=team),
+            )
+            if subject_user and subject_user.id != user.id and not reviewer:
+                raise serializers.ValidationError({
+                    'subject_user': '只有本团队负责人或明确审批人可以代成员录入资料'
+                })
+        if file_attachment:
+            # 绑定敏感资料会立刻把 FileAsset 提升为 sensitive 并撤销其分享链接，
+            # 因此不能只验证“当前可读”。只有文件上传人或所属项目管理者可以执行
+            # 这一不可逆的权限提升，避免通过猜测文件 ID 劫持其他项目文件。
+            can_reclassify = (
+                file_attachment.uploader_id == getattr(user, 'id', None)
+                or (
+                    file_attachment.project_id
+                    and project_can_manage(user, file_attachment.project)
+                )
+            )
+            if not can_reclassify:
+                raise serializers.ValidationError({
+                    'file_attachment': '只能绑定自己上传或自己负责项目中的文件'
+                })
+            if project and file_attachment.project_id != project.id:
+                raise serializers.ValidationError({
+                    'file_attachment': '附件必须属于所选项目'
+                })
+            if SensitiveData.objects.filter(
+                file_attachment=file_attachment,
+            ).exists():
+                raise serializers.ValidationError({
+                    'file_attachment': '该文件已绑定其他敏感资料'
+                })
+        return attrs
 
     def create(self, validated_data):
         """创建敏感资料（加密存储）"""
@@ -112,6 +210,8 @@ class SensitiveDataCreateSerializer(serializers.Serializer):
             key_version=1,
             file_attachment=validated_data.get('file_attachment'),
             project=validated_data.get('project'),
+            team=validated_data.get('team'),
+            subject_user=validated_data.get('subject_user'),
             uploader=uploader,
         )
         return sensitive
@@ -186,6 +286,17 @@ class SensitiveAccessRequestCreateSerializer(serializers.ModelSerializer):
         elif not reason and not usage_scenario:
             raise serializers.ValidationError({
                 'usage_scenario': '请填写使用场景或申请理由。'
+            })
+        request = self.context.get('request')
+        sensitive_data = attrs.get('sensitive_data')
+        if (
+            request
+            and request.user.is_authenticated
+            and sensitive_data
+            and not user_can_view_sensitive_metadata(request.user, sensitive_data)
+        ):
+            raise serializers.ValidationError({
+                'sensitive_data': '无权申请其他团队或未授权的身份证资料。'
             })
         return attrs
 

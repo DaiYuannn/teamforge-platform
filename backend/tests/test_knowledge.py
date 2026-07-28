@@ -6,6 +6,7 @@ N28: 知识库（Knowledge Base）测试
 """
 import pytest
 
+from apps.common.team_models import Team, TeamMember
 from apps.projects.knowledge_models import KnowledgeArticle
 
 KNOWLEDGE_URL = '/api/v1/projects/knowledge/'
@@ -258,6 +259,83 @@ class TestKnowledgeArticleAPI:
             'title': '篡改',
         }, format='json')
         assert resp.status_code == 403
+
+    def test_global_article_visible_inside_single_root_team(
+        self, member_client, make_user,
+    ):
+        """Project-less knowledge stays usable in an unambiguous tenant."""
+        owner = make_user()
+        root = Team.objects.create(
+            name='Knowledge root',
+            code='KNOWLEDGE-SINGLE-ROOT',
+            owner=owner,
+        )
+        TeamMember.objects.create(team=root, user=owner, role=TeamMember.Role.OWNER)
+        TeamMember.objects.create(team=root, user=member_client.user)
+        article = KnowledgeArticle.objects.create(
+            title='single-root-global-article',
+            content='organization knowledge',
+            author=owner,
+        )
+
+        list_resp = member_client.get(KNOWLEDGE_URL)
+        assert list_resp.status_code == 200
+        assert article.id in {
+            row['id'] for row in extract_results(list_resp)
+        }
+
+    def test_global_article_hidden_when_multiple_root_teams_exist(
+        self, member_client, make_user,
+    ):
+        """An unscoped article must not leak across independent root teams."""
+        other_owner = make_user()
+        viewer_root = Team.objects.create(
+            name='Viewer root',
+            code='KNOWLEDGE-VIEWER-ROOT',
+            owner=member_client.user,
+        )
+        other_root = Team.objects.create(
+            name='Other root',
+            code='KNOWLEDGE-OTHER-ROOT',
+            owner=other_owner,
+        )
+        TeamMember.objects.create(
+            team=viewer_root,
+            user=member_client.user,
+            role=TeamMember.Role.OWNER,
+        )
+        TeamMember.objects.create(
+            team=other_root,
+            user=other_owner,
+            role=TeamMember.Role.OWNER,
+        )
+        article = KnowledgeArticle.objects.create(
+            title='cross-root-global-secret',
+            content='must remain tenant scoped',
+            author=other_owner,
+        )
+
+        list_resp = member_client.get(KNOWLEDGE_URL)
+        assert list_resp.status_code == 200
+        assert article.id not in {
+            row['id'] for row in extract_results(list_resp)
+        }
+
+        detail_resp = member_client.get(f'{KNOWLEDGE_URL}{article.id}/')
+        assert detail_resp.status_code == 404
+
+        search_resp = member_client.get(
+            '/api/v1/dashboard/search/'
+            '?q=cross-root-global-secret&search_type=knowledge'
+        )
+        assert search_resp.status_code == 200
+        assert extract_data(search_resp)['knowledge'] == []
+
+        create_resp = member_client.post(KNOWLEDGE_URL, {
+            'title': 'ambiguous-global-article',
+            'content': 'must bind to a project',
+        }, format='json')
+        assert create_resp.status_code == 403
 
     def test_unauthenticated_cannot_access(self, api_client):
         """未认证不能访问"""

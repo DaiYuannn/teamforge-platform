@@ -51,6 +51,12 @@ class Project(SoftDeleteMixin, models.Model):
         HIGH = 'high', '高'
         URGENT = 'urgent', '紧急'
 
+    class Visibility(models.TextChoices):
+        """项目可见范围。"""
+        PROJECT = 'project', '仅项目成员'
+        TEAMS = 'teams', '关联小组'
+        ORGANIZATION = 'organization', '全团队'
+
     # 项目名称
     name = models.CharField('项目名称', max_length=200)
     # 项目编号（唯一）
@@ -60,7 +66,20 @@ class Project(SoftDeleteMixin, models.Model):
         settings.AUTH_USER_MODEL,
         on_delete=models.PROTECT,
         related_name='led_projects',
-        verbose_name='项目负责人',
+        verbose_name='项目牵头负责人',
+    )
+    teams = models.ManyToManyField(
+        'common.Team',
+        related_name='projects',
+        verbose_name='关联团队',
+        blank=True,
+    )
+    visibility = models.CharField(
+        '可见范围',
+        max_length=20,
+        choices=Visibility.choices,
+        default=Visibility.ORGANIZATION,
+        db_index=True,
     )
     # 当前阶段
     current_stage = models.IntegerField(

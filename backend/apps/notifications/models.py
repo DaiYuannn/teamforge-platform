@@ -130,6 +130,10 @@ class Announcement(models.Model):
         SYSTEM = 'system', '系统公告'
         PROJECT = 'project', '项目公告'
         ACTIVITY = 'activity', '活动公告'
+        FAQ = 'faq', '常见问题'
+        TEMPLATE = 'template', '计划书与PPT模板'
+        MEETING = 'meeting', '会议回放'
+        NEWS = 'news', '新闻与资料'
         OTHER = 'other', '其他'
 
     class Status(models.TextChoices):
@@ -139,6 +143,12 @@ class Announcement(models.Model):
 
     title = models.CharField('标题', max_length=200)
     content = models.TextField('内容')
+    resource_links = models.JSONField(
+        '资源链接',
+        default=list,
+        blank=True,
+        help_text='格式：[{"title": "资料名称", "url": "https://..."}]',
+    )
     category = models.CharField(
         '类别', max_length=20, choices=Category.choices, default=Category.OTHER
     )

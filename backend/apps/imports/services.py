@@ -10,6 +10,7 @@ import os
 import re
 from pathlib import Path
 
+from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
@@ -42,8 +43,8 @@ class ImportService:
             'model': 'apps.users.models.User',
             'required_fields': ['name', 'email'],
             'optional_fields': [
-                'phone', 'grade', 'major', 'global_role', 'is_student',
-                'membership_status', 'team_joined_at',
+                'phone', 'school', 'grade', 'major', 'global_role', 'is_student',
+                'membership_status', 'team_joined_at', 'target_team_code',
             ],
         },
         'competitions': {
@@ -90,12 +91,14 @@ class ImportService:
         'actual_end_date': '实际结束日期',
         'email': '邮箱',
         'phone': '手机号',
+        'school': '学校',
         'grade': '年级',
         'major': '专业',
         'global_role': '全局角色',
         'is_student': '是否学生',
         'membership_status': '成员状态',
         'team_joined_at': '加入团队日期',
+        'target_team_code': '加入小团队编号',
         'title': '标题',
         'project_code': '项目编号',
         'assignee_email': '负责人邮箱',
@@ -142,11 +145,14 @@ class ImportService:
         '邮箱': 'email',
         '手机': 'phone',
         '手机号': 'phone',
+        '学校': 'school',
         '年级': 'grade',
         '专业': 'major',
         '角色': 'global_role',
         '成员状态': 'membership_status',
         '加入团队日期': 'team_joined_at',
+        '加入小团队编号': 'target_team_code',
+        '团队编号': 'target_team_code',
         '是否学生': 'is_student',
         '简介': 'intro',
         '描述': 'description',
@@ -322,6 +328,151 @@ class ImportService:
         raise ValueError(f'未找到成员邮箱：{text}')
 
     @staticmethod
+    def _user_manages_team(user, team):
+        """与团队管理接口保持一致，包含总团队负责人管理其直属小团队。"""
+        if not user or not team or not getattr(user, 'is_active', False):
+            return False
+        if getattr(user, 'global_role', '') == 'sys_admin':
+            return True
+
+        from apps.common.team_models import TeamMember
+
+        manager_roles = [
+            TeamMember.Role.OWNER,
+            TeamMember.Role.CO_LEAD,
+            TeamMember.Role.ADMIN,
+        ]
+        if (
+            team.owner_id == user.id
+            or TeamMember.objects.filter(
+                team=team,
+                user=user,
+                role__in=manager_roles,
+                status=TeamMember.Status.ACTIVE,
+            ).exists()
+        ):
+            return True
+        parent = getattr(team, 'parent', None)
+        return bool(
+            parent
+            and (
+                parent.owner_id == user.id
+                or TeamMember.objects.filter(
+                    team=parent,
+                    user=user,
+                    role__in=manager_roles,
+                    status=TeamMember.Status.ACTIVE,
+                ).exists()
+            )
+        )
+
+    @classmethod
+    def _validate_import_scope(
+        cls,
+        clean_data,
+        module,
+        *,
+        operator,
+        default_team=None,
+    ):
+        """逐行校验导入权限，不能只依赖预览任务上的团队字段。"""
+        from common.project_access import project_can_manage
+        from apps.common.team_models import Team
+
+        # 升级前没有 Team 数据的旧部署保留原有导入能力；一旦建立团队，
+        # 所有导入立即进入下面的团队/项目范围校验。
+        legacy_without_teams = (
+            default_team is None
+            and not Team.objects.exists()
+        )
+        if legacy_without_teams:
+            return
+
+        global_role = getattr(operator, 'global_role', '')
+        is_platform_manager = global_role in {'sys_admin', 'teacher'}
+        if module == 'members':
+            if (
+                not is_platform_manager
+                and not cls._user_manages_team(operator, default_team)
+            ):
+                raise ValueError('无权向所选团队导入成员')
+            return
+        if module in {'projects', 'history_projects'}:
+            if not is_platform_manager and not cls._user_manages_team(
+                operator,
+                default_team,
+            ):
+                raise ValueError('无权为所选团队创建项目')
+            leader = clean_data.get('leader')
+            if not leader or not leader.is_active or leader.membership_status == 'exited':
+                raise ValueError('项目负责人必须是有效团队成员')
+            if default_team and not is_platform_manager:
+                from apps.common.team_models import TeamMember
+
+                if (
+                    default_team.owner_id != leader.id
+                    and not TeamMember.objects.filter(
+                        team=default_team,
+                        user=leader,
+                        status=TeamMember.Status.ACTIVE,
+                    ).exists()
+                ):
+                    raise ValueError('项目负责人必须是目标团队的活动成员')
+            return
+
+        project = clean_data.get('project') or clean_data.get('related_project')
+        if project is None:
+            # 当前只有知识产权导入允许不关联项目；仍要求操作者是所选团队
+            # 管理者，避免任意内部成员批量创建无归属档案。
+            if (
+                module != 'ip_applications'
+                or (
+                    not is_platform_manager
+                    and not cls._user_manages_team(operator, default_team)
+                )
+            ):
+                raise ValueError('导入记录必须关联有权管理的项目')
+            return
+
+        can_manage_project = project_can_manage(operator, project)
+        can_manage_linked_team = bool(
+            default_team
+            and cls._user_manages_team(operator, default_team)
+            and project.teams.filter(pk=default_team.pk).exists()
+        )
+        if not (can_manage_project or can_manage_linked_team):
+            raise ValueError(f'无权向项目“{project.name}”导入数据')
+
+        if module == 'tasks':
+            from apps.projects.models import ProjectMember
+
+            assignee = clean_data.get('assignee')
+            if (
+                assignee
+                and assignee.id != project.leader_id
+                and not ProjectMember.objects.filter(
+                    project=project,
+                    user=assignee,
+                    status=ProjectMember.Status.ACTIVE,
+                ).exists()
+            ):
+                raise ValueError('任务负责人必须是目标项目的活动成员')
+        elif module == 'ip_applications':
+            from apps.projects.models import ProjectMember
+
+            writer = clean_data.get('main_writer')
+            if (
+                writer
+                and writer.id != project.leader_id
+                and not ProjectMember.objects.filter(
+                    project=project,
+                    user=writer,
+                    status=ProjectMember.Status.ACTIVE,
+                ).exists()
+            ):
+                raise ValueError('主导撰写人必须是关联项目的活动成员')
+
+    @staticmethod
     def _to_boolean(value):
         if isinstance(value, bool):
             return value
@@ -384,18 +535,82 @@ class ImportService:
         return username
 
     @classmethod
-    def _create_instance(cls, ModelClass, clean_data, module):
+    def _create_instance(cls, ModelClass, clean_data, module, *, default_team=None, created_by=None):
         if module == 'members':
+            from apps.common.team_models import Team, TeamMember
+
+            team_code = clean_data.pop('target_team_code', None)
+            target_team = default_team
+            if team_code:
+                target_team = Team.objects.filter(code__iexact=str(team_code).strip()).first()
+                if target_team is None:
+                    raise ValueError(f'未找到小团队编号：{team_code}')
+            if target_team is not None:
+                can_manage = cls._user_manages_team(created_by, target_team)
+                if not can_manage:
+                    raise ValueError(f'无权向团队“{target_team.name}”导入成员')
             clean_data.setdefault('username', cls._unique_username(clean_data['email']))
             instance = ModelClass(**clean_data)
             instance.set_unusable_password()
             instance.save()
+            if target_team is not None:
+                TeamMember.objects.create(
+                    team=target_team,
+                    user=instance,
+                    role=TeamMember.Role.MEMBER,
+                )
+            return instance
+        if module in {'projects', 'history_projects'}:
+            from apps.projects.models import (
+                ProjectMember,
+                ProjectMembershipEvent,
+                ProjectStageLog,
+            )
+
+            instance = ModelClass.objects.create(**clean_data)
+            if default_team is not None:
+                instance.teams.add(default_team)
+            membership, created = ProjectMember.objects.get_or_create(
+                project=instance,
+                user=instance.leader,
+                defaults={
+                    'role_in_project': ProjectMember.RoleInProject.LEADER,
+                },
+            )
+            if created:
+                ProjectMembershipEvent.objects.create(
+                    membership=membership,
+                    event_type=ProjectMembershipEvent.EventType.JOINED,
+                    to_role=membership.role_in_project,
+                    to_status=membership.status,
+                    operator=created_by,
+                )
+            ProjectStageLog.objects.create(
+                project=instance,
+                from_stage=None,
+                to_stage=instance.current_stage,
+                operator=created_by,
+                note='批量导入创建',
+            )
+            return instance
+        if module == 'ip_applications':
+            from apps.intellectual_property.models import IPApplicationProjectLink
+
+            instance = ModelClass.objects.create(**clean_data)
+            if instance.related_project_id:
+                IPApplicationProjectLink.objects.get_or_create(
+                    application=instance,
+                    project=instance.related_project,
+                    defaults={
+                        'relation_type': IPApplicationProjectLink.RelationType.PRIMARY,
+                    },
+                )
             return instance
         return ModelClass.objects.create(**clean_data)
 
     @classmethod
     @transaction.atomic
-    def confirm_import(cls, import_task, field_mapping=None):
+    def confirm_import(cls, import_task, field_mapping=None, *, operator=None):
         if field_mapping is not None:
             import_task.field_mapping = field_mapping
             import_task.save(update_fields=['field_mapping', 'updated_at'])
@@ -418,6 +633,7 @@ class ImportService:
         defaults = config.get('defaults', {})
         created_ids = []
         write_errors = dict(validation_errors)
+        permission_operator = operator or import_task.created_by
 
         for row_index, row_data in enumerate(valid_rows, start=1):
             try:
@@ -426,9 +642,21 @@ class ImportService:
                 )
                 for field, value in defaults.items():
                     clean_data.setdefault(field, value)
+                cls._validate_import_scope(
+                    clean_data,
+                    import_task.module,
+                    operator=permission_operator,
+                    default_team=import_task.team,
+                )
                 # 单行保存点避免某行唯一约束失败后破坏整批事务。
                 with transaction.atomic():
-                    obj = cls._create_instance(ModelClass, clean_data, import_task.module)
+                    obj = cls._create_instance(
+                        ModelClass,
+                        clean_data,
+                        import_task.module,
+                        default_team=import_task.team,
+                        created_by=import_task.created_by,
+                    )
                 created_ids.append(obj.pk)
             except Exception as exc:
                 write_errors[f'row_{row_index}'] = [str(exc)]
@@ -466,10 +694,19 @@ class ImportService:
         deleted_count, _ = ModelClass.objects.filter(pk__in=snapshot).delete()
         import_task.status = ImportTask.Status.ROLLED_BACK
         import_task.save(update_fields=['status', 'updated_at'])
+        import_root = (Path(settings.MEDIA_ROOT) / 'imports').resolve()
+        file_path = Path(import_task.file_path).resolve()
         try:
-            os.remove(import_task.file_path)
-        except (FileNotFoundError, OSError):
+            file_path.relative_to(import_root)
+        except ValueError:
+            # 历史/异常任务可能指向导入目录之外；回滚业务数据即可，
+            # 绝不能把数据库字段当作任意本地文件删除路径。
             pass
+        else:
+            try:
+                file_path.unlink()
+            except (FileNotFoundError, OSError):
+                pass
         return True, f'已回滚 {deleted_count} 条数据'
 
 

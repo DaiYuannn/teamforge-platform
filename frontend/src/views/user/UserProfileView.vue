@@ -68,6 +68,15 @@
           <el-form-item label="邮箱" prop="email">
             <el-input v-model="form.email" placeholder="请输入邮箱" maxlength="64" />
           </el-form-item>
+          <el-form-item label="学校">
+            <el-input v-model="form.school" placeholder="请输入学校" maxlength="150" />
+          </el-form-item>
+          <el-form-item label="年级">
+            <el-input v-model="form.grade" placeholder="例如 2024级" maxlength="50" />
+          </el-form-item>
+          <el-form-item label="专业">
+            <el-input v-model="form.major" placeholder="请输入专业" maxlength="100" />
+          </el-form-item>
           <el-form-item>
             <el-button type="primary" :loading="submitting" @click="handleSubmit">保存修改</el-button>
             <el-button @click="handleReset">重置</el-button>
@@ -109,6 +118,9 @@ const form = reactive<UpdateProfileParams>({
   name: '',
   phone: '',
   email: '',
+  school: '',
+  grade: '',
+  major: '',
 })
 
 // 校验规则
@@ -125,6 +137,9 @@ function syncForm(): void {
   form.name = u.name || ''
   form.phone = u.phone || ''
   form.email = u.email || ''
+  form.school = u.school || ''
+  form.grade = u.grade || ''
+  form.major = u.major || ''
 }
 
 // 加载用户信息
@@ -182,6 +197,9 @@ async function handleSubmit(): Promise<void> {
         name: form.name,
         phone: form.phone,
         email: form.email,
+        school: form.school,
+        grade: form.grade,
+        major: form.major,
       }
       await userStore.updateProfile(data)
       userInfo.value = userStore.userInfo

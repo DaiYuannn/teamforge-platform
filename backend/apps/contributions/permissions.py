@@ -3,6 +3,7 @@
 所有权限必须后端真实校验
 """
 from rest_framework.permissions import BasePermission, SAFE_METHODS
+from common.project_access import project_can_manage
 
 
 def _is_project_member(user, project):
@@ -31,7 +32,7 @@ def _is_project_leader_or_admin(user, project):
         return True
     if project is None:
         return False
-    return project.leader_id == user.id
+    return project_can_manage(user, project)
 
 
 class IsProjectMemberForContribution(BasePermission):
@@ -58,7 +59,7 @@ class IsProjectMemberForContribution(BasePermission):
             return True
         project = getattr(obj, 'project', None)
         # 项目负责人可修改/删除
-        if project is not None and project.leader_id == request.user.id:
+        if project is not None and project_can_manage(request.user, project):
             return True
         # 填写人可修改/删除
         if getattr(obj, 'filled_by_id', None) == request.user.id:
@@ -86,6 +87,6 @@ class IsProjectLeaderOrTeacherOrAdminForContribution(BasePermission):
         if request.user.global_role in ['sys_admin', 'teacher']:
             return True
         project = getattr(obj, 'project', None)
-        if project is not None and project.leader_id == request.user.id:
+        if project is not None and project_can_manage(request.user, project):
             return True
         return False

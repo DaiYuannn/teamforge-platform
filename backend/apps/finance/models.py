@@ -35,6 +35,13 @@ class FinanceBudget(models.Model):
     bonus_amount = models.DecimalField('奖金总额', max_digits=12, decimal_places=2, default=Decimal('0'))
     # 其他收入
     other_income = models.DecimalField('其他收入', max_digits=12, decimal_places=2, default=Decimal('0'))
+    # 核定的预计支出上限；与实际到账收入分开，0 表示沿用累计收入作为兼容基准。
+    planned_amount = models.DecimalField(
+        '核定预算上限',
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal('0'),
+    )
     # 已用金额
     used_amount = models.DecimalField('已用金额', max_digits=12, decimal_places=2, default=Decimal('0'))
     # 待报销金额
@@ -67,8 +74,25 @@ class FinanceBudget(models.Model):
 
     @property
     def remaining_amount(self):
-        """剩余金额 = 总收入 - 已用金额"""
+        """账面余额 = 累计收入 - 已完成付款支出（兼容旧接口）。"""
         return self.total_income - self.used_amount
+
+    @property
+    def committed_amount(self):
+        """已发生并进入流程的支出 = 已完成付款 + 待审核/待付款。"""
+        return self.used_amount + self.pending_reimbursement
+
+    @property
+    def budget_basis(self):
+        """预算控制基准；未设置核定上限的旧数据沿用累计收入。"""
+        if self.planned_amount > Decimal('0'):
+            return self.planned_amount
+        return self.total_income
+
+    @property
+    def available_amount(self):
+        """可继续承诺额度 = 控制基准 - 已发生支出。"""
+        return self.budget_basis - self.committed_amount
 
 
 class FinanceExpense(SoftDeleteMixin, models.Model):
@@ -99,10 +123,10 @@ class FinanceExpense(SoftDeleteMixin, models.Model):
         """逐笔报销状态。"""
 
         DRAFT = 'draft', '草稿'
-        PENDING = 'pending', '待审核'
-        APPROVED = 'approved', '已审核'
+        PENDING = 'pending', '待报销审核'
+        APPROVED = 'approved', '审核通过·待打款'
         REJECTED = 'rejected', '已驳回'
-        PAID = 'paid', '已付款'
+        PAID = 'paid', '已打款·报销完成'
         NOT_REQUIRED = 'not_required', '无需报销'
 
     # 所属项目

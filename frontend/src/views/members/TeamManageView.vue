@@ -9,14 +9,14 @@
     <div class="team-layout">
       <aside class="surface-panel team-list">
         <button
-          v-for="team in teams"
+          v-for="team in displayTeams"
           :key="team.id"
           type="button"
           class="team-option"
-          :class="{ active: selectedTeam?.id === team.id }"
+          :class="{ active: selectedTeam?.id === team.id, 'is-child': team.depth === 1 }"
           @click="selectTeam(team)"
         >
-          <strong>{{ team.name }}</strong>
+          <strong>{{ team.depth === 1 ? `↳ ${team.name}` : team.name }}</strong>
           <span>{{ team.member_count }} 人 · {{ team.owner_name }}</span>
         </button>
         <EmptyState v-if="!loading && teams.length === 0" text="暂无团队" description="创建团队后开始维护组织关系" compact />
@@ -53,8 +53,18 @@
             <el-table-column label="成员" min-width="190">
               <template #default="{ row }">
                 <div class="member-cell">
-                  <strong>{{ row.user_name }}</strong>
+                  <el-button link type="primary" @click="openMemberDetail(row.user)">
+                    <strong>{{ row.user_name }}</strong>
+                  </el-button>
                   <span>{{ row.user_email }}</span>
+                </div>
+              </template>
+            </el-table-column>
+            <el-table-column label="学校 / 专业" min-width="180">
+              <template #default="{ row }">
+                <div class="member-cell">
+                  <span>{{ row.user_school || '未填写学校' }}</span>
+                  <span>{{ [row.user_grade, row.user_major].filter(Boolean).join(' · ') || '未填写年级专业' }}</span>
                 </div>
               </template>
             </el-table-column>
@@ -71,16 +81,24 @@
             <el-table-column label="加入时间" width="120">
               <template #default="{ row }">{{ formatDate(row.joined_at) }}</template>
             </el-table-column>
-            <el-table-column v-if="selectedTeam.can_manage" label="操作" width="154" align="right">
+            <el-table-column label="操作" width="210" align="right">
               <template #default="{ row }">
-                <el-button link type="primary" @click="openMemberDialog(row as TeamMember)">管理</el-button>
+                <el-button link type="primary" @click="openMemberDetail(row.user)">详情</el-button>
                 <el-button
-                  v-if="row.role !== 'owner' && row.status === 'active'"
+                  v-if="selectedTeam?.can_manage"
+                  link
+                  type="primary"
+                  @click="openMemberDialog(row as TeamMember)"
+                >
+                  管理
+                </el-button>
+                <el-button
+                  v-if="selectedTeam?.can_manage && row.role !== 'owner' && row.status === 'active'"
                   link
                   type="warning"
                   @click="handleTransferOwner(row as TeamMember)"
                 >
-                  转为负责人
+                  转为主负责人
                 </el-button>
               </template>
             </el-table-column>
@@ -98,6 +116,17 @@
     >
       <el-form label-width="90px">
         <el-form-item label="团队名称" required><el-input v-model="teamForm.name" /></el-form-item>
+        <el-form-item label="上级总团队">
+          <el-select v-model="teamForm.parent" clearable placeholder="不选择则创建总团队" style="width: 100%">
+            <el-option
+              v-for="item in manageableRootTeams"
+              :key="item.id"
+              :label="item.name"
+              :value="item.id"
+              :disabled="item.id === editingTeamId"
+            />
+          </el-select>
+        </el-form-item>
         <el-form-item label="团队编号"><el-input v-model="teamForm.code" placeholder="例如 INNOVATION-LAB" /></el-form-item>
         <el-form-item label="团队介绍"><el-input v-model="teamForm.description" type="textarea" :rows="3" /></el-form-item>
         <el-form-item label="联系邮箱"><el-input v-model="teamForm.contact_email" /></el-form-item>
@@ -137,6 +166,8 @@
         <el-form-item v-else label="成员"><strong>{{ editingMember.user_name }}</strong></el-form-item>
         <el-form-item label="团队角色" required>
           <el-select v-model="memberForm.role" style="width: 100%">
+            <el-option label="主负责人" value="owner" disabled />
+            <el-option label="共同负责人" value="co_lead" />
             <el-option label="团队管理员" value="admin" />
             <el-option label="指导老师" value="teacher" />
             <el-option label="团队成员" value="member" />
@@ -178,6 +209,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Edit, Plus, UserFilled } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
@@ -198,6 +230,7 @@ import {
 } from '@/api/teams'
 
 const loading = ref(false)
+const router = useRouter()
 const saving = ref(false)
 const teams = ref<Team[]>([])
 const selectedTeam = ref<Team | null>(null)
@@ -215,6 +248,7 @@ const teamForm = reactive({
   contact_email: '',
   join_message: '',
   is_active: true,
+  parent: undefined as number | undefined,
 })
 const memberForm = reactive({
   user: undefined as number | undefined,
@@ -229,10 +263,33 @@ const activeHandoverMembers = computed(() =>
     item.id !== editingMember.value?.id && item.status === 'active'
   )
 )
+const displayTeams = computed(() => {
+  const roots = teams.value.filter((team) => !team.parent)
+  const visibleIds = new Set<number>()
+  const rows: Array<Team & { depth: number }> = []
+  roots.forEach((root) => {
+    rows.push({ ...root, depth: 0 })
+    visibleIds.add(root.id)
+    teams.value
+      .filter((team) => team.parent === root.id)
+      .forEach((child) => {
+        rows.push({ ...child, depth: 1 })
+        visibleIds.add(child.id)
+      })
+  })
+  teams.value
+    .filter((team) => !visibleIds.has(team.id))
+    .forEach((team) => rows.push({ ...team, depth: team.parent ? 1 : 0 }))
+  return rows
+})
+const manageableRootTeams = computed(() =>
+  teams.value.filter((team) => !team.parent && team.can_manage),
+)
 
 function roleLabel(value: string): string {
   return {
-    owner: '负责人',
+    owner: '主负责人',
+    co_lead: '共同负责人',
     admin: '团队管理员',
     teacher: '指导老师',
     member: '团队成员',
@@ -277,6 +334,7 @@ function openTeamDialog(team?: Team): void {
     contact_email: team?.contact_email || '',
     join_message: team?.join_message || '',
     is_active: team?.is_active ?? true,
+    parent: team?.parent || undefined,
   })
   teamDialogVisible.value = true
 }
@@ -302,7 +360,7 @@ async function openMemberDialog(member?: TeamMember): Promise<void> {
   editingMember.value = member || null
   Object.assign(memberForm, {
     user: member?.user,
-    role: member?.role === 'owner' ? 'admin' : member?.role || 'member',
+    role: member?.role || 'member',
     status: member?.status || 'active',
     reason: member?.exit_reason || '',
     handover_to: member?.handover_to || undefined,
@@ -346,8 +404,8 @@ async function handleTransferOwner(member: TeamMember): Promise<void> {
   if (!selectedTeam.value) return
   try {
     await ElMessageBox.confirm(
-      `确定将团队负责人转让给“${member.user_name}”吗？当前负责人将调整为团队管理员。`,
-      '转让团队负责人',
+      `确定将主负责人转让给“${member.user_name}”吗？当前主负责人将调整为共同负责人。`,
+      '转让主负责人',
       { type: 'warning' },
     )
     await transferTeamOwner(selectedTeam.value.id, member.id, '团队负责人交接')
@@ -356,6 +414,10 @@ async function handleTransferOwner(member: TeamMember): Promise<void> {
   } catch {
     // 用户取消或错误已统一处理
   }
+}
+
+function openMemberDetail(userId: number): void {
+  router.push(`/members/${userId}`)
 }
 
 onMounted(loadTeams)
@@ -394,6 +456,10 @@ onMounted(loadTeams)
   &.active {
     background: var(--color-primary-soft);
   }
+}
+
+.team-option.is-child {
+  padding-left: 26px;
 }
 
 .team-workspace {

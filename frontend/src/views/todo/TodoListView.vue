@@ -36,6 +36,8 @@
           <el-radio-button value="approval">审批</el-radio-button>
           <el-radio-button value="contribution_review">贡献审核</el-radio-button>
           <el-radio-button value="ip_todo">知识产权</el-radio-button>
+          <el-radio-button value="finance_review">报销审核</el-radio-button>
+          <el-radio-button value="finance_payment">待打款</el-radio-button>
         </el-radio-group>
       </header>
 
@@ -106,19 +108,19 @@ const stats = computed(() => ({
 const currentFilterLabel = computed(() => (filterType.value ? getTypeLabel(filterType.value) : '全部行动项'))
 
 function getTypeIcon(type: string): any {
-  return { task: List, overdue_task: Warning, approval: Lock, contribution_review: Trophy, ip_todo: Trophy }[type] || List
+  return { task: List, overdue_task: Warning, approval: Lock, contribution_review: Trophy, ip_todo: Trophy, finance_review: Lock, finance_payment: List }[type] || List
 }
 
 function typeTone(type: string): string {
-  return { task: 'primary', overdue_task: 'danger', approval: 'warning', contribution_review: 'success', ip_todo: 'warning' }[type] || 'neutral'
+  return { task: 'primary', overdue_task: 'danger', approval: 'warning', contribution_review: 'success', ip_todo: 'warning', finance_review: 'warning', finance_payment: 'primary' }[type] || 'neutral'
 }
 
 function getTypeTagType(type: string): TagType {
-  return ({ task: 'primary', overdue_task: 'danger', approval: 'warning', contribution_review: 'success', ip_todo: 'warning' }[type] || 'info') as TagType
+  return ({ task: 'primary', overdue_task: 'danger', approval: 'warning', contribution_review: 'success', ip_todo: 'warning', finance_review: 'warning', finance_payment: 'primary' }[type] || 'info') as TagType
 }
 
 function getTypeLabel(type: string): string {
-  return { task: '任务', overdue_task: '逾期任务', approval: '待审批', contribution_review: '贡献审核', ip_todo: '知识产权' }[type] || type
+  return { task: '任务', overdue_task: '逾期任务', approval: '待审批', contribution_review: '贡献审核', ip_todo: '知识产权', finance_review: '报销审核', finance_payment: '待登记打款' }[type] || type
 }
 
 function isOverdue(date: string): boolean {

@@ -11,11 +11,13 @@ import type {
 export function previewImport(
   file: File,
   module: ImportModule,
-  fieldMapping?: FieldMapping
+  fieldMapping?: FieldMapping,
+  team?: number,
 ): Promise<ImportPreviewResult> {
   const formData = new FormData()
   formData.append('file', file)
   formData.append('module', module)
+  if (team) formData.append('team', String(team))
   if (fieldMapping) {
     formData.append('field_mapping', JSON.stringify(fieldMapping))
   }

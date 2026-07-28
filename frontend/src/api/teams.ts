@@ -12,6 +12,11 @@ export interface Team {
   owner: number
   owner_name: string
   member_count: number
+  parent?: number | null
+  parent_name?: string
+  team_type: 'organization' | 'squad'
+  team_type_display?: string
+  child_count?: number
   current_user_role?: string
   can_manage?: boolean
   created_at: string
@@ -23,6 +28,10 @@ export interface TeamMember {
   user: number
   user_name: string
   user_email: string
+  user_avatar?: string
+  user_school?: string
+  user_grade?: string
+  user_major?: string
   role: string
   role_display?: string
   status: string
@@ -91,4 +100,3 @@ export function transferTeamOwner(
 ): Promise<Team> {
   return post<Team>(`/teams/${teamId}/transfer-owner/`, { member_id: memberId, reason })
 }
-

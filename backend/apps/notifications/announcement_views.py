@@ -10,13 +10,46 @@ from django.utils import timezone
 from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated, AllowAny
+from rest_framework.permissions import BasePermission
 from rest_framework.viewsets import ModelViewSet
 
 from common.response import success_response
 from common.mixins import MultiSerializerMixin, MultiPermissionMixin
-from common.permissions import IsTeacherOrAdmin
+from common.permissions import user_has_custom_permission
+from apps.common.team_models import TeamMember
 from .models import Announcement
 from .serializers import AnnouncementSerializer
+
+
+def can_manage_announcements(user):
+    if (
+        not user
+        or not user.is_authenticated
+        or not user.is_active
+        or getattr(user, 'membership_status', '') not in {'active', 'on_leave'}
+    ):
+        return False
+    if user.global_role in {'teacher', 'sys_admin'}:
+        return True
+    if user_has_custom_permission(user, 'announcement.manage'):
+        return True
+    return TeamMember.objects.filter(
+        user=user,
+        role__in=[
+            TeamMember.Role.OWNER,
+            TeamMember.Role.CO_LEAD,
+            TeamMember.Role.ADMIN,
+        ],
+        status=TeamMember.Status.ACTIVE,
+    ).exists()
+
+
+class IsAnnouncementManager(BasePermission):
+    def has_permission(self, request, view):
+        return can_manage_announcements(getattr(request, 'user', None))
+
+    def has_object_permission(self, request, view, obj):
+        return self.has_permission(request, view)
 
 
 class AnnouncementViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet):
@@ -42,11 +75,11 @@ class AnnouncementViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewS
     permission_classes_by_action = {
         'list': [IsAuthenticated],
         'retrieve': [IsAuthenticated],
-        'create': [IsTeacherOrAdmin],
-        'update': [IsTeacherOrAdmin],
-        'partial_update': [IsTeacherOrAdmin],
-        'destroy': [IsTeacherOrAdmin],
-        'pin': [IsTeacherOrAdmin],
+        'create': [IsAnnouncementManager],
+        'update': [IsAnnouncementManager],
+        'partial_update': [IsAnnouncementManager],
+        'destroy': [IsAnnouncementManager],
+        'pin': [IsAnnouncementManager],
         'public': [AllowAny],
     }
 
@@ -68,7 +101,7 @@ class AnnouncementViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewS
                 is_public=True,
             )
         # 老师/管理员可见全部
-        if user.is_authenticated and user.global_role in ('teacher', 'sys_admin'):
+        if can_manage_announcements(user):
             return queryset
         # 普通成员仅可见已发布
         return queryset.filter(status=Announcement.Status.PUBLISHED)

@@ -56,6 +56,22 @@ class SensitiveData(models.Model):
         verbose_name='关联项目',
         null=True, blank=True,
     )
+    team = models.ForeignKey(
+        'common.Team',
+        on_delete=models.PROTECT,
+        related_name='sensitive_data',
+        verbose_name='所属团队',
+        null=True,
+        blank=True,
+    )
+    subject_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        related_name='personal_sensitive_data',
+        verbose_name='资料所属成员',
+        null=True,
+        blank=True,
+    )
     # 上传人（原有字段，作为敏感资料拥有者）
     uploader = models.ForeignKey(
         settings.AUTH_USER_MODEL,

@@ -479,6 +479,7 @@ const permissionOptions = [
   { value: 'task.create', label: '创建任务' }, { value: 'task.manage', label: '管理任务' },
   { value: 'finance.view', label: '查看经费' }, { value: 'finance.manage', label: '管理经费' },
   { value: 'report.view', label: '查看报表' }, { value: 'report.manage', label: '管理报表' },
+  { value: 'announcement.manage', label: '管理公告' },
   { value: 'member.view', label: '查看成员' }, { value: 'member.manage', label: '管理成员' },
 ]
 const reviewerRoleOptions = [

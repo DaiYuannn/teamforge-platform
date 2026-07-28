@@ -11,6 +11,7 @@ from rest_framework.routers import DefaultRouter
 
 from .views import (
     ContributionViewSet,
+    ProjectContributionReviewerViewSet,
     MemberRankingViewSet,
     RankingObjectionViewSet,
 )
@@ -19,6 +20,11 @@ from .leaderboard_views import ContributionLeaderboardView
 
 router = DefaultRouter()
 router.register(r'contributions', ContributionViewSet, basename='contribution')
+router.register(
+    r'project-reviewers',
+    ProjectContributionReviewerViewSet,
+    basename='project-contribution-reviewer',
+)
 router.register(r'rankings', MemberRankingViewSet, basename='ranking')
 router.register(r'objections', RankingObjectionViewSet, basename='ranking-objection')
 

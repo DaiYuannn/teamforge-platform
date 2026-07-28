@@ -68,11 +68,12 @@ def recalculate_project_budget(project_id):
         or ZERO
     )
 
-    total_income = bonus_amount + other_income
     committed = used_amount + pending_reimbursement
-    if committed > total_income and committed > ZERO:
+    total_income = bonus_amount + other_income
+    budget_basis = budget.planned_amount if budget.planned_amount > ZERO else total_income
+    if committed > budget_basis and committed > ZERO:
         budget_status = FinanceBudget.Status.ABNORMAL
-    elif total_income > ZERO and committed >= total_income * Decimal('0.80'):
+    elif budget_basis > ZERO and committed >= budget_basis * Decimal('0.80'):
         budget_status = FinanceBudget.Status.WARNING
     else:
         budget_status = FinanceBudget.Status.NORMAL

@@ -172,6 +172,14 @@
                 </el-tag>
               </template>
             </el-table-column>
+            <el-table-column label="比赛负责人 / 参赛人数" min-width="160">
+              <template #default="{ row }">
+                <div class="milestone-cell">
+                  <span>{{ row.leader_names?.join('、') || '待指定负责人' }}</span>
+                  <span><small>成员</small>{{ row.participant_count || 0 }} 人</span>
+                </div>
+              </template>
+            </el-table-column>
             <el-table-column label="当前阶段" min-width="124" show-overflow-tooltip>
               <template #default="{ row }">{{ row.current_stage || '-' }}</template>
             </el-table-column>
@@ -208,7 +216,7 @@
                   编辑
                 </el-button>
                 <el-button
-                  v-permission="['sys_admin']"
+                  v-if="canEditCompetition(row as CompetitionRow)"
                   type="danger"
                   link
                   :icon="Delete"
@@ -267,6 +275,14 @@
                 <dt>结果</dt>
                 <dd>{{ displayDate(item.result_date) }}</dd>
               </div>
+              <div>
+                <dt>比赛负责人</dt>
+                <dd>{{ item.leader_names?.join('、') || '待指定' }}</dd>
+              </div>
+              <div>
+                <dt>参赛人数</dt>
+                <dd>{{ item.participant_count || 0 }} 人</dd>
+              </div>
             </dl>
 
             <footer class="competition-row__actions">
@@ -290,7 +306,7 @@
                 编辑
               </el-button>
               <el-button
-                v-permission="['sys_admin']"
+                v-if="canEditCompetition(item)"
                 type="danger"
                 link
                 :icon="Delete"
@@ -329,6 +345,8 @@
     <CompetitionDetailDialog
       v-model:visible="detailDialogVisible"
       :competition="selectedCompetition"
+      :can-manage="Boolean(selectedCompetition?.can_manage)"
+      @edit="handleDetailEdit"
     />
   </div>
 </template>
@@ -381,11 +399,9 @@ import {
   toCompetitionExportParams,
 } from './competitionWorkflow'
 import { useAppStore } from '@/stores/app'
-import { useUserStore } from '@/stores/user'
 
 const route = useRoute()
 const appStore = useAppStore()
-const userStore = useUserStore()
 
 type ViewMode = 'list' | 'matrix' | 'funnel'
 type CompetitionRow = Competition
@@ -424,12 +440,8 @@ const queryParams = reactive<CompetitionQueryParams>({
 const hasActiveFilters = computed(
   () => Boolean(queryParams.search || queryParams.project || queryParams.level || queryParams.status),
 )
-const isGlobalCompetitionManager = computed(
-  () => ['teacher', 'sys_admin'].includes(userStore.role),
-)
 const canCreateCompetition = computed(
-  () => isGlobalCompetitionManager.value
-    || projectOptions.value.some((project) => project.leader === userStore.userInfo?.id),
+  () => projectOptions.value.some((project) => project.can_manage),
 )
 const paginationLayout = computed(() =>
   isMobile.value ? 'prev, pager, next' : 'total, sizes, prev, pager, next',
@@ -473,10 +485,7 @@ function handleCreate(): void {
 }
 
 function canEditCompetition(row: CompetitionRow): boolean {
-  if (isGlobalCompetitionManager.value) return true
-  return projectOptions.value.some(
-    (project) => project.id === row.project && project.leader === userStore.userInfo?.id,
-  )
+  return Boolean(row.can_manage)
 }
 
 async function handleView(row: CompetitionRow): Promise<void> {
@@ -504,6 +513,12 @@ async function handleEdit(row: CompetitionRow): Promise<void> {
   } finally {
     editingId.value = null
   }
+}
+
+function handleDetailEdit(competition: Competition): void {
+  detailDialogVisible.value = false
+  editingCompetition.value = competition
+  formDialogVisible.value = true
 }
 
 async function handleExport(): Promise<void> {

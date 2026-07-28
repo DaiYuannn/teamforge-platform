@@ -5,6 +5,7 @@
 关键：敏感资料明文绝不裸露，必须审批后限时查看，每次查看必须写 OperationLog
 """
 from django.http import Http404
+from django.db.models import Q
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.decorators import action
@@ -28,6 +29,9 @@ from .permissions import (
     IsSensitiveDataCreator,
     HasValidAccessApproval,
     IsInternalSensitiveMember,
+    can_review_sensitive_request,
+    scope_sensitive_data_queryset,
+    sensitive_review_team_ids,
 )
 from .services import SensitiveDataService
 
@@ -69,15 +73,9 @@ class SensitiveDataViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelView
     def get_queryset(self):
         """管理员/敏感审批人可查看所有，普通成员仅查看自己上传的"""
         queryset = super().get_queryset().select_related(
-            'uploader', 'project', 'file_attachment',
+            'uploader', 'subject_user', 'team', 'project', 'file_attachment',
         )
-        user = self.request.user
-        if self.action in ['list', 'retrieve', 'view']:
-            return queryset
-        if user.global_role in ['sys_admin', 'sens_approver', 'teacher']:
-            return queryset
-        # 普通成员仅查看自己上传的
-        return queryset.filter(uploader=user)
+        return scope_sensitive_data_queryset(queryset, self.request.user)
 
     def create(self, request, *args, **kwargs):
         """创建敏感资料（加密存储）"""
@@ -109,13 +107,15 @@ class SensitiveDataViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelView
         GET /api/v1/sensitive/data/my_data/
         """
         queryset = SensitiveData.objects.filter(
-            uploader=request.user
-        ).select_related('uploader', 'project', 'file_attachment').order_by('-created_at')
+            Q(uploader=request.user) | Q(subject_user=request.user)
+        ).select_related(
+            'uploader', 'subject_user', 'team', 'project', 'file_attachment',
+        ).distinct().order_by('-created_at')
         page = self.paginate_queryset(queryset)
         if page is not None:
-            serializer = SensitiveDataSerializer(page, many=True)
+            serializer = self.get_serializer(page, many=True)
             return self.get_paginated_response(serializer.data)
-        serializer = SensitiveDataSerializer(queryset, many=True)
+        serializer = self.get_serializer(queryset, many=True)
         return success_response(serializer.data)
 
     @action(detail=True, methods=['post'])
@@ -192,18 +192,23 @@ class SensitiveAccessRequestViewSet(MultiSerializerMixin, MultiPermissionMixin, 
         """申请人查看自己的申请，审批人查看待审批的"""
         queryset = super().get_queryset().select_related(
             'sensitive_data', 'sensitive_data__file_attachment',
+            'sensitive_data__team', 'sensitive_data__subject_user',
             'applicant', 'approver', 'project',
         )
         user = self.request.user
         params = self.request.query_params
-        # 审批人/管理员/老师可查看所有，并支持按 status 筛选
-        if user.global_role in ['sens_approver', 'sys_admin', 'teacher']:
-            stat = params.get('status')
-            if stat:
-                queryset = queryset.filter(status=stat)
-            return queryset
-        # 普通成员仅查看自己的申请
-        return queryset.filter(applicant=user)
+        review_team_ids = sensitive_review_team_ids(user)
+        review_filter = Q(sensitive_data__team_id__in=review_team_ids)
+        if (
+            user.global_role == 'sens_approver'
+            and user.membership_status in {'active', 'on_leave'}
+        ):
+            review_filter |= Q(sensitive_data__team__isnull=True)
+        queryset = queryset.filter(Q(applicant=user) | review_filter)
+        stat = params.get('status')
+        if stat:
+            queryset = queryset.filter(status=stat)
+        return queryset.distinct()
 
     def create(self, request, *args, **kwargs):
         """创建访问申请"""
@@ -230,6 +235,15 @@ class SensitiveAccessRequestViewSet(MultiSerializerMixin, MultiPermissionMixin, 
         if validated_data.get('action') != 'approve':
             return error_response(message='该接口仅支持审批通过操作')
 
+        access_request = SensitiveAccessRequest.objects.select_related(
+            'sensitive_data', 'sensitive_data__team',
+        ).filter(pk=pk).first()
+        if access_request is None or not can_review_sensitive_request(request.user, access_request):
+            return error_response(
+                message='无权处理其他团队的敏感资料申请',
+                code=1003,
+                http_status=status.HTTP_403_FORBIDDEN,
+            )
         success, result = SensitiveDataService.approve_request(
             request_id=pk,
             approver=request.user,
@@ -258,6 +272,15 @@ class SensitiveAccessRequestViewSet(MultiSerializerMixin, MultiPermissionMixin, 
         if validated_data.get('action') != 'reject':
             return error_response(message='该接口仅支持驳回操作')
 
+        access_request = SensitiveAccessRequest.objects.select_related(
+            'sensitive_data', 'sensitive_data__team',
+        ).filter(pk=pk).first()
+        if access_request is None or not can_review_sensitive_request(request.user, access_request):
+            return error_response(
+                message='无权处理其他团队的敏感资料申请',
+                code=1003,
+                http_status=status.HTTP_403_FORBIDDEN,
+            )
         success, result = SensitiveDataService.reject_request(
             request_id=pk,
             approver=request.user,
@@ -293,7 +316,16 @@ class SensitiveAccessRequestViewSet(MultiSerializerMixin, MultiPermissionMixin, 
         GET /api/v1/sensitive/requests/pending_approve/
         支持标准分页参数：page、page_size
         """
+        team_filter = Q(
+            sensitive_data__team_id__in=sensitive_review_team_ids(request.user)
+        )
+        if (
+            request.user.global_role == 'sens_approver'
+            and request.user.membership_status in {'active', 'on_leave'}
+        ):
+            team_filter |= Q(sensitive_data__team__isnull=True)
         queryset = self.get_queryset().filter(
+            team_filter,
             status=SensitiveAccessRequest.Status.PENDING,
         ).exclude(
             applicant=request.user,

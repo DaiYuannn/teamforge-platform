@@ -14,10 +14,29 @@
         <div class="pane-heading">
           <div>
             <h2>团队敏感资料目录</h2>
-            <span>{{ myDataList.length }} 项脱敏资料</span>
+            <span>
+              {{ myDataList.length }} 项脱敏资料
+              <template v-if="requestedSubjectUserId"> · 已按成员筛选</template>
+            </span>
           </div>
-          <el-button type="primary" :icon="Plus" @click="handleApply">申请查看</el-button>
+          <div class="panel-actions">
+            <el-button :icon="Plus" @click="handleCreate">录入资料</el-button>
+            <el-button type="primary" :icon="View" @click="handleApply">申请查看</el-button>
+          </div>
         </div>
+
+        <el-alert
+          v-if="requestedSubjectUserId"
+          class="subject-filter-alert"
+          type="info"
+          :closable="false"
+          show-icon
+        >
+          <template #title>
+            当前仅显示资料本人为“{{ filteredSubjectName }}”的可见条目
+          </template>
+          <el-button link type="primary" @click="clearSubjectFilter">查看全部可见资料</el-button>
+        </el-alert>
 
         <el-table v-if="!isMobile" v-loading="myDataLoading" :data="myDataList" stripe size="small">
           <el-table-column prop="title" label="名称" min-width="160">
@@ -33,8 +52,11 @@
           <el-table-column prop="masked_value" label="脱敏值" min-width="200">
             <template #default="{ row }"><code class="masked-value">{{ row.masked_value || '-' }}</code></template>
           </el-table-column>
-          <el-table-column prop="owner_name" label="资料归属" min-width="110">
-            <template #default="{ row }">{{ row.owner_name || '-' }}</template>
+          <el-table-column prop="subject_name" label="资料本人" min-width="110">
+            <template #default="{ row }">{{ row.subject_name || row.owner_name || '-' }}</template>
+          </el-table-column>
+          <el-table-column prop="team_name" label="所属小团队" min-width="120">
+            <template #default="{ row }">{{ row.team_name || '-' }}</template>
           </el-table-column>
           <el-table-column prop="created_at" label="创建时间" width="120">
             <template #default="{ row }">{{ formatDate(row.created_at) }}</template>
@@ -51,6 +73,10 @@
               </el-tag>
             </div>
             <div class="mobile-masked-value"><span>脱敏值</span><code>{{ item.masked_value || '-' }}</code></div>
+            <dl class="mobile-meta-grid">
+              <div><dt>资料本人</dt><dd>{{ item.subject_name || item.owner_name || '-' }}</dd></div>
+              <div><dt>所属小团队</dt><dd>{{ item.team_name || '-' }}</dd></div>
+            </dl>
           </article>
           <el-empty v-if="myDataList.length === 0 && !myDataLoading" description="暂无敏感资料" />
         </div>
@@ -272,7 +298,7 @@
             <el-option
               v-for="d in sensitiveDataOptions"
               :key="d.id"
-              :label="d.title || d.label || d.display_name"
+              :label="sensitiveOptionLabel(d)"
               :value="d.id"
             />
           </el-select>
@@ -305,6 +331,96 @@
       <template #footer>
         <el-button @click="applyDialogVisible = false">取消</el-button>
         <el-button type="primary" :loading="submitting" @click="handleSubmitApply">提交申请</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog
+      v-model="createDialogVisible"
+      title="录入敏感资料"
+      width="680px"
+      :close-on-click-modal="false"
+      @close="handleCloseCreate"
+    >
+      <el-alert
+        class="sensitive-create-alert"
+        title="明文提交后会加密保存，资料目录只展示脱敏值；代其他成员录入时由后端核验团队负责人或审批权限。"
+        type="warning"
+        :closable="false"
+        show-icon
+      />
+      <el-form
+        ref="createFormRef"
+        class="apply-form"
+        :model="createForm"
+        :rules="createRules"
+        label-position="top"
+      >
+        <div class="apply-form-grid">
+          <el-form-item label="资料类型" prop="data_type">
+            <el-select v-model="createForm.data_type" placeholder="请选择资料类型" style="width: 100%">
+              <el-option
+                v-for="item in sensitiveTypeOptions"
+                :key="item.value"
+                :label="item.label"
+                :value="item.value"
+              />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="所属小团队" prop="team">
+            <el-select
+              v-model="createForm.team"
+              :loading="createOptionsLoading"
+              placeholder="请选择所属小团队"
+              filterable
+              style="width: 100%"
+              @change="handleCreateTeamChange"
+            >
+              <el-option
+                v-for="team in teamOptions"
+                :key="team.id"
+                :label="team.parent_name ? `${team.parent_name} / ${team.name}` : team.name"
+                :value="team.id"
+              />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="资料本人" prop="subject_user">
+            <el-select
+              v-model="createForm.subject_user"
+              :loading="subjectOptionsLoading"
+              placeholder="请选择资料本人"
+              filterable
+              style="width: 100%"
+            >
+              <el-option
+                v-for="member in subjectOptions"
+                :key="member.user"
+                :label="`${member.user_name}${member.user_email ? `（${member.user_email}）` : ''}`"
+                :value="member.user"
+              />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="关联项目">
+            <el-select v-model="createForm.project" placeholder="可选" clearable filterable style="width: 100%">
+              <el-option v-for="p in projectOptions" :key="p.id" :label="p.name" :value="p.id" />
+            </el-select>
+          </el-form-item>
+          <el-form-item class="form-wide" label="资料标题" prop="title">
+            <el-input v-model="createForm.title" placeholder="例如：张三身份证号（专利申报）" maxlength="200" show-word-limit />
+          </el-form-item>
+          <el-form-item class="form-wide" label="资料明文" prop="plaintext">
+            <el-input
+              v-model="createForm.plaintext"
+              type="textarea"
+              :rows="3"
+              autocomplete="off"
+              placeholder="请输入需要加密保存的完整内容"
+            />
+          </el-form-item>
+        </div>
+      </el-form>
+      <template #footer>
+        <el-button @click="createDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="submitting" @click="handleSubmitCreate">加密保存</el-button>
       </template>
     </el-dialog>
 
@@ -358,6 +474,7 @@ import { useRoute, useRouter, type LocationQueryRaw } from 'vue-router'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
 import { CircleCheck, CircleClose, Download, Files, Plus, View } from '@element-plus/icons-vue'
 import {
+  createSensitiveData,
   downloadSensitiveAttachment,
   getAccessRequest,
   getSensitiveData,
@@ -368,6 +485,12 @@ import {
   rejectAccessRequest,
 } from '@/api/sensitive'
 import { getProjects } from '@/api/projects'
+import {
+  getTeamMembers,
+  getTeams,
+  type Team,
+  type TeamMember,
+} from '@/api/teams'
 import { downloadBlob, formatDate } from '@/utils/format'
 import { SENSITIVE_DATA_TYPE_MAP, ACCESS_REQUEST_STATUS_MAP } from '@/utils/constants'
 import { useDevice } from '@/composables/useDevice'
@@ -379,7 +502,12 @@ import {
   normalizeSensitiveWorkspaceTab,
   type SensitiveWorkspaceTab,
 } from './sensitiveWorkspace'
-import type { Project, SensitiveData, SensitiveAccessRequest } from '@/types'
+import type {
+  Project,
+  SensitiveData,
+  SensitiveDataCreateParams,
+  SensitiveAccessRequest,
+} from '@/types'
 
 const { isMobile } = useDevice()
 const route = useRoute()
@@ -393,17 +521,29 @@ const requestedId = computed(() => {
   const value = Number(route.query.request_id)
   return Number.isInteger(value) && value > 0 ? value : undefined
 })
+const requestedSubjectUserId = computed(() => {
+  const value = Number(route.query.subject_user)
+  return Number.isInteger(value) && value > 0 ? value : undefined
+})
+const requestedTeamId = computed(() => {
+  const value = Number(route.query.team)
+  return Number.isInteger(value) && value > 0 ? value : undefined
+})
 const myDataLoading = ref(false)
 const requestsLoading = ref(false)
 const pendingLoading = ref(false)
 const submitting = ref(false)
 const optionsLoading = ref(false)
+const createOptionsLoading = ref(false)
+const subjectOptionsLoading = ref(false)
 
 const myDataList = ref<SensitiveData[]>([])
 const myRequestsList = ref<SensitiveAccessRequest[]>([])
 const pendingList = ref<SensitiveAccessRequest[]>([])
 const projectOptions = ref<Project[]>([])
 const sensitiveDataOptions = ref<SensitiveData[]>([])
+const teamOptions = ref<Team[]>([])
+const subjectOptions = ref<TeamMember[]>([])
 const downloadingRequestId = ref<number | null>(null)
 const myRequestsTotal = ref(0)
 const myRequestsPage = ref(1)
@@ -414,10 +554,12 @@ const pendingPageSize = ref(userStore.itemsPerPage)
 
 // 弹窗状态
 const applyDialogVisible = ref(false)
+const createDialogVisible = ref(false)
 const approveDialogVisible = ref(false)
 const rejectDialogVisible = ref(false)
 const viewDialogVisible = ref(false)
 const applyFormRef = ref<FormInstance>()
+const createFormRef = ref<FormInstance>()
 
 const viewingRequest = ref<SensitiveAccessRequest | null>(null)
 
@@ -437,6 +579,32 @@ const applyRules: FormRules = {
   reason: [{ required: true, message: '请输入申请理由', trigger: 'blur' }],
 }
 
+const sensitiveTypeOptions = [
+  { value: 'id_card', label: '身份证号' },
+  { value: 'bank_account', label: '银行账号' },
+  { value: 'phone', label: '手机号' },
+  { value: 'address', label: '住址' },
+  { value: 'signature', label: '签名' },
+  { value: 'other', label: '其他' },
+]
+
+const createForm = reactive({
+  data_type: 'id_card',
+  title: '',
+  plaintext: '',
+  team: undefined as number | undefined,
+  subject_user: undefined as number | undefined,
+  project: undefined as number | undefined,
+})
+
+const createRules: FormRules = {
+  data_type: [{ required: true, message: '请选择资料类型', trigger: 'change' }],
+  team: [{ required: true, message: '请选择所属小团队', trigger: 'change' }],
+  subject_user: [{ required: true, message: '请选择资料本人', trigger: 'change' }],
+  title: [{ required: true, message: '请输入资料标题', trigger: 'blur' }],
+  plaintext: [{ required: true, message: '请输入需要加密保存的资料明文', trigger: 'blur' }],
+}
+
 // 批准表单
 const approveForm = reactive({
   expire_hours: 1,
@@ -451,9 +619,31 @@ const rejectForm = reactive({
 // 当前操作的申请
 const currentRequest = ref<SensitiveAccessRequest | null>(null)
 
+const filteredSubjectName = computed(() => {
+  const queryName = Array.isArray(route.query.subject_name)
+    ? route.query.subject_name[0]
+    : route.query.subject_name
+  if (queryName) return String(queryName)
+  const dataName = myDataList.value.find(
+    (item) => item.subject_user === requestedSubjectUserId.value,
+  )?.subject_name
+  if (dataName) return dataName
+  const optionName = subjectOptions.value.find(
+    (item) => item.user === requestedSubjectUserId.value,
+  )?.user_name
+  return optionName || `成员 #${requestedSubjectUserId.value}`
+})
+
 function getSensitiveTypeLabel(row: SensitiveAccessRequest): string {
   const type = row.sensitive_data_type || row.data_type || ''
   return row.sensitive_data_type_display || SENSITIVE_DATA_TYPE_MAP[type]?.label || type || '未知类型'
+}
+
+function sensitiveOptionLabel(row: SensitiveData): string {
+  const title = row.title || row.label || row.display_name || `敏感资料 #${row.id}`
+  const subject = row.subject_name || row.owner_name || '未标注本人'
+  const team = row.team_name || '未标注团队'
+  return `${title} · ${subject} · ${team}`
 }
 
 function getRequestExpiry(row: SensitiveAccessRequest): string | undefined {
@@ -508,7 +698,10 @@ async function loadMyData(): Promise<void> {
   myDataLoading.value = true
   try {
     const res = await getSensitiveData({ page: 1, page_size: 100 })
-    myDataList.value = Array.isArray(res) ? res : (res.results || [])
+    const rows = Array.isArray(res) ? res : (res.results || [])
+    myDataList.value = requestedSubjectUserId.value
+      ? rows.filter((item) => item.subject_user === requestedSubjectUserId.value)
+      : rows
   } catch {
     // 错误已由拦截器处理
   } finally {
@@ -611,7 +804,15 @@ async function loadOptions(): Promise<void> {
       getSensitiveData({ page: 1, page_size: 100 }),
     ])
     projectOptions.value = (projectsRes as any).results || []
-    sensitiveDataOptions.value = (sensitiveRes as any).results || []
+    const rows = Array.isArray(sensitiveRes)
+      ? sensitiveRes
+      : ((sensitiveRes as any).results || [])
+    sensitiveDataOptions.value = requestedSubjectUserId.value
+      ? rows.filter((item: SensitiveData) => item.subject_user === requestedSubjectUserId.value)
+      : rows
+    if (requestedSubjectUserId.value && sensitiveDataOptions.value.length) {
+      applyForm.sensitive_data = sensitiveDataOptions.value[0].id
+    }
   } catch {
     // 忽略
   } finally {
@@ -631,6 +832,114 @@ function handleApply(): void {
   })
   loadOptions()
   applyDialogVisible.value = true
+}
+
+function clearSubjectFilter(): void {
+  const query = { ...route.query }
+  delete query.subject_user
+  delete query.subject_name
+  delete query.team
+  void router.replace({ query })
+}
+
+async function loadSubjectOptions(teamId?: number): Promise<void> {
+  subjectOptions.value = []
+  if (!teamId) return
+  subjectOptionsLoading.value = true
+  try {
+    const members = await getTeamMembers(teamId)
+    subjectOptions.value = members.filter((item) => item.status === 'active')
+    const requestedSubject = requestedSubjectUserId.value
+    const fallbackUser = userStore.userInfo?.id
+    if (
+      requestedSubject
+      && subjectOptions.value.some((item) => item.user === requestedSubject)
+    ) {
+      createForm.subject_user = requestedSubject
+    } else if (
+      fallbackUser
+      && subjectOptions.value.some((item) => item.user === fallbackUser)
+    ) {
+      createForm.subject_user = fallbackUser
+    }
+  } catch {
+    // 选项加载失败时保留后端权限校验，不缓存其他团队的成员信息。
+  } finally {
+    subjectOptionsLoading.value = false
+  }
+}
+
+async function loadCreateOptions(): Promise<void> {
+  createOptionsLoading.value = true
+  try {
+    const [teamsRes, projectsRes] = await Promise.all([
+      getTeams(),
+      getProjects({ page: 1, page_size: 100 }),
+    ])
+    teamOptions.value = (teamsRes as any).results || teamsRes || []
+    projectOptions.value = (projectsRes as any).results || []
+    const queryTeam = requestedTeamId.value
+    createForm.team = (
+      queryTeam && teamOptions.value.some((item) => item.id === queryTeam)
+    )
+      ? queryTeam
+      : (teamOptions.value.length === 1 ? teamOptions.value[0].id : undefined)
+    await loadSubjectOptions(createForm.team)
+  } catch {
+    // 错误已由统一拦截器处理。
+  } finally {
+    createOptionsLoading.value = false
+  }
+}
+
+async function handleCreateTeamChange(teamId?: number): Promise<void> {
+  createForm.subject_user = undefined
+  await loadSubjectOptions(teamId)
+}
+
+function handleCreate(): void {
+  Object.assign(createForm, {
+    data_type: 'id_card',
+    title: '',
+    plaintext: '',
+    team: undefined,
+    subject_user: undefined,
+    project: undefined,
+  })
+  createDialogVisible.value = true
+  void loadCreateOptions()
+}
+
+async function handleSubmitCreate(): Promise<void> {
+  if (!createFormRef.value) return
+  const valid = await createFormRef.value.validate().catch(() => false)
+  if (!valid || !createForm.team || !createForm.subject_user) return
+  submitting.value = true
+  try {
+    const payload: SensitiveDataCreateParams = {
+      data_type: createForm.data_type,
+      title: createForm.title.trim(),
+      display_name: createForm.title.trim(),
+      plaintext: createForm.plaintext,
+      team: createForm.team,
+      subject_user: createForm.subject_user,
+      project: createForm.project || null,
+    }
+    await createSensitiveData(payload)
+    createForm.plaintext = ''
+    createDialogVisible.value = false
+    ElMessage.success('敏感资料已加密保存，目录中仅展示脱敏值')
+    await loadMyData()
+  } catch {
+    // 错误已由统一拦截器处理。
+  } finally {
+    submitting.value = false
+  }
+}
+
+function handleCloseCreate(): void {
+  createForm.plaintext = ''
+  createFormRef.value?.resetFields()
 }
 
 // 提交申请
@@ -767,6 +1076,13 @@ watch(
   { immediate: true },
 )
 
+watch(
+  requestedSubjectUserId,
+  () => {
+    if (activeTab.value === 'my-data') void loadMyData()
+  },
+)
+
 onMounted(() => {
   // 启动倒计时定时器（每秒更新）
   countdownTimer = setInterval(() => {
@@ -838,6 +1154,30 @@ onUnmounted(() => {
 
 .pane-heading > div {
   min-width: 0;
+}
+
+.pane-heading .panel-actions {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 8px;
+}
+
+.subject-filter-alert {
+  margin-bottom: 14px;
+}
+
+.subject-filter-alert :deep(.el-alert__content) {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+  width: 100%;
+  gap: 12px;
+}
+
+.sensitive-create-alert {
+  margin-bottom: 18px;
 }
 
 .pane-heading h2 {
@@ -1172,6 +1512,25 @@ onUnmounted(() => {
 
   :deep(.sensitive-workspace > .el-tabs__header .el-tabs__nav-wrap) {
     overflow-x: auto;
+  }
+
+  .pane-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .pane-heading .panel-actions {
+    width: 100%;
+  }
+
+  .pane-heading .panel-actions .el-button {
+    flex: 1;
+    margin-left: 0;
+  }
+
+  .subject-filter-alert :deep(.el-alert__content) {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .apply-form-grid {

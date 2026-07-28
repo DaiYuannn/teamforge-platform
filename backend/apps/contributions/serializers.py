@@ -12,8 +12,18 @@ from decimal import Decimal
 from rest_framework import serializers
 from django.utils import timezone
 
-from .models import Contribution, MemberRanking, RankingObjection
+from .models import (
+    Contribution,
+    ProjectContributionReviewer,
+    MemberRanking,
+    RankingObjection,
+)
+from apps.users.models import User
 from apps.users.serializers import UserListSerializer
+from common.project_access import (
+    active_user_root_team_ids,
+    project_root_team_ids,
+)
 
 
 # ============ 贡献记录 ============
@@ -45,6 +55,10 @@ class ContributionSerializer(serializers.ModelSerializer):
     filled_by_name = serializers.CharField(source='filled_by.name', read_only=True, default='')
     proof_file_name = serializers.CharField(source='proof_file.name', read_only=True, default='')
     proof_upload = serializers.FileField(write_only=True, required=False)
+    source_type_display = serializers.CharField(
+        source='get_source_type_display',
+        read_only=True,
+    )
 
     class Meta:
         model = Contribution
@@ -53,14 +67,17 @@ class ContributionSerializer(serializers.ModelSerializer):
             'contribution_type', 'contribution_type_display',
             'description', 'content', 'score', 'weight',
             'status', 'status_display',
-            'related_object_id', 'period',
+            'related_object_id', 'source_type', 'source_type_display',
+            'source_verified', 'period',
             'proof_file', 'proof_file_name', 'proof_upload',
             'filled_by', 'filled_by_name',
             'reviewer', 'reviewer_name', 'reviewed_at', 'review_opinion',
             'created_at', 'updated_at',
         )
         read_only_fields = (
-            'id', 'score', 'status', 'reviewer', 'reviewed_at',
+            'id', 'project', 'user', 'filled_by', 'weight', 'proof_file',
+            'score', 'status', 'source_type', 'source_verified',
+            'reviewer', 'reviewed_at',
             'review_opinion', 'created_at', 'updated_at',
         )
 
@@ -88,6 +105,11 @@ class ContributionListSerializer(serializers.ModelSerializer):
     project_name = serializers.CharField(source='project.name', read_only=True, default='')
     user_name = serializers.CharField(source='user.name', read_only=True, default='')
     filled_by_name = serializers.CharField(source='filled_by.name', read_only=True, default='')
+    reviewer_name = serializers.CharField(source='reviewer.name', read_only=True, default='')
+    source_type_display = serializers.CharField(
+        source='get_source_type_display',
+        read_only=True,
+    )
 
     class Meta:
         model = Contribution
@@ -95,7 +117,9 @@ class ContributionListSerializer(serializers.ModelSerializer):
             'id', 'project', 'project_name', 'user', 'user_name',
             'contribution_type', 'contribution_type_display',
             'content', 'weight', 'status', 'status_display',
-            'period', 'filled_by_name', 'reviewed_at', 'created_at',
+            'source_type', 'source_type_display', 'source_verified',
+            'period', 'filled_by_name', 'reviewer', 'reviewer_name',
+            'reviewed_at', 'created_at',
         )
         read_only_fields = fields
 
@@ -103,6 +127,10 @@ class ContributionListSerializer(serializers.ModelSerializer):
 class ContributionCreateSerializer(serializers.ModelSerializer):
     """贡献记录创建序列化器"""
 
+    user = serializers.PrimaryKeyRelatedField(
+        queryset=User.objects.all(),
+        required=False,
+    )
     proof_upload = serializers.FileField(write_only=True, required=False)
 
     class Meta:
@@ -111,7 +139,18 @@ class ContributionCreateSerializer(serializers.ModelSerializer):
             'id', 'project', 'user', 'contribution_type',
             'content', 'proof_file', 'proof_upload', 'period',
         )
-        read_only_fields = ('id',)
+        read_only_fields = ('id', 'proof_file')
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        if (
+            hasattr(self.initial_data, 'get')
+            and self.initial_data.get('proof_file') not in (None, '')
+        ):
+            raise serializers.ValidationError({
+                'proof_file': '不能绑定已有文件，请通过 proof_upload 上传本项目证明材料'
+            })
+        return attrs
 
     def create(self, validated_data):
         """创建贡献记录时自动设置填写人，默认待审核状态"""
@@ -149,6 +188,47 @@ class ContributionReviewSerializer(serializers.Serializer):
     weight = serializers.DecimalField(
         max_digits=10, decimal_places=2, required=False, default=0
     )
+
+
+class ProjectContributionReviewerSerializer(serializers.ModelSerializer):
+    project_name = serializers.CharField(source='project.name', read_only=True)
+    user_name = serializers.CharField(source='user.name', read_only=True)
+
+    class Meta:
+        model = ProjectContributionReviewer
+        fields = (
+            'id', 'project', 'project_name', 'user', 'user_name',
+            'is_independent', 'priority', 'is_active', 'created_at',
+        )
+        read_only_fields = ('id', 'created_at')
+
+    def validate_user(self, user):
+        if not user.is_active or user.membership_status not in ('active', 'on_leave'):
+            raise serializers.ValidationError('审核人必须是有效团队成员')
+        return user
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        if (
+            self.instance
+            and 'project' in attrs
+            and attrs['project'].pk != self.instance.project_id
+        ):
+            raise serializers.ValidationError({
+                'project': '审核人配置不能迁移到其他项目'
+            })
+        project = attrs.get('project', getattr(self.instance, 'project', None))
+        user = attrs.get('user', getattr(self.instance, 'user', None))
+        project_root_ids = project_root_team_ids(project)
+        if (
+            project_root_ids
+            and user
+            and not (project_root_ids & active_user_root_team_ids(user))
+        ):
+            raise serializers.ValidationError({
+                'user': '审核人必须属于该项目所在的同一团队组织'
+            })
+        return attrs
 
 
 # ============ 成员排名 ============

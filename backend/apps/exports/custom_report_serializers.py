@@ -3,8 +3,10 @@ from rest_framework import serializers
 from drf_spectacular.utils import extend_schema_field
 
 from apps.users.models import User
+from common.project_access import scope_organization_users
 from .custom_report_models import CustomReport
 from .scheduled_report_models import ScheduledReport, ScheduledReportExecution
+from .scheduled_report_service import report_recipient_scope_error
 
 
 class CustomReportSerializer(serializers.ModelSerializer):
@@ -99,6 +101,22 @@ class ScheduledReportSerializer(serializers.ModelSerializer):
             'file_format_display', 'recipient_names', 'recent_executions',
         )
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        request = self.context.get('request')
+        user = getattr(request, 'user', None)
+        if user and user.is_authenticated:
+            self.fields['recipient_ids'].queryset = scope_organization_users(
+                User.objects.filter(
+                    is_active=True,
+                    membership_status__in=[
+                        User.MembershipStatus.ACTIVE,
+                        User.MembershipStatus.ON_LEAVE,
+                    ],
+                ),
+                user,
+            )
+
     def validate_weekday(self, value):
         if not 0 <= value <= 6:
             raise serializers.ValidationError('周几必须在 0（周一）到 6（周日）之间。')
@@ -143,6 +161,15 @@ class ScheduledReportSerializer(serializers.ModelSerializer):
             if invalid:
                 raise serializers.ValidationError({
                     'recipient_ids': '接收人必须是在队或暂离的内部成员。'
+                })
+            recipient_error = report_recipient_scope_error(
+                report,
+                user,
+                recipients,
+            )
+            if recipient_error:
+                raise serializers.ValidationError({
+                    'recipient_ids': recipient_error
                 })
         return attrs
 

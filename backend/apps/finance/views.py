@@ -14,9 +14,9 @@ from common.mixins import MultiSerializerMixin, MultiPermissionMixin
 from common.permissions import (
     IsInternalTeamMember,
     IsProjectLeaderOrTeacherOrAdmin,
-    IsTeacherOrAdmin,
     user_has_custom_permission,
 )
+from common.project_access import scope_project_queryset, user_can_access_project
 from .models import FinanceBudget, FinanceExpense, FinanceIncome, FinanceReceipt
 from .serializers import (
     FinanceBudgetSerializer,
@@ -25,7 +25,7 @@ from .serializers import (
     FinanceReceiptSerializer,
     ReimbursementReviewSerializer, ReimbursementPaymentSerializer,
 )
-from .services import notify_finance_change
+from .services import notify_finance_change, recalculate_project_budget
 
 
 class FinanceBudgetViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet):
@@ -57,11 +57,19 @@ class FinanceBudgetViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelView
     search_fields = ['project__name']
     ordering_fields = ['updated_at', 'used_amount']
 
+    def get_queryset(self):
+        return scope_project_queryset(
+            super().get_queryset(),
+            self.request.user,
+            project_lookup='project',
+        )
+
     def create(self, request, *args, **kwargs):
         """创建经费总表"""
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         budget = serializer.save()
+        budget = recalculate_project_budget(budget.project_id) or budget
         return success_response(
             FinanceBudgetSerializer(budget).data,
             message='经费总表创建成功',
@@ -76,6 +84,7 @@ class FinanceBudgetViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelView
         serializer = self.get_serializer(instance, data=request.data, partial=partial)
         serializer.is_valid(raise_exception=True)
         budget = serializer.save()
+        budget = recalculate_project_budget(budget.project_id) or budget
         return success_response(FinanceBudgetSerializer(budget).data, message='经费总表更新成功')
 
     def destroy(self, request, *args, **kwargs):
@@ -120,7 +129,7 @@ class FinanceExpenseViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelVie
         'destroy': [IsProjectLeaderOrTeacherOrAdmin],
         'submit_reimbursement': [IsInternalTeamMember],
         'review_reimbursement': [IsProjectLeaderOrTeacherOrAdmin],
-        'mark_paid': [IsTeacherOrAdmin],
+        'mark_paid': [IsInternalTeamMember],
     }
 
     filterset_fields = [
@@ -130,6 +139,13 @@ class FinanceExpenseViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelVie
     ordering_fields = [
         'created_at', 'updated_at', 'title', 'amount', 'expense_date',
     ]
+
+    def get_queryset(self):
+        return scope_project_queryset(
+            super().get_queryset(),
+            self.request.user,
+            project_lookup='project',
+        )
 
     def create(self, request, *args, **kwargs):
         """创建经费明细"""
@@ -283,8 +299,22 @@ class FinanceExpenseViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelVie
 
     @action(detail=True, methods=['post'])
     def mark_paid(self, request, pk=None):
-        """老师或管理员登记付款。"""
+        """老师、系统管理员或明确的项目财务经办人登记付款。"""
         expense = self.get_object()
+        can_mark_paid = (
+            request.user.global_role in ['teacher', 'sys_admin']
+            or user_has_custom_permission(
+                request.user,
+                'finance.manage',
+                project_id=expense.project_id,
+            )
+        )
+        if not can_mark_paid:
+            return error_response(
+                message='仅老师、系统管理员或明确授权的财务经办人可登记付款',
+                code=1003,
+                http_status=status.HTTP_403_FORBIDDEN,
+            )
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         try:
@@ -335,6 +365,13 @@ class FinanceIncomeViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelView
     filterset_fields = ['project', 'income_type', 'income_date']
     search_fields = ['title', 'source', 'reference_number', 'project__name']
     ordering_fields = ['income_date', 'amount', 'created_at', 'updated_at']
+
+    def get_queryset(self):
+        return scope_project_queryset(
+            super().get_queryset(),
+            self.request.user,
+            project_lookup='project',
+        )
 
     def perform_create(self, serializer):
         income = serializer.save(recorded_by=self.request.user)
@@ -398,11 +435,24 @@ class FinanceReceiptViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelVie
     filterset_fields = ['expense', 'uploaded_by']
     search_fields = ['expense__title']
 
+    def get_queryset(self):
+        return scope_project_queryset(
+            super().get_queryset().select_related('expense__project'),
+            self.request.user,
+            project_lookup='expense__project',
+        )
+
     def create(self, request, *args, **kwargs):
         """上传票据"""
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         expense = serializer.validated_data['expense']
+        if not user_can_access_project(request.user, expense.project):
+            return error_response(
+                message='无权访问该票据所属项目',
+                code=1003,
+                http_status=status.HTTP_403_FORBIDDEN,
+            )
         is_finance_manager = (
             request.user.global_role in ['teacher', 'sys_admin']
             or expense.project.leader_id == request.user.id

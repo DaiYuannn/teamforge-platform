@@ -39,8 +39,8 @@
           </el-select>
         </el-form-item>
 
-        <el-form-item label="负责人" prop="assignee">
-          <el-select v-model="form.assignee" placeholder="选择负责人" filterable>
+        <el-form-item label="任务负责人" prop="assignee">
+          <el-select v-model="form.assignee" placeholder="选择任务负责人" filterable>
             <el-option
               v-for="user in assignees"
               :key="user.id"
@@ -53,7 +53,7 @@
           </el-select>
         </el-form-item>
 
-        <el-form-item label="协作者" prop="collaborator_ids" class="field-wide">
+        <el-form-item label="协作执行人" prop="collaborator_ids" class="field-wide">
           <el-select
             v-model="form.collaborator_ids"
             multiple
@@ -74,7 +74,7 @@
           </el-select>
         </el-form-item>
 
-        <el-form-item label="审核人" prop="reviewer">
+        <el-form-item label="任务验收人" prop="reviewer">
           <el-select
             v-model="form.reviewer"
             placeholder="可选；未指定时由项目负责人审核"
@@ -305,7 +305,7 @@ function validateDelayReason(
 const rules: FormRules = {
   title: [{ required: true, message: '请输入任务标题', trigger: 'blur' }],
   project: [{ validator: requiredSelection('所属项目'), trigger: 'change' }],
-  assignee: [{ validator: requiredSelection('负责人'), trigger: 'change' }],
+  assignee: [{ validator: requiredSelection('任务负责人'), trigger: 'change' }],
   priority: [{ required: true, message: '请选择优先级', trigger: 'change' }],
   status: [{ required: true, message: '请选择任务状态', trigger: 'change' }],
   start_date: [{ required: true, message: '请选择开始时间', trigger: 'change' }],

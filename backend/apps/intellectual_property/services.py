@@ -84,7 +84,7 @@ class IPService:
 
     @staticmethod
     @transaction.atomic
-    def transition_status(application, target_status, user):
+    def transition_status(application, target_status, user, status_note=''):
         """
         状态流转（校验合法转换路径）
         :param application: 知识产权申请实例
@@ -127,6 +127,7 @@ class IPService:
         from_status = application.status
         # 更新申请状态
         application.status = target_status
+        application.status_note = str(status_note or '').strip()
 
         # 根据目标状态更新相关日期字段
         now_date = timezone.now().date()
@@ -153,7 +154,10 @@ class IPService:
             user=user,
             action='状态流转',
             obj=application,
-            detail=f'{application.title}: {from_status} -> {target_status}',
+            detail=(
+                f'{application.title}: {from_status} -> {target_status}'
+                + (f'；说明：{application.status_note}' if application.status_note else '')
+            ),
         )
 
         return True, application
@@ -278,6 +282,12 @@ class IPService:
             contribution_type=Contribution.ContributionType.IP_RETURN_FIX,
             description=f'知识产权申请"{application.title}"退回修改完成',
             related_object_id=application.id,
+            source_type=Contribution.SourceType.IP,
+            source_verified=True,
+            status=Contribution.Status.APPROVED,
+            filled_by=user,
+            reviewed_at=timezone.now(),
+            review_opinion='由知识产权退回修改流程自动核验',
             period=timezone.localdate().strftime('%Y-%m'),
         )
 
@@ -348,6 +358,11 @@ class IPService:
                                    f'{role_label}',
                     'content': f'知识产权申请"{application.title}" - {role_label}',
                     'filled_by': user,
+                    'source_type': Contribution.SourceType.IP,
+                    'source_verified': True,
+                    'status': Contribution.Status.APPROVED,
+                    'reviewed_at': timezone.now(),
+                    'review_opinion': '由已确认的知识产权责任链自动核验',
                     'period': timezone.localdate().strftime('%Y-%m'),
                 },
             )
@@ -419,6 +434,11 @@ class IPService:
                     'description': f'知识产权申请"{application.title}"成果归档',
                     'content': f'知识产权申请"{application.title}"成果归档',
                     'filled_by': user,
+                    'source_type': Contribution.SourceType.IP,
+                    'source_verified': True,
+                    'status': Contribution.Status.APPROVED,
+                    'reviewed_at': timezone.now(),
+                    'review_opinion': '由知识产权成果归档流程自动核验',
                     'period': timezone.localdate().strftime('%Y-%m'),
                 },
             )

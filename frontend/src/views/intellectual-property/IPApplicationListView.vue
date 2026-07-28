@@ -224,9 +224,9 @@ async function loadData(): Promise<void> {
 async function loadCreatePermission(): Promise<void> {
   if (userStore.role === 'sys_admin' || userStore.role === 'teacher') return
   try {
-    const user = userStore.userInfo || await userStore.fetchProfile()
-    const response = await getProjects({ page: 1, page_size: 1, leader: user.id })
-    leadsProject.value = response.count > 0
+    if (!userStore.userInfo) await userStore.fetchProfile()
+    const response = await getProjects({ page: 1, page_size: 100 })
+    leadsProject.value = response.results.some((project) => project.can_manage)
   } catch {
     leadsProject.value = false
   }

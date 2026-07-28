@@ -2,8 +2,70 @@
 项目权限
 """
 from rest_framework.permissions import BasePermission, SAFE_METHODS
-from common.project_access import user_can_access_project
+from common.project_access import project_can_manage, user_can_access_project
 from common.permissions import user_has_custom_permission
+
+
+def _can_create_for_requested_teams(request):
+    user = request.user
+    if (
+        not user.is_active
+        or getattr(user, 'membership_status', '') not in {'active', 'on_leave'}
+    ):
+        return False
+    data = getattr(request, 'data', None)
+    if not hasattr(data, 'get'):
+        return False
+    raw_team_ids = data.get('teams')
+    if hasattr(data, 'getlist'):
+        listed_team_ids = data.getlist('teams')
+        if listed_team_ids:
+            raw_team_ids = listed_team_ids
+    if raw_team_ids in (None, '', []):
+        return False
+    if not isinstance(raw_team_ids, (list, tuple, set)):
+        raw_team_ids = [raw_team_ids]
+    try:
+        team_ids = {int(team_id) for team_id in raw_team_ids}
+    except (TypeError, ValueError):
+        return False
+
+    from apps.common.team_models import Team, TeamMember
+
+    teams = list(Team.objects.filter(pk__in=team_ids, is_active=True))
+    if len(teams) != len(team_ids):
+        return False
+    manager_roles = [
+        TeamMember.Role.OWNER,
+        TeamMember.Role.CO_LEAD,
+        TeamMember.Role.ADMIN,
+    ]
+    for team in teams:
+        direct_manager = (
+            team.owner_id == user.id
+            or TeamMember.objects.filter(
+                team=team,
+                user=user,
+                role__in=manager_roles,
+                status=TeamMember.Status.ACTIVE,
+            ).exists()
+        )
+        parent = team.parent
+        parent_manager = bool(
+            parent
+            and (
+                parent.owner_id == user.id
+                or TeamMember.objects.filter(
+                    team=parent,
+                    user=user,
+                    role__in=manager_roles,
+                    status=TeamMember.Status.ACTIVE,
+                ).exists()
+            )
+        )
+        if not (direct_manager or parent_manager):
+            return False
+    return True
 
 
 class IsProjectLeaderOrTeacherOrAdmin(BasePermission):
@@ -22,17 +84,12 @@ class IsProjectLeaderOrTeacherOrAdmin(BasePermission):
             return True
         if request.user.global_role in ['teacher', 'sys_admin']:
             return True
-        action = 'create' if getattr(view, 'action', '') == 'create' else 'manage'
-        project_id = request.data.get('project') if hasattr(request.data, 'get') else None
-        try:
-            project_id = int(project_id) if project_id not in (None, '') else None
-        except (TypeError, ValueError):
-            project_id = None
-        return user_has_custom_permission(
-            request.user,
-            f'project.{action}',
-            project_id=project_id,
-            allow_project_scoped=action == 'manage' and project_id is None,
+        if getattr(view, 'action', '') != 'create':
+            # 更新、删除和详情动作由对象级权限核对牵头/共同负责人。
+            return True
+        return (
+            user_has_custom_permission(request.user, 'project.create')
+            or _can_create_for_requested_teams(request)
         )
 
     def has_object_permission(self, request, view, obj):
@@ -55,13 +112,7 @@ class IsProjectLeaderOrTeacherOrAdmin(BasePermission):
             project_id=getattr(project, 'pk', None),
         ):
             return True
-        # 项目负责人
-        if hasattr(obj, 'leader'):
-            return obj.leader_id == request.user.id
-        # 如果是成员对象，检查关联项目
-        if hasattr(obj, 'project') and hasattr(obj.project, 'leader'):
-            return obj.project.leader_id == request.user.id
-        return False
+        return project_can_manage(request.user, project)
 
 
 class IsProjectLeader(BasePermission):
@@ -88,9 +139,4 @@ class IsProjectLeader(BasePermission):
             project_id=getattr(project, 'pk', None),
         ):
             return True
-        # 项目负责人
-        if hasattr(obj, 'leader'):
-            return obj.leader_id == request.user.id
-        if hasattr(obj, 'project') and hasattr(obj.project, 'leader'):
-            return obj.project.leader_id == request.user.id
-        return False
+        return project_can_manage(request.user, project)

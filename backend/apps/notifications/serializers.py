@@ -55,12 +55,48 @@ class AnnouncementSerializer(serializers.ModelSerializer):
     class Meta:
         model = Announcement
         fields = (
-            'id', 'title', 'content', 'category', 'category_display',
+            'id', 'title', 'content', 'resource_links',
+            'category', 'category_display',
             'status', 'status_display', 'is_pinned', 'is_public',
             'author', 'author_name', 'published_at',
             'created_at', 'updated_at',
         )
         read_only_fields = ('id', 'category_display', 'status_display', 'author_name', 'created_at', 'updated_at')
+
+    def validate_resource_links(self, value):
+        if value in (None, ''):
+            return []
+        if not isinstance(value, list):
+            raise serializers.ValidationError('资源链接必须是列表')
+        if len(value) > 20:
+            raise serializers.ValidationError('一条公告最多添加 20 个资源链接')
+
+        normalized = []
+        url_field = serializers.URLField(max_length=500)
+        for index, item in enumerate(value):
+            if not isinstance(item, dict):
+                raise serializers.ValidationError(
+                    f'第 {index + 1} 个资源链接格式不正确'
+                )
+            title = str(item.get('title') or '').strip()
+            url = str(item.get('url') or '').strip()
+            if not title or not url:
+                raise serializers.ValidationError(
+                    f'第 {index + 1} 个资源链接需填写名称和网址'
+                )
+            if len(title) > 100:
+                raise serializers.ValidationError(
+                    f'第 {index + 1} 个资源名称不能超过 100 字'
+                )
+            if not url.lower().startswith(('http://', 'https://')):
+                raise serializers.ValidationError(
+                    f'第 {index + 1} 个资源链接仅支持 http/https'
+                )
+            normalized.append({
+                'title': title,
+                'url': url_field.run_validation(url),
+            })
+        return normalized
 
 
 class NotificationSerializer(serializers.ModelSerializer):

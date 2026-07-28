@@ -11,7 +11,9 @@ from drf_spectacular.utils import OpenApiResponse, extend_schema
 from rest_framework.views import APIView
 
 from common.permissions import IsInternalTeamMember
+from common.project_access import scope_project_queryset
 from common.response import error_response
+from apps.projects.models import Project
 from .report_templates import generate_project_report, HAS_PYTHON_DOCX
 
 
@@ -40,8 +42,19 @@ class ProjectReportView(APIView):
         },
     )
     def get(self, request, project_id):
+        project = scope_project_queryset(
+            Project.objects.filter(pk=project_id),
+            request.user,
+            project_lookup='',
+        ).first()
+        if project is None:
+            return error_response(
+                message='项目不存在或无权导出',
+                code=1004,
+                http_status=404,
+            )
         try:
-            file_stream = generate_project_report(project_id)
+            file_stream = generate_project_report(project.pk)
         except ValueError as e:
             # 项目不存在等业务校验失败
             return error_response(message=str(e), code=1004)

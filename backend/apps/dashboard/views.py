@@ -12,9 +12,14 @@ from rest_framework import serializers
 from django.db.models import Sum, Count, Q
 from rest_framework.views import APIView
 
-from common.response import success_response
+from common.response import success_response, error_response
 from common.schema import success_response_schema
 from common.permissions import IsInternalTeamMember, IsTeacherOrAdmin
+from common.project_access import (
+    active_user_root_team_ids,
+    scope_project_queryset,
+)
+from apps.common.team_models import Team, TeamMember
 from apps.projects.models import Project, ProjectMember
 from apps.tasks.models import Task
 from apps.finance.models import FinanceBudget, FinanceExpense
@@ -44,8 +49,12 @@ class DashboardProjectFinanceSerializer(serializers.Serializer):
     project_name = serializers.CharField()
     bonus_amount = serializers.DecimalField(max_digits=14, decimal_places=2)
     other_income = serializers.DecimalField(max_digits=14, decimal_places=2)
+    planned_amount = serializers.DecimalField(max_digits=14, decimal_places=2)
+    budget_basis = serializers.DecimalField(max_digits=14, decimal_places=2)
     used_amount = serializers.DecimalField(max_digits=14, decimal_places=2)
+    committed_amount = serializers.DecimalField(max_digits=14, decimal_places=2)
     remaining_amount = serializers.DecimalField(max_digits=14, decimal_places=2)
+    available_amount = serializers.DecimalField(max_digits=14, decimal_places=2)
     status = serializers.CharField()
     status_display = serializers.CharField()
 
@@ -57,6 +66,9 @@ class DashboardFinanceOverviewSerializer(serializers.Serializer):
     total_used = serializers.DecimalField(max_digits=14, decimal_places=2)
     total_pending = serializers.DecimalField(max_digits=14, decimal_places=2)
     total_remaining = serializers.DecimalField(max_digits=14, decimal_places=2)
+    total_planned = serializers.DecimalField(max_digits=14, decimal_places=2)
+    total_committed = serializers.DecimalField(max_digits=14, decimal_places=2)
+    total_available = serializers.DecimalField(max_digits=14, decimal_places=2)
     project_finance = DashboardProjectFinanceSerializer(many=True)
 
 
@@ -159,10 +171,28 @@ class DashboardView(APIView):
             return error_response(message='project_id must be an integer', code=1001)
 
         # ============ 1. 项目总览 ============
-        project_queryset = Project.objects.all()
-        task_queryset = Task.objects.all()
-        budget_queryset = FinanceBudget.objects.all()
+        project_queryset = scope_project_queryset(
+            Project.objects.all(),
+            request.user,
+            project_lookup='',
+        )
+        task_queryset = scope_project_queryset(
+            Task.objects.all(),
+            request.user,
+            project_lookup='project',
+        )
+        budget_queryset = scope_project_queryset(
+            FinanceBudget.objects.all(),
+            request.user,
+            project_lookup='project',
+        )
         if project_id:
+            if not project_queryset.filter(pk=project_id).exists():
+                return error_response(
+                    message='项目不存在或无权查看',
+                    code=1004,
+                    http_status=404,
+                )
             project_queryset = project_queryset.filter(pk=project_id)
             task_queryset = task_queryset.filter(project_id=project_id)
             budget_queryset = budget_queryset.filter(project_id=project_id)
@@ -199,6 +229,9 @@ class DashboardView(APIView):
         total_pending = budgets.aggregate(total=Sum('pending_reimbursement'))['total'] or 0
         total_income = total_bonus + total_other_income
         total_remaining = total_income - total_used
+        total_planned = sum((budget.budget_basis for budget in budgets), 0)
+        total_committed = sum((budget.committed_amount for budget in budgets), 0)
+        total_available = sum((budget.available_amount for budget in budgets), 0)
 
         # 各项目经费明细
         project_finance = []
@@ -208,8 +241,12 @@ class DashboardView(APIView):
                 'project_name': budget.project.name,
                 'bonus_amount': str(budget.bonus_amount),
                 'other_income': str(budget.other_income),
+                'planned_amount': str(budget.planned_amount),
+                'budget_basis': str(budget.budget_basis),
                 'used_amount': str(budget.used_amount),
+                'committed_amount': str(budget.committed_amount),
                 'remaining_amount': str(budget.remaining_amount),
+                'available_amount': str(budget.available_amount),
                 'status': budget.status,
                 'status_display': budget.get_status_display(),
             })
@@ -221,6 +258,9 @@ class DashboardView(APIView):
             'total_used': str(total_used),
             'total_pending': str(total_pending),
             'total_remaining': str(total_remaining),
+            'total_planned': str(total_planned),
+            'total_committed': str(total_committed),
+            'total_available': str(total_available),
             'project_finance': project_finance,
         }
 
@@ -250,22 +290,55 @@ class DashboardView(APIView):
         }
 
         # ============ 4. 人员状态 ============
-        total_members = User.objects.filter(is_active=True).count()
-        teacher_count = User.objects.filter(
+        member_queryset = User.objects.filter(is_active=True)
+        if request.user.global_role not in ('teacher', 'sys_admin'):
+            root_ids = active_user_root_team_ids(request.user)
+            if root_ids:
+                member_queryset = member_queryset.filter(
+                    Q(
+                        teammember__team_id__in=root_ids,
+                        teammember__status__in=[
+                            TeamMember.Status.ACTIVE,
+                            TeamMember.Status.ON_LEAVE,
+                        ],
+                    )
+                    | Q(
+                        teammember__team__parent_id__in=root_ids,
+                        teammember__status__in=[
+                            TeamMember.Status.ACTIVE,
+                            TeamMember.Status.ON_LEAVE,
+                        ],
+                    )
+                    | Q(owned_teams__id__in=root_ids)
+                    | Q(owned_teams__parent_id__in=root_ids)
+                ).distinct()
+            elif Team.objects.filter(parent__isnull=True, is_active=True).exists():
+                member_queryset = member_queryset.none()
+
+        total_members = member_queryset.count()
+        teacher_count = member_queryset.filter(
             is_active=True, global_role=User.GlobalRole.TEACHER
         ).count()
-        member_count = User.objects.filter(
+        member_count = member_queryset.filter(
             is_active=True, global_role=User.GlobalRole.MEMBER
         ).count()
-        admin_count = User.objects.filter(
+        admin_count = member_queryset.filter(
             is_active=True, global_role=User.GlobalRole.SYS_ADMIN
         ).count()
-        student_count = User.objects.filter(is_active=True, is_student=True).count()
+        student_count = member_queryset.filter(is_active=True, is_student=True).count()
 
         # 各成员参与项目数
         member_project_counts = []
-        for user in User.objects.filter(is_active=True).annotate(
-            project_count=Count('project_memberships')
+        visible_project_ids = project_queryset.values_list('id', flat=True)
+        for user in member_queryset.annotate(
+            project_count=Count(
+                'project_memberships',
+                filter=Q(
+                    project_memberships__project_id__in=visible_project_ids,
+                    project_memberships__status=ProjectMember.Status.ACTIVE,
+                ),
+                distinct=True,
+            )
         ).order_by('-project_count')[:10]:
             member_project_counts.append({
                 'user_id': user.id,
@@ -314,10 +387,14 @@ class DashboardView(APIView):
             })
 
         # 临近比赛
-        upcoming_competitions = Competition.objects.filter(
+        upcoming_competitions = scope_project_queryset(
+            Competition.objects.filter(
             status__in=[Competition.Status.PREPARING, Competition.Status.ONGOING],
             defense_date__gte=now.date(),
             defense_date__lte=(now + timedelta(days=30)).date(),
+            ),
+            request.user,
+            project_lookup='project',
         )
         if project_id:
             upcoming_competitions = upcoming_competitions.filter(project_id=project_id)

@@ -372,9 +372,14 @@ class TestIPApplicationPermissions:
 
         deferred = leader_client.post(
             f'{APPLICATION_URL}{application.id}/transition/',
-            {'target_status': 'deferred'},
+            {
+                'target_status': 'deferred',
+                'note': '等待学校申报窗口重新开放',
+            },
             format='json',
         )
+        application.refresh_from_db()
+        assert application.status_note == '等待学校申报窗口重新开放'
         restarted = leader_client.post(
             f'{APPLICATION_URL}{application.id}/transition/',
             {'target_status': 'draft'},

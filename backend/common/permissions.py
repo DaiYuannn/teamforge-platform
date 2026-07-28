@@ -11,6 +11,7 @@ PERMISSION_PREFIX_BY_PATH = {
     'finance': 'finance',
     'exports': 'report',
     'reports': 'report',
+    'notifications': 'announcement',
     'members': 'member',
     'users': 'member',
 }
@@ -217,7 +218,9 @@ class IsProjectLeaderOrTeacherOrAdmin(BasePermission):
             if not project_id:
                 return False
             from apps.projects.models import Project
-            return Project.objects.filter(pk=project_id, leader=request.user).exists()
+            from common.project_access import project_can_manage
+            project = Project.objects.filter(pk=project_id).first()
+            return project_can_manage(request.user, project)
         # 更新、删除和自定义详情动作继续交由对象级权限判断。
         return True
 
@@ -243,15 +246,13 @@ class IsProjectLeaderOrTeacherOrAdmin(BasePermission):
         requested_project_id = request.data.get('project') if hasattr(request.data, 'get') else None
         if requested_project_id:
             from apps.projects.models import Project
-            if not Project.objects.filter(pk=requested_project_id, leader=request.user).exists():
+            from common.project_access import project_can_manage
+            requested_project = Project.objects.filter(pk=requested_project_id).first()
+            if not project_can_manage(request.user, requested_project):
                 return False
-        # 项目负责人可以操作自己的项目
-        if hasattr(obj, 'leader'):
-            return obj.leader_id == request.user.id
-        # 如果是项目成员对象，检查其关联项目
-        if hasattr(obj, 'project') and hasattr(obj.project, 'leader'):
-            return obj.project.leader_id == request.user.id
-        return False
+        from common.project_access import project_can_manage
+        project = obj if hasattr(obj, 'leader_id') else getattr(obj, 'project', None)
+        return project_can_manage(request.user, project)
 
 
 class IsOwnerOrAdmin(BasePermission):
@@ -299,11 +300,9 @@ class IsProjectMember(BasePermission):
         project = getattr(obj, 'project', None)
         if project is None:
             return False
-        # 项目负责人
-        if project.leader_id == request.user.id:
-            return True
-        # 项目成员
-        from apps.projects.models import ProjectMember
-        return ProjectMember.objects.filter(
-            project=project, user=request.user, status=ProjectMember.Status.ACTIVE
-        ).exists()
+        from common.project_access import user_can_access_project
+        return user_can_access_project(
+            request.user,
+            project,
+            write=request.method not in SAFE_METHODS,
+        )

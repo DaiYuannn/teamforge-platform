@@ -14,15 +14,28 @@ from rest_framework.viewsets import ModelViewSet
 from common.response import success_response, error_response
 from common.mixins import MultiSerializerMixin, MultiPermissionMixin
 from common.permissions import IsTeacherOrAdmin
+from common.project_access import (
+    active_user_root_team_ids,
+    has_active_project_leadership,
+    project_can_manage,
+    project_root_team_ids,
+    scope_project_queryset,
+)
 from apps.projects.models import Project, ProjectMember
 from apps.users.models import User
 
-from .models import Contribution, MemberRanking, RankingObjection
+from .models import (
+    Contribution,
+    ProjectContributionReviewer,
+    MemberRanking,
+    RankingObjection,
+)
 from .serializers import (
     ContributionSerializer,
     ContributionListSerializer,
     ContributionCreateSerializer,
     ContributionReviewSerializer,
+    ProjectContributionReviewerSerializer,
     MemberRankingSerializer,
     MemberRankingUpdateSerializer,
     RankingObjectionSerializer,
@@ -38,18 +51,110 @@ from .permissions import (
 from .services import RankingService
 
 
+def _select_contribution_reviewer(project, contribution_user, filled_by):
+    """Route one reviewer and require an independent reviewer for manager self-report."""
+    excluded_ids = {
+        user_id for user_id in (
+            getattr(contribution_user, 'id', None),
+            getattr(filled_by, 'id', None),
+        ) if user_id
+    }
+    requires_independent = project_can_manage(contribution_user, project)
+    configured = ProjectContributionReviewer.objects.filter(
+        project=project,
+        is_active=True,
+    ).exclude(user_id__in=excluded_ids)
+    if requires_independent:
+        configured = configured.filter(is_independent=True)
+    reviewer_config = configured.select_related('user').order_by(
+        'priority', 'id',
+    ).first()
+    if reviewer_config:
+        return reviewer_config.user
+    if requires_independent:
+        return None
+
+    co_leader = ProjectMember.objects.filter(
+        project=project,
+        role_in_project=ProjectMember.RoleInProject.LEADER,
+        status=ProjectMember.Status.ACTIVE,
+    ).exclude(user_id__in=excluded_ids).select_related('user').first()
+    if co_leader:
+        return co_leader.user
+    if project.leader_id not in excluded_ids:
+        return project.leader
+    return None
+
+
+def _is_actual_project_participant(user, project):
+    """贡献本人必须确实属于项目，不能借全局角色绕过成员关系。"""
+    if not user or not project:
+        return False
+    if project.leader_id == user.id:
+        return True
+    return ProjectMember.objects.filter(
+        project=project,
+        user=user,
+        status=ProjectMember.Status.ACTIVE,
+    ).exists()
+
+
+def _organization_teachers_for_project(project):
+    """只向项目所在根团队内的老师发送异议通知。"""
+    teachers = User.objects.filter(
+        global_role=User.GlobalRole.TEACHER,
+        is_active=True,
+        membership_status__in=[
+            User.MembershipStatus.ACTIVE,
+            User.MembershipStatus.ON_LEAVE,
+        ],
+    )
+    from apps.common.team_models import Team, TeamMember
+
+    active_root_ids = set(
+        Team.objects.filter(
+            parent__isnull=True,
+            is_active=True,
+        ).values_list('id', flat=True)
+    )
+    if not active_root_ids:
+        # 完全没有 Team 的旧部署保持原有全局老师通知行为。
+        return teachers
+
+    root_ids = project_root_team_ids(project)
+    if not root_ids and project and project.leader_id:
+        root_ids = active_user_root_team_ids(project.leader)
+    if not root_ids:
+        return teachers.none()
+
+    visible_statuses = [
+        TeamMember.Status.ACTIVE,
+        TeamMember.Status.ON_LEAVE,
+    ]
+    return teachers.filter(
+        Q(
+            teammember__team_id__in=root_ids,
+            teammember__status__in=visible_statuses,
+        )
+        | Q(
+            teammember__team__parent_id__in=root_ids,
+            teammember__status__in=visible_statuses,
+        )
+        | Q(owned_teams__id__in=root_ids)
+        | Q(owned_teams__parent_id__in=root_ids)
+    ).distinct()
+
+
 def _notify_ranking_objection(objection, stage, sender):
     """发送排名异议提交、初审和终审通知。"""
     from apps.notifications.models import Notification
     from apps.notifications.services import NotificationService
-    from apps.users.models import User
-
     project = objection.ranking.project
     recipients = []
     if stage == 'created':
         if project and project.leader:
             recipients.append(project.leader)
-        recipients.extend(User.objects.filter(global_role='teacher', is_active=True))
+        recipients.extend(_organization_teachers_for_project(project))
         title = f'排名异议待初审：{project.name if project else "团队排名"}'
         content = (
             f'{objection.objector.name} 对 {objection.ranking.period} '
@@ -57,7 +162,7 @@ def _notify_ranking_objection(objection, stage, sender):
         )
     elif stage == 'leader_reviewed':
         recipients.append(objection.objector)
-        recipients.extend(User.objects.filter(global_role='teacher', is_active=True))
+        recipients.extend(_organization_teachers_for_project(project))
         title = f'排名异议已初审：{project.name if project else "团队排名"}'
         content = f'负责人初审意见：{objection.leader_opinion}，请老师进行最终确认。'
     else:
@@ -154,7 +259,26 @@ class ContributionViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewS
                 status=ProjectMember.Status.ACTIVE,
             ).values_list('project_id', flat=True)
             queryset = queryset.filter(project_id__in=project_ids)
-        return queryset
+        scoped_queryset = scope_project_queryset(
+            queryset,
+            self.request.user,
+            project_lookup='project',
+        )
+        # 审核分派本身构成对单条贡献的显式授权，允许跨小组审核人
+        # 在不获得项目其他数据可见性的前提下读取并处理该记录。
+        scoped_ids = scoped_queryset.order_by().values('pk')
+        can_use_assignment = (
+            self.request.user.is_active
+            and self.request.user.membership_status in (
+                User.MembershipStatus.ACTIVE,
+                User.MembershipStatus.ON_LEAVE,
+            )
+        )
+        if not can_use_assignment:
+            return scoped_queryset
+        return queryset.filter(
+            Q(pk__in=scoped_ids) | Q(reviewer=self.request.user)
+        ).distinct()
 
     def create(self, request, *args, **kwargs):
         """创建贡献记录（校验是否为项目成员）"""
@@ -169,10 +293,45 @@ class ContributionViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewS
                 http_status=status.HTTP_403_FORBIDDEN,
             )
 
+        contribution_user = serializer.validated_data.get('user') or request.user
+        if contribution_user.id != request.user.id and not (
+            project and project_can_manage(request.user, project)
+        ):
+            return error_response(
+                message='只有项目负责人可以代其他成员登记贡献',
+                code=1003,
+                http_status=status.HTTP_403_FORBIDDEN,
+            )
+        if project is not None and not _is_actual_project_participant(
+            contribution_user,
+            project,
+        ):
+            return error_response(
+                message='贡献本人必须是该项目的活动成员',
+                code=1005,
+                http_status=status.HTTP_400_BAD_REQUEST,
+            )
+        reviewer = _select_contribution_reviewer(
+            project,
+            contribution_user,
+            request.user,
+        ) if project else None
+        if project and reviewer is None:
+            return error_response(
+                message=(
+                    '未找到可分派的贡献审核人。负责人本人申报时，'
+                    '请先配置一名独立审核人。'
+                ),
+                code=2501,
+            )
+
         contribution = serializer.save()
+        if reviewer:
+            contribution.reviewer = reviewer
+            contribution.save(update_fields=['reviewer', 'updated_at'])
         return success_response(
             ContributionSerializer(contribution).data,
-            message='贡献记录创建成功，等待项目负责人审核',
+            message=f'贡献记录创建成功，已分派给{reviewer.name if reviewer else "审核人"}',
             http_status=status.HTTP_201_CREATED,
         )
 
@@ -181,6 +340,8 @@ class ContributionViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewS
         partial = kwargs.pop('partial', False)
         instance = self.get_object()
         self.check_object_permissions(request, instance)
+        if instance.status != Contribution.Status.PENDING:
+            return error_response(message='已审核的贡献记录不能再修改')
         serializer = self.get_serializer(instance, data=request.data, partial=partial)
         serializer.is_valid(raise_exception=True)
         contribution = serializer.save()
@@ -193,6 +354,8 @@ class ContributionViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewS
         """删除贡献记录"""
         instance = self.get_object()
         self.check_object_permissions(request, instance)
+        if instance.status != Contribution.Status.PENDING:
+            return error_response(message='已审核的贡献记录不能删除')
         instance.delete()
         return success_response(message='贡献记录删除成功')
 
@@ -209,10 +372,27 @@ class ContributionViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewS
         validated_data = serializer.validated_data
         user = request.user
 
-        # 权限校验：项目负责人/老师/管理员
-        if not _is_project_leader_or_admin(user, contribution.project):
+        if contribution.user_id == user.id or contribution.filled_by_id == user.id:
             return error_response(
-                message='仅项目负责人/老师/管理员可审核贡献', code=1003,
+                message='贡献本人或填写人不能审核自己的记录',
+                code=1003,
+                http_status=status.HTTP_403_FORBIDDEN,
+            )
+        can_review = (
+            user.global_role == 'sys_admin'
+            or contribution.reviewer_id == user.id
+            or (
+                contribution.reviewer_id is None
+                and contribution.project is not None
+                and (
+                    contribution.project.leader_id == user.id
+                    or has_active_project_leadership(user, contribution.project)
+                )
+            )
+        )
+        if not can_review:
+            return error_response(
+                message='该贡献已分派给其他审核人', code=1003,
                 http_status=status.HTTP_403_FORBIDDEN,
             )
 
@@ -254,16 +434,28 @@ class ContributionViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewS
         GET /api/v1/contributions/contributions/pending_review/
         """
         user = request.user
-        # 老师/管理员：所有待审核贡献
-        if user.global_role in ['sys_admin', 'teacher']:
+        if user.global_role == 'sys_admin':
             queryset = self.get_queryset().filter(status=Contribution.Status.PENDING)
         else:
-            # 项目负责人：我负责的项目中的待审核贡献
-            my_project_ids = Project.objects.filter(leader=user).values_list('id', flat=True)
             queryset = self.get_queryset().filter(
                 status=Contribution.Status.PENDING,
-                project_id__in=list(my_project_ids),
-            )
+            ).filter(
+                Q(reviewer=user)
+                | Q(
+                    reviewer__isnull=True,
+                    project__leader=user,
+                )
+                | Q(
+                    reviewer__isnull=True,
+                    project__members__user=user,
+                    project__members__role_in_project=ProjectMember.RoleInProject.LEADER,
+                    project__members__status=ProjectMember.Status.ACTIVE,
+                )
+            ).exclude(
+                user=user,
+            ).exclude(
+                filled_by=user,
+            ).distinct()
         page = self.paginate_queryset(queryset)
         if page is not None:
             serializer = ContributionListSerializer(page, many=True)
@@ -273,10 +465,7 @@ class ContributionViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewS
 
     @action(detail=False, methods=['get'])
     def by_project(self, request):
-        """
-        指定项目的贡献记录
-        GET /api/v1/contributions/contributions/by_project/?project=1
-        """
+        """获取指定项目的贡献记录。"""
         project_id = request.query_params.get('project')
         if not project_id:
             return error_response(message='请提供 project 参数')
@@ -288,6 +477,72 @@ class ContributionViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewS
         serializer = ContributionListSerializer(queryset, many=True)
         return success_response(serializer.data)
 
+
+class ProjectContributionReviewerViewSet(ModelViewSet):
+    """配置项目审核池；老师只有被明确配置后才收到贡献待办。"""
+
+    queryset = ProjectContributionReviewer.objects.all()
+    serializer_class = ProjectContributionReviewerSerializer
+    permission_classes = [IsAuthenticated]
+    filterset_fields = ['project', 'user', 'is_independent', 'is_active']
+    ordering_fields = ['priority', 'created_at']
+
+    def get_queryset(self):
+        return scope_project_queryset(
+            super().get_queryset().select_related('project', 'user'),
+            self.request.user,
+            project_lookup='project',
+        )
+
+    def _can_manage(self, project):
+        return project_can_manage(self.request.user, project)
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        project = serializer.validated_data['project']
+        if not self._can_manage(project):
+            return error_response(
+                message='仅项目负责人可配置贡献审核人',
+                code=1003,
+                http_status=status.HTTP_403_FORBIDDEN,
+            )
+        reviewer = serializer.save()
+        return success_response(
+            self.get_serializer(reviewer).data,
+            message='贡献审核人已配置',
+            http_status=status.HTTP_201_CREATED,
+        )
+
+    def update(self, request, *args, **kwargs):
+        instance = self.get_object()
+        if not self._can_manage(instance.project):
+            return error_response(
+                message='仅项目负责人可调整贡献审核人',
+                code=1003,
+                http_status=status.HTTP_403_FORBIDDEN,
+            )
+        target_project = request.data.get('project')
+        if (
+            target_project not in (None, '')
+            and str(target_project) != str(instance.project_id)
+        ):
+            return error_response(
+                message='审核人配置不能迁移到其他项目',
+                code=1003,
+                http_status=status.HTTP_403_FORBIDDEN,
+            )
+        return super().update(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        if not self._can_manage(instance.project):
+            return error_response(
+                message='仅项目负责人可移除贡献审核人',
+                code=1003,
+                http_status=status.HTTP_403_FORBIDDEN,
+            )
+        return super().destroy(request, *args, **kwargs)
 
 # ============ 成员排名 ============
 
@@ -325,6 +580,12 @@ class MemberRankingViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelView
     def get_queryset(self):
         """按项目筛选；普通成员仅可见已公开的排名"""
         queryset = super().get_queryset().select_related('project', 'user')
+        queryset = scope_project_queryset(
+            queryset,
+            self.request.user,
+            project_lookup='project',
+            include_unscoped=True,
+        )
         params = self.request.query_params
         project_id = params.get('project')
         if project_id:

@@ -92,16 +92,25 @@ class FinanceBudgetSerializer(serializers.ModelSerializer):
     status_display = serializers.CharField(source='get_status_display', read_only=True)
     total_income = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
     remaining_amount = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
+    committed_amount = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
+    budget_basis = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
+    available_amount = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
 
     class Meta:
         model = FinanceBudget
         fields = (
             'id', 'project', 'project_name',
-            'bonus_amount', 'other_income', 'used_amount',
-            'pending_reimbursement', 'remaining_amount', 'total_income',
+            'bonus_amount', 'other_income', 'planned_amount', 'used_amount',
+            'pending_reimbursement', 'committed_amount',
+            'remaining_amount', 'available_amount', 'budget_basis', 'total_income',
             'status', 'status_display', 'period', 'updated_at',
         )
         read_only_fields = ('id', 'updated_at')
+
+    def validate_planned_amount(self, value):
+        if value < 0:
+            raise serializers.ValidationError('核定预算上限不能为负数')
+        return value
 
 
 class FinanceIncomeSerializer(serializers.ModelSerializer):

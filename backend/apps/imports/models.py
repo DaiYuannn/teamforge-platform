@@ -61,6 +61,14 @@ class ImportTask(models.Model):
     error_rows = models.IntegerField('错误行数', default=0)
     # 错误详情（JSON格式：行号 -> 错误信息）
     error_details = models.JSONField('错误详情', default=dict, blank=True)
+    team = models.ForeignKey(
+        'common.Team',
+        on_delete=models.SET_NULL,
+        related_name='import_tasks',
+        verbose_name='所属团队',
+        null=True,
+        blank=True,
+    )
     # 创建人
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,

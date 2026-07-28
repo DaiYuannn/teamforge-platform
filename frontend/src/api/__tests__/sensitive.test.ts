@@ -13,6 +13,7 @@ vi.mock('@/api/request', () => ({
 }))
 
 import {
+  createSensitiveData,
   downloadSensitiveAttachment,
   getAccessRequest,
   getMyAccessRequests,
@@ -27,6 +28,20 @@ beforeEach(() => {
 })
 
 describe('sensitive attachment API contract', () => {
+  it('submits new plaintext only to the guarded sensitive-data create endpoint', async () => {
+    const payload = {
+      data_type: 'id_card',
+      title: '成员身份证号',
+      plaintext: '110101199001011234',
+      subject_user: 7,
+      team: 3,
+    }
+
+    await createSensitiveData(payload)
+
+    expect(postMock).toHaveBeenCalledWith('/sensitive/data/', payload)
+  })
+
   it('loads the masked team catalogue with ordinary query parameters', async () => {
     getMock.mockResolvedValueOnce({ count: 0, results: [] })
 

@@ -63,6 +63,7 @@ class KnowledgeArticleViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelV
             queryset,
             self.request.user,
             project_lookup='project',
+            include_unscoped=True,
         )
         params = self.request.query_params
 

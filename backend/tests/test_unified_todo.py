@@ -129,7 +129,7 @@ class TestUnifiedTodoAPI:
         assert len(approval_items) >= 1
 
     def test_teacher_gets_contribution_reviews(self, teacher_client, make_user, make_project):
-        """老师获取待审核的贡献记录"""
+        """老师只有被明确分派时才获取待审核贡献"""
         contributor = make_user(email='todo_contrib@test.com')
         project = make_project()
         from apps.contributions.models import Contribution
@@ -139,6 +139,7 @@ class TestUnifiedTodoAPI:
             contribution_type=Contribution.ContributionType.TASK_COMPLETE,
             content='完成测试任务',
             status=Contribution.Status.PENDING,
+            reviewer=teacher_client.user,
         )
         resp = teacher_client.get(TODO_URL)
         assert resp.status_code == 200, resp.json()
@@ -219,6 +220,7 @@ class TestUnifiedTodoAPI:
             contribution_type=Contribution.ContributionType.TASK_COMPLETE,
             content='完成测试任务',
             status=Contribution.Status.PENDING,
+            reviewer=teacher_client.user,
         )
         resp = teacher_client.get(f'{TODO_URL}?type=contribution_review')
         assert resp.status_code == 200
@@ -276,3 +278,71 @@ class TestUnifiedTodoAPI:
         assert item['url'].startswith('/tasks?')
         assert item['route_name'] == 'TaskList'
         assert item['route_query']['task_id'] == task.id
+
+    def test_project_leader_gets_pending_reimbursement_todo(
+        self,
+        member_client,
+        make_project,
+    ):
+        from apps.finance.models import FinanceExpense
+
+        project = make_project(leader=member_client.user)
+        expense = FinanceExpense.objects.create(
+            project=project,
+            title='专利申请费',
+            amount='500.00',
+            expense_date='2026-07-20',
+            reimbursement_status=FinanceExpense.ReimbursementStatus.PENDING,
+        )
+
+        response = member_client.get(f'{TODO_URL}?type=finance_review')
+
+        assert response.status_code == 200
+        results = extract_data(response)['results']
+        assert [item['id'] for item in results] == [expense.id]
+        assert results[0]['type'] == 'finance_review'
+        assert results[0]['route_query']['expense_id'] == expense.id
+
+    def test_unassigned_teacher_is_not_broadcast_finance_review_todos(
+        self,
+        teacher_client,
+        make_project,
+    ):
+        from apps.finance.models import FinanceExpense
+
+        project = make_project()
+        FinanceExpense.objects.create(
+            project=project,
+            title='其他团队报销',
+            amount='300.00',
+            expense_date='2026-07-20',
+            reimbursement_status=FinanceExpense.ReimbursementStatus.PENDING,
+        )
+
+        response = teacher_client.get(f'{TODO_URL}?type=finance_review')
+
+        assert response.status_code == 200
+        assert extract_data(response)['results'] == []
+
+    def test_admin_gets_approved_reimbursement_payment_todo(
+        self,
+        admin_client,
+        make_project,
+    ):
+        from apps.finance.models import FinanceExpense
+
+        project = make_project()
+        expense = FinanceExpense.objects.create(
+            project=project,
+            title='已审核待打款',
+            amount='800.00',
+            expense_date='2026-07-20',
+            reimbursement_status=FinanceExpense.ReimbursementStatus.APPROVED,
+        )
+
+        response = admin_client.get(f'{TODO_URL}?type=finance_payment')
+
+        assert response.status_code == 200
+        results = extract_data(response)['results']
+        assert [item['id'] for item in results] == [expense.id]
+        assert results[0]['status_display'] == '审核通过·待打款'

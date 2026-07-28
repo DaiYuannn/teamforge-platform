@@ -156,6 +156,7 @@ class TaskListSerializer(serializers.ModelSerializer):
     collaborator_ids = serializers.PrimaryKeyRelatedField(
         source='collaborators', many=True, read_only=True
     )
+    collaborator_names = serializers.SerializerMethodField()
     attachment_count = serializers.IntegerField(
         source='attachment_files.count', read_only=True
     )
@@ -165,13 +166,16 @@ class TaskListSerializer(serializers.ModelSerializer):
         fields = (
             'id', 'project', 'project_name', 'title',
             'assignee', 'assignee_name', 'creator', 'creator_name',
-            'reviewer', 'reviewer_name', 'collaborator_ids',
+            'reviewer', 'reviewer_name', 'collaborator_ids', 'collaborator_names',
             'deadline', 'start_date', 'priority', 'priority_display',
             'status', 'status_display',
             'completed_at', 'is_overdue', 'delay_reason', 'completion_note',
             'attachment_count', 'created_at',
         )
         read_only_fields = fields
+
+    def get_collaborator_names(self, obj):
+        return [collaborator.name for collaborator in obj.collaborators.all()]
 
 
 class TaskCreateSerializer(TaskAttachmentMixin, serializers.ModelSerializer):

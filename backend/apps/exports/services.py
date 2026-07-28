@@ -91,6 +91,14 @@ def _task_export_queryset(project_id=None, filters=None, user=None):
         )
         .prefetch_related('collaborators')
     )
+    if user is not None:
+        from common.project_access import scope_project_queryset
+
+        tasks = scope_project_queryset(
+            tasks,
+            user,
+            project_lookup='project',
+        )
     if project_id:
         tasks = tasks.filter(project_id=project_id)
     if filters.get('status'):
@@ -129,11 +137,25 @@ def _format_date(value):
     return value.strftime('%Y-%m-%d') if value else ''
 
 
-def _filtered_competitions(search='', level='', status='', project_id=None):
+def _filtered_competitions(
+    search='',
+    level='',
+    status='',
+    project_id=None,
+    user=None,
+):
     """构建与比赛列表筛选语义一致的导出查询集。"""
     from apps.competitions.models import Competition
 
     queryset = Competition.objects.select_related('project').all().order_by('-created_at')
+    if user is not None:
+        from common.project_access import scope_project_queryset
+
+        queryset = scope_project_queryset(
+            queryset,
+            user,
+            project_lookup='project',
+        )
     search = (search or '').strip()
     if search:
         queryset = queryset.filter(
@@ -155,9 +177,21 @@ def _filtered_competitions(search='', level='', status='', project_id=None):
     return queryset
 
 
-def _competition_export_rows(search='', level='', status='', project_id=None):
+def _competition_export_rows(
+    search='',
+    level='',
+    status='',
+    project_id=None,
+    user=None,
+):
     rows = []
-    for competition in _filtered_competitions(search, level, status, project_id):
+    for competition in _filtered_competitions(
+        search,
+        level,
+        status,
+        project_id,
+        user,
+    ):
         rows.append([
             competition.project.name if competition.project else '',
             competition.project.code if competition.project else '',
@@ -192,7 +226,7 @@ class ExcelExportService:
     """Excel 导出服务"""
 
     @staticmethod
-    def export_projects():
+    def export_projects(user=None):
         """导出项目列表 Excel"""
         from apps.projects.models import Project
         wb = openpyxl.Workbook()
@@ -202,6 +236,10 @@ class ExcelExportService:
         _apply_header_style(ws, headers)
 
         projects = Project.objects.select_related('leader').all().order_by('-created_at')
+        if user is not None:
+            from common.project_access import scope_project_queryset
+
+            projects = scope_project_queryset(projects, user, project_lookup='')
         data_rows = []
         for p in projects:
             data_rows.append([
@@ -219,7 +257,7 @@ class ExcelExportService:
         return _wb_to_response(wb, '项目列表')
 
     @staticmethod
-    def export_finance_budget():
+    def export_finance_budget(user=None):
         """导出经费总表 Excel"""
         from apps.finance.models import FinanceBudget
         wb = openpyxl.Workbook()
@@ -230,6 +268,14 @@ class ExcelExportService:
         _apply_header_style(ws, headers)
 
         budgets = FinanceBudget.objects.select_related('project').all().order_by('-updated_at')
+        if user is not None:
+            from common.project_access import scope_project_queryset
+
+            budgets = scope_project_queryset(
+                budgets,
+                user,
+                project_lookup='project',
+            )
         data_rows = []
         for b in budgets:
             data_rows.append([
@@ -249,7 +295,7 @@ class ExcelExportService:
         return _wb_to_response(wb, '经费总表')
 
     @staticmethod
-    def export_finance_detail(project_id):
+    def export_finance_detail(project_id, user=None):
         """导出单项目经费明细 Excel"""
         from apps.finance.models import FinanceExpense
         wb = openpyxl.Workbook()
@@ -262,6 +308,14 @@ class ExcelExportService:
         expenses = FinanceExpense.objects.select_related(
             'project', 'spender', 'reviewer'
         ).filter(project_id=project_id).order_by('-expense_date')
+        if user is not None:
+            from common.project_access import scope_project_queryset
+
+            expenses = scope_project_queryset(
+                expenses,
+                user,
+                project_lookup='project',
+            )
         data_rows = []
         for e in expenses:
             data_rows.append([
@@ -316,7 +370,7 @@ class ExcelExportService:
         return _wb_to_response(wb, '任务清单')
 
     @staticmethod
-    def export_contributions(project_id):
+    def export_contributions(project_id, user=None):
         """导出成员贡献记录 Excel"""
         from apps.contributions.models import Contribution
         wb = openpyxl.Workbook()
@@ -329,6 +383,14 @@ class ExcelExportService:
         contributions = Contribution.objects.select_related(
             'project', 'user', 'filled_by', 'reviewer'
         ).filter(project_id=project_id).order_by('-created_at')
+        if user is not None:
+            from common.project_access import scope_project_queryset
+
+            contributions = scope_project_queryset(
+                contributions,
+                user,
+                project_lookup='project',
+            )
         data_rows = []
         for c in contributions:
             data_rows.append([
@@ -349,7 +411,7 @@ class ExcelExportService:
         return _wb_to_response(wb, '贡献记录')
 
     @staticmethod
-    def export_ip_applications():
+    def export_ip_applications(user=None):
         """导出知识产权申请总表 Excel"""
         from apps.intellectual_property.models import IntellectualPropertyApplication
         wb = openpyxl.Workbook()
@@ -363,6 +425,14 @@ class ExcelExportService:
         applications = IntellectualPropertyApplication.objects.select_related(
             'related_project', 'main_writer', 'applicant_executor'
         ).all().order_by('-created_at')
+        if user is not None:
+            from apps.intellectual_property.permissions import (
+                accessible_ip_applications,
+            )
+
+            applications = applications.filter(
+                pk__in=accessible_ip_applications(user).values('pk'),
+            )
         data_rows = []
         for a in applications:
             data_rows.append([
@@ -384,7 +454,7 @@ class ExcelExportService:
         return _wb_to_response(wb, '知识产权申请总表')
 
     @staticmethod
-    def export_members():
+    def export_members(user=None):
         """导出成员列表 Excel"""
         from apps.users.models import User
         wb = openpyxl.Workbook()
@@ -394,6 +464,10 @@ class ExcelExportService:
         _apply_header_style(ws, headers)
 
         users = User.objects.select_related().all().order_by('-date_joined')
+        if user is not None:
+            from common.project_access import scope_organization_users
+
+            users = scope_organization_users(users, user)
         data_rows = []
         for u in users:
             data_rows.append([
@@ -412,14 +486,26 @@ class ExcelExportService:
         return _wb_to_response(wb, '成员列表')
 
     @staticmethod
-    def export_competitions(search='', level='', status='', project_id=None):
+    def export_competitions(
+        search='',
+        level='',
+        status='',
+        project_id=None,
+        user=None,
+    ):
         """按比赛列表当前筛选导出全流程 Excel。"""
         wb = openpyxl.Workbook()
         ws = wb.active
         ws.title = '比赛列表'
         _apply_header_style(ws, _COMPETITION_EXPORT_HEADERS)
 
-        data_rows = _competition_export_rows(search, level, status, project_id)
+        data_rows = _competition_export_rows(
+            search,
+            level,
+            status,
+            project_id,
+            user,
+        )
         _apply_body_style(ws, data_rows)
         _auto_column_width(ws, _COMPETITION_EXPORT_HEADERS, data_rows)
         return _wb_to_response(wb, '比赛列表')
@@ -451,11 +537,15 @@ class CsvExportService:
         return response
 
     @staticmethod
-    def export_projects():
+    def export_projects(user=None):
         """导出项目列表 CSV"""
         from apps.projects.models import Project
         headers = ['项目名称', '项目编号', '负责人', '当前阶段', '状态', '开始时间', '预计结束', '创建时间']
         projects = Project.objects.select_related('leader').all().order_by('-created_at')
+        if user is not None:
+            from common.project_access import scope_project_queryset
+
+            projects = scope_project_queryset(projects, user, project_lookup='')
         data_rows = []
         for p in projects:
             data_rows.append([
@@ -471,12 +561,20 @@ class CsvExportService:
         return CsvExportService._csv_to_response(headers, data_rows, '项目列表')
 
     @staticmethod
-    def export_finance_budget():
+    def export_finance_budget(user=None):
         """导出经费总表 CSV"""
         from apps.finance.models import FinanceBudget
         headers = ['项目名称', '项目编号', '奖金总额', '其他收入', '已用金额',
                    '待报销', '剩余金额', '经费状态', '统计周期', '更新时间']
         budgets = FinanceBudget.objects.select_related('project').all().order_by('-updated_at')
+        if user is not None:
+            from common.project_access import scope_project_queryset
+
+            budgets = scope_project_queryset(
+                budgets,
+                user,
+                project_lookup='project',
+            )
         data_rows = []
         for b in budgets:
             data_rows.append([
@@ -494,7 +592,7 @@ class CsvExportService:
         return CsvExportService._csv_to_response(headers, data_rows, '经费总表')
 
     @staticmethod
-    def export_finance_detail(project_id):
+    def export_finance_detail(project_id, user=None):
         """导出单项目经费明细 CSV"""
         from apps.finance.models import FinanceExpense
         headers = ['支出标题', '项目名称', '金额', '经办人', '支出日期',
@@ -502,6 +600,14 @@ class CsvExportService:
         expenses = FinanceExpense.objects.select_related(
             'project', 'spender', 'reviewer'
         ).filter(project_id=project_id).order_by('-expense_date')
+        if user is not None:
+            from common.project_access import scope_project_queryset
+
+            expenses = scope_project_queryset(
+                expenses,
+                user,
+                project_lookup='project',
+            )
         data_rows = []
         for e in expenses:
             data_rows.append([
@@ -547,7 +653,7 @@ class CsvExportService:
         return CsvExportService._csv_to_response(headers, data_rows, '任务清单')
 
     @staticmethod
-    def export_contributions(project_id):
+    def export_contributions(project_id, user=None):
         """导出成员贡献记录 CSV"""
         from apps.contributions.models import Contribution
         headers = ['项目', '贡献人', '贡献类型', '贡献内容', '权重', '审核状态',
@@ -555,6 +661,14 @@ class CsvExportService:
         contributions = Contribution.objects.select_related(
             'project', 'user', 'filled_by', 'reviewer'
         ).filter(project_id=project_id).order_by('-created_at')
+        if user is not None:
+            from common.project_access import scope_project_queryset
+
+            contributions = scope_project_queryset(
+                contributions,
+                user,
+                project_lookup='project',
+            )
         data_rows = []
         for c in contributions:
             data_rows.append([
@@ -573,7 +687,7 @@ class CsvExportService:
         return CsvExportService._csv_to_response(headers, data_rows, '贡献记录')
 
     @staticmethod
-    def export_ip_applications():
+    def export_ip_applications(user=None):
         """导出知识产权申请总表 CSV"""
         from apps.intellectual_property.models import IntellectualPropertyApplication
         headers = ['成果名称', '内部编号', '成果类型', '关联项目', '当前状态',
@@ -582,6 +696,14 @@ class CsvExportService:
         applications = IntellectualPropertyApplication.objects.select_related(
             'related_project', 'main_writer', 'applicant_executor'
         ).all().order_by('-created_at')
+        if user is not None:
+            from apps.intellectual_property.permissions import (
+                accessible_ip_applications,
+            )
+
+            applications = applications.filter(
+                pk__in=accessible_ip_applications(user).values('pk'),
+            )
         data_rows = []
         for a in applications:
             data_rows.append([
@@ -601,11 +723,15 @@ class CsvExportService:
         return CsvExportService._csv_to_response(headers, data_rows, '知识产权申请总表')
 
     @staticmethod
-    def export_members():
+    def export_members(user=None):
         """导出成员列表 CSV"""
         from apps.users.models import User
         headers = ['姓名', '邮箱', '手机', '全局角色', '是否学生', '年级', '专业', '状态', '注册时间']
         users = User.objects.select_related().all().order_by('-date_joined')
+        if user is not None:
+            from common.project_access import scope_organization_users
+
+            users = scope_organization_users(users, user)
         data_rows = []
         for u in users:
             data_rows.append([
@@ -622,9 +748,21 @@ class CsvExportService:
         return CsvExportService._csv_to_response(headers, data_rows, '成员列表')
 
     @staticmethod
-    def export_competitions(search='', level='', status='', project_id=None):
+    def export_competitions(
+        search='',
+        level='',
+        status='',
+        project_id=None,
+        user=None,
+    ):
         """按比赛列表当前筛选导出全流程 CSV。"""
-        data_rows = _competition_export_rows(search, level, status, project_id)
+        data_rows = _competition_export_rows(
+            search,
+            level,
+            status,
+            project_id,
+            user,
+        )
         return CsvExportService._csv_to_response(
             _COMPETITION_EXPORT_HEADERS,
             data_rows,

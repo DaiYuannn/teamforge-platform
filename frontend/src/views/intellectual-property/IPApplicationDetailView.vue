@@ -82,8 +82,8 @@
         </div>
         <div class="summary-fact">
           <span>关联项目</span>
-          <strong>{{ application.related_project_name || '未关联' }}</strong>
-          <small>申请所属项目</small>
+          <strong>{{ application.related_project_names?.join('、') || application.related_project_name || '未关联' }}</strong>
+          <small>主项目及成果复用项目</small>
         </div>
         <div class="summary-fact">
           <span>材料版本</span>
@@ -141,7 +141,7 @@
                 </div>
                 <div>
                   <dt>关联项目</dt>
-                  <dd>{{ application.related_project_name || '-' }}</dd>
+                  <dd>{{ application.related_project_names?.join('、') || application.related_project_name || '-' }}</dd>
                 </div>
                 <div>
                   <dt>创建人</dt>
@@ -175,6 +175,10 @@
                   <dt>成果简介</dt>
                   <dd class="long-copy">{{ application.intro || '暂无简介' }}</dd>
                 </div>
+                <div v-if="application.status_note" class="detail-grid__wide">
+                  <dt>状态说明</dt>
+                  <dd class="long-copy">{{ application.status_note }}</dd>
+                </div>
               </dl>
             </section>
 
@@ -206,6 +210,105 @@
           <template #label>
             <span class="tab-label"><el-icon><UserFilled /></el-icon>协作成员</span>
           </template>
+
+          <section class="workspace-panel candidate-panel">
+            <header class="panel-header panel-header--actions">
+              <div>
+                <h2>拟申报与正式提交名单</h2>
+                <p>记录申报身份、署名顺序与实名核验结果；此处不展示身份证等敏感明文</p>
+              </div>
+              <el-button
+                v-if="canManageCandidateList"
+                type="primary"
+                :icon="Plus"
+                @click="handleAddCandidate"
+              >
+                添加申报成员
+              </el-button>
+            </header>
+
+            <div v-if="!isMobile" class="table-wrap">
+              <el-table v-loading="loading" :data="candidates">
+                <template #empty>
+                  <EmptyState text="暂无拟申报名单" description="创建申请后，由项目负责人在这里确认最终申报人员。" icon="UserFilled" compact />
+                </template>
+                <el-table-column label="姓名" min-width="120">
+                  <template #default="{ row }">
+                    <strong class="table-primary">{{ candidateUserName(row as IPApplicationCandidate) }}</strong>
+                  </template>
+                </el-table-column>
+                <el-table-column label="申报身份" width="116">
+                  <template #default="{ row }">{{ row.legal_role_display || candidateLegalRoleLabel(row.legal_role) }}</template>
+                </el-table-column>
+                <el-table-column label="署名顺序" width="92" align="center">
+                  <template #default="{ row }">
+                    <span class="tabular-nums">第 {{ row.planned_order }} 位</span>
+                  </template>
+                </el-table-column>
+                <el-table-column label="实名核验" width="128">
+                  <template #default="{ row }">
+                    <el-tag :type="candidateIdentityTone(row.identity_check_status)" size="small" effect="plain">
+                      {{ row.identity_check_status_display || candidateIdentityLabel(row.identity_check_status) }}
+                    </el-tag>
+                  </template>
+                </el-table-column>
+                <el-table-column label="最终提交状态" width="128">
+                  <template #default="{ row }">
+                    <el-tag :type="candidateStatusTone(row.status)" size="small">
+                      {{ row.status_display || candidateStatusLabel(row.status) }}
+                    </el-tag>
+                  </template>
+                </el-table-column>
+                <el-table-column label="核验记录" min-width="140">
+                  <template #default="{ row }">
+                    <span v-if="row.checked_by_name">
+                      {{ row.checked_by_name }} · {{ formatDate(row.checked_at) }}
+                    </span>
+                    <span v-else class="muted-text">尚未核验</span>
+                  </template>
+                </el-table-column>
+                <el-table-column prop="note" label="备注" min-width="160" show-overflow-tooltip>
+                  <template #default="{ row }">{{ row.note || '-' }}</template>
+                </el-table-column>
+                <el-table-column v-if="canManageCandidateList" label="操作" width="112" fixed="right" align="right">
+                  <template #default="{ row }">
+                    <el-button link type="primary" @click="handleEditCandidate(row as IPApplicationCandidate)">编辑</el-button>
+                    <el-button link type="danger" @click="handleDeleteCandidate(row as IPApplicationCandidate)">删除</el-button>
+                  </template>
+                </el-table-column>
+              </el-table>
+            </div>
+
+            <div v-else-if="candidates.length" class="mobile-record-list">
+              <article v-for="row in candidates" :key="row.id" class="mobile-record">
+                <div class="mobile-record__header">
+                  <div>
+                    <strong>{{ candidateUserName(row) }}</strong>
+                    <span>{{ row.legal_role_display || candidateLegalRoleLabel(row.legal_role) }} · 第 {{ row.planned_order }} 位</span>
+                  </div>
+                  <el-tag :type="candidateStatusTone(row.status)" size="small">
+                    {{ row.status_display || candidateStatusLabel(row.status) }}
+                  </el-tag>
+                </div>
+                <dl class="candidate-mobile-meta">
+                  <div>
+                    <dt>实名核验</dt>
+                    <dd>{{ row.identity_check_status_display || candidateIdentityLabel(row.identity_check_status) }}</dd>
+                  </div>
+                  <div>
+                    <dt>核验人</dt>
+                    <dd>{{ row.checked_by_name || '-' }}</dd>
+                  </div>
+                </dl>
+                <p>{{ row.note || '暂无备注' }}</p>
+                <div v-if="canManageCandidateList" class="row-actions">
+                  <el-button link type="primary" @click="handleEditCandidate(row)">编辑</el-button>
+                  <el-button link type="danger" @click="handleDeleteCandidate(row)">删除</el-button>
+                </div>
+              </article>
+            </div>
+            <EmptyState v-else text="暂无拟申报名单" description="创建申请后，由项目负责人在这里确认最终申报人员。" icon="UserFilled" compact />
+          </section>
 
           <section class="workspace-panel">
             <header class="panel-header panel-header--actions">
@@ -599,6 +702,87 @@
       @success="loadDetail"
     />
 
+    <el-dialog
+      v-model="candidateDialogVisible"
+      :title="editingCandidate ? '编辑申报成员' : '添加申报成员'"
+      width="560px"
+      :close-on-click-modal="false"
+      @close="handleCloseCandidateDialog"
+    >
+      <el-alert
+        class="candidate-form-alert"
+        title="这里只记录实名核验结果，不录入或展示身份证明文；身份证资料请通过敏感资料中心受控管理。"
+        type="info"
+        :closable="false"
+        show-icon
+      />
+      <el-form
+        ref="candidateFormRef"
+        :model="candidateForm"
+        :rules="candidateRules"
+        label-width="104px"
+      >
+        <el-form-item label="成员姓名" prop="user">
+          <el-select
+            v-model="candidateForm.user"
+            placeholder="选择关联项目成员"
+            filterable
+            :disabled="Boolean(editingCandidate)"
+            style="width: 100%"
+          >
+            <el-option
+              v-for="user in userList"
+              :key="user.id"
+              :label="user.name || user.username || user.email"
+              :value="user.id"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="申报身份" prop="legal_role">
+          <el-select v-model="candidateForm.legal_role" placeholder="请选择申报身份" style="width: 100%">
+            <el-option
+              v-for="item in candidateLegalRoleOptions"
+              :key="item.value"
+              :label="item.label"
+              :value="item.value"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="署名顺序" prop="planned_order">
+          <el-input-number v-model="candidateForm.planned_order" :min="1" :max="999" controls-position="right" />
+        </el-form-item>
+        <el-form-item label="实名核验" prop="identity_check_status">
+          <el-select v-model="candidateForm.identity_check_status" style="width: 100%">
+            <el-option
+              v-for="item in candidateIdentityOptions"
+              :key="item.value"
+              :label="item.label"
+              :value="item.value"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="提交状态" prop="status">
+          <el-select v-model="candidateForm.status" style="width: 100%">
+            <el-option
+              v-for="item in candidateStatusOptions"
+              :key="item.value"
+              :label="item.label"
+              :value="item.value"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="备注">
+          <el-input v-model="candidateForm.note" type="textarea" :rows="3" maxlength="500" show-word-limit placeholder="可记录名单调整原因或待确认事项" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="candidateDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="candidateSubmitting" @click="handleSubmitCandidate">
+          {{ editingCandidate ? '保存修改' : '添加成员' }}
+        </el-button>
+      </template>
+    </el-dialog>
+
     <el-dialog v-model="contributorDialogVisible" title="添加协作成员" width="520px">
       <el-form ref="contributorFormRef" :model="contributorForm" :rules="contributorRules" label-width="88px">
         <el-form-item label="贡献人" prop="user">
@@ -682,14 +866,18 @@ import {
   WarningFilled,
 } from '@element-plus/icons-vue'
 import {
+  addIPCandidate,
   addIPContributor,
   archiveIPApplication,
   confirmIPContributor,
+  deleteIPCandidate,
   deleteIPApplication,
   getIPApplication,
+  getIPCandidates,
   resolveIPReturn,
   syncIPContribution,
   transitionIPStatus,
+  updateIPCandidate,
   updateIPMaterial,
   uploadIPFinalCertificate,
   uploadIPMaterial,
@@ -700,9 +888,10 @@ import EmptyState from '@/components/EmptyState.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { useDevice } from '@/composables/useDevice'
 import { useUserStore } from '@/stores/user'
-import type { Project } from '@/types'
+import type { Project, ProjectMember } from '@/types'
 import type {
   IPApplication,
+  IPApplicationCandidate,
   IPContributor,
   IPMaterialVersion,
   IPObjection,
@@ -755,9 +944,12 @@ const statusTransitioning = ref(false)
 const certificateUploading = ref(false)
 const deleting = ref(false)
 const materialUpdatingId = ref(0)
-const activeTab = ref('overview')
+const candidateSubmitting = ref(false)
+const activeTab = ref(route.query.tab === 'people' ? 'people' : 'overview')
 const application = ref<IPApplication | null>(null)
 const relatedProject = ref<Project | null>(null)
+const projectMembers = ref<ProjectMember[]>([])
+const candidates = ref<IPApplicationCandidate[]>([])
 const contributors = ref<IPContributor[]>([])
 const materials = ref<IPMaterialVersion[]>([])
 const returnRecords = ref<IPReturnRecord[]>([])
@@ -769,6 +961,8 @@ const objectionDialogVisible = ref(false)
 const objectionReviewDialogVisible = ref(false)
 const contributorDialogVisible = ref(false)
 const materialDialogVisible = ref(false)
+const candidateDialogVisible = ref(false)
+const editingCandidate = ref<IPApplicationCandidate | null>(null)
 const reviewingObjection = ref<IPObjection>({} as IPObjection)
 const reviewMode = ref<'leader' | 'teacher'>('leader')
 
@@ -791,9 +985,57 @@ const materialRules: FormRules = {
   material_type: [{ required: true, message: '请选择材料类型', trigger: 'change' }],
 }
 
+const candidateLegalRoleOptions = [
+  { value: 'inventor', label: '发明人' },
+  { value: 'author', label: '著作权人 / 作者' },
+  { value: 'applicant', label: '申请人' },
+  { value: 'other', label: '其他' },
+] as const
+const candidateStatusOptions = [
+  { value: 'proposed', label: '拟申报' },
+  { value: 'identity_pending', label: '待实名核验' },
+  { value: 'confirmed', label: '已确认入选' },
+  { value: 'submitted', label: '已正式提交' },
+  { value: 'withdrawn', label: '已撤回' },
+] as const
+const candidateIdentityOptions = [
+  { value: 'pending', label: '待核验' },
+  { value: 'matched', label: '实名一致' },
+  { value: 'mismatched', label: '实名不一致' },
+  { value: 'not_required', label: '无需核验' },
+] as const
+
+const candidateFormRef = ref<FormInstance>()
+const candidateForm = reactive({
+  user: null as number | null,
+  legal_role: 'inventor' as IPApplicationCandidate['legal_role'],
+  planned_order: 1,
+  status: 'proposed' as IPApplicationCandidate['status'],
+  identity_check_status: 'pending' as IPApplicationCandidate['identity_check_status'],
+  note: '',
+})
+const candidateRules: FormRules = {
+  user: [{ required: true, message: '请选择申报成员', trigger: 'change' }],
+  legal_role: [{ required: true, message: '请选择申报身份', trigger: 'change' }],
+  planned_order: [{ required: true, message: '请填写署名顺序', trigger: 'change' }],
+  status: [{ required: true, message: '请选择提交状态', trigger: 'change' }],
+  identity_check_status: [{ required: true, message: '请选择实名核验状态', trigger: 'change' }],
+}
+
 const currentUserId = computed(() => userStore.userInfo?.id || 0)
 const hasPrivilegedRole = computed(() => userStore.role === 'teacher' || userStore.role === 'sys_admin')
-const isProjectLeader = computed(() => Boolean(currentUserId.value && relatedProject.value?.leader === currentUserId.value))
+const isProjectLeader = computed(() => Boolean(
+  currentUserId.value
+  && (
+    relatedProject.value?.leader === currentUserId.value
+    || projectMembers.value.some(
+      (member) =>
+        member.user === currentUserId.value
+        && member.role_in_project === 'leader'
+        && (!member.status || member.status === 'active'),
+    )
+  ),
+))
 const isMainWriter = computed(() => Boolean(currentUserId.value && application.value?.main_writer === currentUserId.value))
 const isApplicantExecutor = computed(() => Boolean(currentUserId.value && application.value?.applicant_executor === currentUserId.value))
 const isProjectReviewer = computed(() => Boolean(currentUserId.value && application.value?.project_reviewer === currentUserId.value))
@@ -802,6 +1044,7 @@ const canEditApplication = computed(() =>
   hasPrivilegedRole.value || isProjectLeader.value || isMainWriter.value || isApplicantExecutor.value,
 )
 const canManageCollaboration = computed(() => hasPrivilegedRole.value || isProjectLeader.value)
+const canManageCandidateList = computed(() => hasPrivilegedRole.value || isProjectLeader.value)
 const canAccessPrivateDetails = computed(() =>
   Boolean(application.value && Object.prototype.hasOwnProperty.call(application.value, 'contributors')),
 )
@@ -920,11 +1163,13 @@ async function loadDetail(): Promise<void> {
   try {
     const response = await getIPApplication(applicationId) as IPApplication
     application.value = response
+    candidates.value = response.candidates || []
     contributors.value = response.contributors || []
     materials.value = response.material_versions || []
     returnRecords.value = response.return_records || []
     objections.value = response.objections || []
     relatedProject.value = null
+    projectMembers.value = []
     if (response.related_project) {
       try {
         relatedProject.value = await getProject(response.related_project)
@@ -941,10 +1186,11 @@ async function loadDetail(): Promise<void> {
 }
 
 async function loadUsers(): Promise<void> {
-  if (userList.value.length) return
   try {
     const app = application.value
     if (!app?.related_project) {
+      projectMembers.value = []
+      if (userList.value.length) return
       if (!canManageCollaboration.value && !canCreateReturn.value) return
       const response = await getUsers({ page: 1, page_size: 100 }) as any
       userList.value = response.results || []
@@ -953,6 +1199,7 @@ async function loadUsers(): Promise<void> {
 
     const project = relatedProject.value || await getProject(app.related_project)
     const members = await getProjectMembers(app.related_project)
+    projectMembers.value = members
     userList.value = buildProjectParticipantOptions(project, members)
   } catch {
     // The page remains usable if the optional member list cannot be loaded.
@@ -1003,6 +1250,146 @@ async function handleConfirmContributor(row: IPContributor): Promise<void> {
 
 function canConfirmContributor(row: IPContributor): boolean {
   return !row.is_confirmed && Boolean(currentUserId.value) && row.user === currentUserId.value
+}
+
+function candidateUserName(row: IPApplicationCandidate): string {
+  const detail = row.user_detail
+  return (
+    detail?.name
+    || detail?.username
+    || detail?.email
+    || userList.value.find((item) => item.id === row.user)?.name
+    || `成员 #${row.user}`
+  )
+}
+
+function candidateLegalRoleLabel(value: IPApplicationCandidate['legal_role']): string {
+  return candidateLegalRoleOptions.find((item) => item.value === value)?.label || value
+}
+
+function candidateStatusLabel(value: IPApplicationCandidate['status']): string {
+  return candidateStatusOptions.find((item) => item.value === value)?.label || value
+}
+
+function candidateIdentityLabel(value: IPApplicationCandidate['identity_check_status']): string {
+  return candidateIdentityOptions.find((item) => item.value === value)?.label || value
+}
+
+function candidateStatusTone(value: IPApplicationCandidate['status']): 'success' | 'warning' | 'danger' | 'info' {
+  if (value === 'submitted' || value === 'confirmed') return 'success'
+  if (value === 'withdrawn') return 'danger'
+  if (value === 'identity_pending') return 'warning'
+  return 'info'
+}
+
+function candidateIdentityTone(
+  value: IPApplicationCandidate['identity_check_status'],
+): 'success' | 'warning' | 'danger' | 'info' {
+  if (value === 'matched') return 'success'
+  if (value === 'mismatched') return 'danger'
+  if (value === 'pending') return 'warning'
+  return 'info'
+}
+
+function resetCandidateForm(): void {
+  Object.assign(candidateForm, {
+    user: null,
+    legal_role: 'inventor',
+    planned_order: Math.max(
+      1,
+      ...candidates.value.map((item) => Number(item.planned_order) + 1),
+    ),
+    status: 'proposed',
+    identity_check_status: 'pending',
+    note: '',
+  })
+}
+
+function handleAddCandidate(): void {
+  editingCandidate.value = null
+  resetCandidateForm()
+  candidateDialogVisible.value = true
+}
+
+function handleEditCandidate(row: IPApplicationCandidate): void {
+  editingCandidate.value = row
+  Object.assign(candidateForm, {
+    user: row.user,
+    legal_role: row.legal_role,
+    planned_order: row.planned_order,
+    status: row.status,
+    identity_check_status: row.identity_check_status,
+    note: row.note || '',
+  })
+  candidateDialogVisible.value = true
+}
+
+function handleCloseCandidateDialog(): void {
+  editingCandidate.value = null
+  candidateFormRef.value?.clearValidate()
+}
+
+async function refreshCandidates(): Promise<void> {
+  candidates.value = await getIPCandidates(applicationId)
+  if (application.value) application.value.candidates = candidates.value
+}
+
+async function handleSubmitCandidate(): Promise<void> {
+  if (!candidateFormRef.value || !candidateForm.user) return
+  const valid = await candidateFormRef.value.validate().catch(() => false)
+  if (!valid) return
+  candidateSubmitting.value = true
+  try {
+    const payload = {
+      legal_role: candidateForm.legal_role,
+      planned_order: candidateForm.planned_order,
+      status: candidateForm.status,
+      identity_check_status: candidateForm.identity_check_status,
+      note: candidateForm.note.trim(),
+    }
+    if (editingCandidate.value) {
+      await updateIPCandidate(applicationId, editingCandidate.value.id, payload)
+      ElMessage.success('申报名单已更新')
+    } else {
+      await addIPCandidate(applicationId, {
+        user: candidateForm.user,
+        ...payload,
+      })
+      ElMessage.success('申报成员已添加')
+    }
+    candidateDialogVisible.value = false
+    await refreshCandidates()
+  } catch {
+    // The request interceptor presents the backend error.
+  } finally {
+    candidateSubmitting.value = false
+  }
+}
+
+async function handleDeleteCandidate(row: IPApplicationCandidate): Promise<void> {
+  try {
+    await ElMessageBox.confirm(
+      `确定从拟申报名单中移除“${candidateUserName(row)}”吗？`,
+      '移除申报成员',
+      {
+        confirmButtonText: '移除',
+        cancelButtonText: '取消',
+        type: 'warning',
+      },
+    )
+  } catch {
+    return
+  }
+  candidateSubmitting.value = true
+  try {
+    await deleteIPCandidate(applicationId, row.id)
+    ElMessage.success('申报成员已移除')
+    await refreshCandidates()
+  } catch {
+    // The request interceptor presents the backend error.
+  } finally {
+    candidateSubmitting.value = false
+  }
 }
 
 async function handleAddContributor(): Promise<void> {
@@ -1101,12 +1488,27 @@ function canResolveReturnRecord(record: IPReturnRecord): boolean {
 }
 
 async function handleWorkflowAction(workflowAction: IPWorkflowAction): Promise<void> {
+  let statusNote = ''
   try {
-    await ElMessageBox.confirm(workflowAction.confirmation, workflowAction.label, {
-      confirmButtonText: workflowAction.label,
-      cancelButtonText: '取消',
-      type: workflowAction.tone === 'danger' ? 'error' : (workflowAction.tone || 'info'),
-    })
+    if (['paused', 'terminated', 'deferred'].includes(workflowAction.targetStatus)) {
+      const result = await ElMessageBox.prompt(
+        `${workflowAction.confirmation} 请填写原因，便于团队后续追踪。`,
+        workflowAction.label,
+        {
+          confirmButtonText: workflowAction.label,
+          cancelButtonText: '取消',
+          inputType: 'textarea',
+          inputValidator: (value) => Boolean(String(value || '').trim()) || '请填写状态原因',
+        },
+      )
+      statusNote = String(result.value || '').trim()
+    } else {
+      await ElMessageBox.confirm(workflowAction.confirmation, workflowAction.label, {
+        confirmButtonText: workflowAction.label,
+        cancelButtonText: '取消',
+        type: workflowAction.tone === 'danger' ? 'error' : (workflowAction.tone || 'info'),
+      })
+    }
   } catch {
     return
   }
@@ -1121,7 +1523,10 @@ async function handleWorkflowAction(workflowAction: IPWorkflowAction): Promise<v
       returnDialogVisible.value = true
       return
     } else {
-      await transitionIPStatus(applicationId, { target_status: workflowAction.targetStatus })
+      await transitionIPStatus(applicationId, {
+        target_status: workflowAction.targetStatus,
+        note: statusNote || undefined,
+      })
       ElMessage.success(`申请已进入${IP_STATUS_MAP[workflowAction.targetStatus]?.label || workflowAction.label}`)
     }
     await loadDetail()
@@ -1305,6 +1710,20 @@ onMounted(() => {
 .materials-grid { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(360px, 0.85fr); gap: 16px; }
 
 .workspace-panel { min-width: 0; }
+.candidate-panel {
+  margin-bottom: 22px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--color-border-light);
+}
+.candidate-form-alert { margin-bottom: 18px; }
+.candidate-mobile-meta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 12px;
+  margin-top: 10px;
+}
+.candidate-mobile-meta dt { color: var(--color-text-muted); font-size: 10px; }
+.candidate-mobile-meta dd { margin-top: 2px; color: var(--color-text-regular); font-size: 12px; }
 .overview-grid > .workspace-panel,
 .materials-grid > .workspace-panel,
 .records-grid > .workspace-panel { padding: 0; }

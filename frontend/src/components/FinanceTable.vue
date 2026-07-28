@@ -35,7 +35,7 @@
       <el-table-column prop="reimbursement_status" label="报销状态" width="104">
         <template #default="{ row }">
           <el-tag :type="reimbursementTone(row.reimbursement_status)" size="small">
-            {{ row.reimbursement_status_display || reimbursementLabel(row.reimbursement_status) }}
+            {{ reimbursementLabel(row.reimbursement_status) }}
           </el-tag>
         </template>
       </el-table-column>
@@ -67,19 +67,19 @@
               link
               type="primary"
               @click="$emit('submit-reimbursement', row as FinanceExpense)"
-            >提交</el-button>
+            >提交报销</el-button>
             <el-button
               v-if="canReviewExpense(row as FinanceExpense)"
               link
               type="warning"
               @click="$emit('review-reimbursement', row as FinanceExpense)"
-            >审核</el-button>
+            >审核报销</el-button>
             <el-button
               v-if="canPayExpense(row as FinanceExpense)"
               link
               type="success"
               @click="$emit('mark-paid', row as FinanceExpense)"
-            >付款</el-button>
+            >登记打款</el-button>
           </template>
           <template v-if="showActions">
             <el-tooltip content="编辑支出">
@@ -103,7 +103,7 @@
           <strong class="amount tabular-nums">{{ formatMoneyWithComma(expense.amount) }}</strong>
         </div>
         <el-tag :type="reimbursementTone(expense.reimbursement_status)" size="small" class="workflow-tag">
-          {{ expense.reimbursement_status_display || reimbursementLabel(expense.reimbursement_status) }}
+          {{ reimbursementLabel(expense.reimbursement_status) }}
         </el-tag>
         <h3>{{ expense.title }}</h3>
         <p v-if="expense.purpose">{{ expense.purpose }}</p>
@@ -144,7 +144,7 @@
               link
               type="success"
               @click="$emit('mark-paid', expense)"
-            >登记付款</el-button>
+            >登记打款</el-button>
           </template>
         </div>
       </article>
@@ -243,10 +243,10 @@ function getFileName(filePath: string | undefined): string {
 
 const REIMBURSEMENT_LABELS: Record<string, string> = {
   draft: '草稿',
-  pending: '待审核',
-  approved: '已审核',
+  pending: '待报销审核',
+  approved: '审核通过·待打款',
   rejected: '已驳回',
-  paid: '已付款',
+  paid: '已打款·报销完成',
   not_required: '无需报销',
 }
 

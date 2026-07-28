@@ -54,6 +54,17 @@ def _serialize_preferences(user):
     }
 
 
+def _global_permission_codes(user):
+    """Return custom permission codes granted without a project scope."""
+    codes = set()
+    assignments = user.role_assignments.filter(
+        project__isnull=True,
+    ).select_related('role')
+    for assignment in assignments:
+        codes.update(assignment.role.permissions or [])
+    return sorted(codes)
+
+
 class UserPreferencesPayloadSerializer(serializers.Serializer):
     dashboard_layout = serializers.JSONField()
     theme_color = serializers.CharField()
@@ -91,21 +102,26 @@ class UserLifecycleEventSerializer(serializers.ModelSerializer):
 class UserSerializer(serializers.ModelSerializer):
     """用户完整序列化器（详情/管理用）"""
     preferences = serializers.SerializerMethodField()
+    permission_codes = serializers.SerializerMethodField()
 
     class Meta:
         model = User
         fields = (
             'id', 'username', 'email', 'name', 'phone', 'avatar',
-            'global_role', 'is_student', 'grade', 'major',
+            'global_role', 'is_student', 'school', 'grade', 'major',
             'membership_status', 'team_joined_at', 'team_left_at',
             'exit_reason', 'handover_to', 'handover_notes',
             'is_active', 'is_staff', 'date_joined', 'last_login', 'preferences',
+            'permission_codes',
         )
         read_only_fields = ('id', 'date_joined', 'last_login')
 
     @extend_schema_field(UserPreferencesPayloadSerializer)
     def get_preferences(self, obj):
         return _serialize_preferences(obj)
+
+    def get_permission_codes(self, obj):
+        return _global_permission_codes(obj)
 
 
 class UserListSerializer(serializers.ModelSerializer):
@@ -117,7 +133,7 @@ class UserListSerializer(serializers.ModelSerializer):
         model = User
         fields = (
             'id', 'username', 'email', 'name', 'phone', 'avatar',
-            'global_role', 'global_role_display', 'is_student', 'grade', 'major',
+            'global_role', 'global_role_display', 'is_student', 'school', 'grade', 'major',
             'membership_status', 'team_joined_at', 'team_left_at',
             'handover_to', 'is_active',
         )
@@ -149,7 +165,7 @@ class UserCreateSerializer(serializers.ModelSerializer):
         model = User
         fields = (
             'id', 'username', 'email', 'name', 'phone', 'avatar',
-            'global_role', 'is_student', 'grade', 'major',
+            'global_role', 'is_student', 'school', 'grade', 'major',
             'membership_status', 'team_joined_at',
             'password', 'password_confirm',
         )
@@ -178,7 +194,7 @@ class UserUpdateSerializer(serializers.ModelSerializer):
         model = User
         fields = (
             'id', 'username', 'email', 'name', 'phone', 'avatar',
-            'global_role', 'is_student', 'grade', 'major',
+            'global_role', 'is_student', 'school', 'grade', 'major',
             'membership_status', 'team_joined_at', 'team_left_at',
             'exit_reason', 'handover_to', 'handover_notes',
             'is_active', 'is_staff',
@@ -189,14 +205,16 @@ class UserUpdateSerializer(serializers.ModelSerializer):
 class MyProfileSerializer(serializers.ModelSerializer):
     """当前用户个人信息序列化器（用户自己编辑个人信息）"""
     preferences = serializers.SerializerMethodField()
+    permission_codes = serializers.SerializerMethodField()
 
     class Meta:
         model = User
         fields = (
             'id', 'username', 'email', 'name', 'phone', 'avatar',
-            'global_role', 'is_student', 'grade', 'major',
+            'global_role', 'is_student', 'school', 'grade', 'major',
             'membership_status', 'team_joined_at', 'team_left_at',
             'is_active', 'date_joined', 'last_login', 'preferences',
+            'permission_codes',
         )
         read_only_fields = (
             'id', 'username', 'email', 'global_role',
@@ -207,6 +225,9 @@ class MyProfileSerializer(serializers.ModelSerializer):
     @extend_schema_field(UserPreferencesPayloadSerializer)
     def get_preferences(self, obj):
         return _serialize_preferences(obj)
+
+    def get_permission_codes(self, obj):
+        return _global_permission_codes(obj)
 
 
 class LoginSerializer(serializers.Serializer):

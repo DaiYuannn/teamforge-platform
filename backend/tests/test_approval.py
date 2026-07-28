@@ -256,6 +256,12 @@ class TestApprovalBusinessLinkage:
         self, admin_client, make_user, make_sensitive_data
     ):
         from apps.sensitive.models import SensitiveAccessRequest
+        from apps.users.models import User
+
+        # 小团队版不再让系统管理员天然获得业务审批权；历史无团队资料
+        # 由仍在队的明确敏感审批人处理。
+        admin_client.user.global_role = User.GlobalRole.SENS_APPROVER
+        admin_client.user.save(update_fields=['global_role'])
 
         applicant = make_user(email='sensitive-link@example.com')
         access = SensitiveAccessRequest.objects.create(

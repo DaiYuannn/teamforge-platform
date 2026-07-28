@@ -22,6 +22,14 @@
         <el-form-item label="年级">
           <el-input v-model="queryParams.grade" placeholder="全部年级" clearable />
         </el-form-item>
+        <el-form-item label="学校">
+          <el-input v-model="queryParams.school" placeholder="全部学校" clearable />
+        </el-form-item>
+        <el-form-item label="所属小组">
+          <el-select v-model="queryParams.team" placeholder="全部小组" clearable filterable>
+            <el-option v-for="team in teamOptions" :key="team.id" :label="team.name" :value="team.id" />
+          </el-select>
+        </el-form-item>
         <el-form-item label="专业">
           <el-input v-model="queryParams.major" placeholder="全部专业" clearable />
         </el-form-item>
@@ -100,6 +108,14 @@
             </div>
           </template>
         </el-table-column>
+        <el-table-column label="学校 / 所属小组" min-width="200">
+          <template #default="{ row }">
+            <div class="academic-cell">
+              <span>{{ row.school || '未填写学校' }}</span>
+              <span>{{ teamMembershipText(row as Member) }}</span>
+            </div>
+          </template>
+        </el-table-column>
         <el-table-column prop="phone" label="联系电话" width="132">
           <template #default="{ row }">{{ row.phone || '-' }}</template>
         </el-table-column>
@@ -147,6 +163,14 @@
               <dd>{{ member.major || '-' }}</dd>
             </div>
             <div>
+              <dt>学校</dt>
+              <dd>{{ member.school || '-' }}</dd>
+            </div>
+            <div>
+              <dt>所属小组</dt>
+              <dd>{{ teamMembershipText(member) }}</dd>
+            </div>
+            <div>
               <dt>电话</dt>
               <dd>{{ member.phone || '-' }}</dd>
             </div>
@@ -184,6 +208,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { Refresh, Search, View } from '@element-plus/icons-vue'
 import { getMembers, type MemberQueryParams } from '@/api/members'
+import { getTeams, type Team } from '@/api/teams'
 import { useDevice } from '@/composables/useDevice'
 import { useMobileNavigate } from '@/composables/useMobileNavigate'
 import type { Member } from '@/types'
@@ -199,6 +224,7 @@ const { smartNavigate } = useMobileNavigate()
 const loading = ref(false)
 const loadFailed = ref(false)
 const memberList = ref<Member[]>([])
+const teamOptions = ref<Team[]>([])
 const total = ref(0)
 
 const queryParams = reactive<MemberQueryParams>({
@@ -207,12 +233,15 @@ const queryParams = reactive<MemberQueryParams>({
   search: '',
   grade: '',
   major: '',
+  school: '',
+  team: undefined,
   membership_status: '',
 })
 
 const hasActiveFilters = computed(
   () => Boolean(
-    queryParams.search || queryParams.grade || queryParams.major || queryParams.membership_status
+    queryParams.search || queryParams.school || queryParams.grade || queryParams.major
+      || queryParams.team || queryParams.membership_status
   ),
 )
 const paginationLayout = computed(() =>
@@ -221,6 +250,13 @@ const paginationLayout = computed(() =>
 
 function memberName(member: Member): string {
   return member.name || member.user_name || member.username || '未命名成员'
+}
+
+function teamMembershipText(member: Member): string {
+  const memberships = member.team_memberships || []
+  return memberships.length
+    ? memberships.map((item) => `${item.team_name}（${item.role_display}）`).join('、')
+    : '未分组'
 }
 
 function roleTagType(role?: string): string {
@@ -268,6 +304,8 @@ function handleReset(): void {
   queryParams.search = ''
   queryParams.grade = ''
   queryParams.major = ''
+  queryParams.school = ''
+  queryParams.team = undefined
   queryParams.membership_status = ''
   queryParams.page = 1
   loadData()
@@ -281,7 +319,18 @@ function handleRowClick(member: Member): void {
   handleDetail(member)
 }
 
-onMounted(loadData)
+async function loadTeamOptions(): Promise<void> {
+  try {
+    teamOptions.value = (await getTeams()).results
+  } catch {
+    teamOptions.value = []
+  }
+}
+
+onMounted(() => {
+  loadData()
+  loadTeamOptions()
+})
 </script>
 
 <style lang="scss" scoped>

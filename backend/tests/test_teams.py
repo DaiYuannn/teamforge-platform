@@ -172,7 +172,7 @@ class TestTeam:
         old_owner.refresh_from_db()
         successor_membership.refresh_from_db()
         assert team.owner_id == successor.id
-        assert old_owner.role == TeamMember.Role.ADMIN
+        assert old_owner.role == TeamMember.Role.CO_LEAD
         assert successor_membership.role == TeamMember.Role.OWNER
         assert TeamMembershipEvent.objects.filter(
             membership=successor_membership,

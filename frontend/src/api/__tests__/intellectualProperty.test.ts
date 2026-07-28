@@ -10,9 +10,13 @@ const requestMock = vi.hoisted(() => ({
 vi.mock('@/api/request', () => ({ default: requestMock }))
 
 import {
+  addIPCandidate,
   confirmIPContributor,
   createIPObjection,
+  deleteIPCandidate,
+  getIPCandidates,
   reviewIPObjection,
+  updateIPCandidate,
   updateIPApplication,
   updateIPMaterial,
   uploadIPFinalCertificate,
@@ -37,6 +41,45 @@ describe('intellectual-property API contracts', () => {
       '/intellectual-property/materials/',
       formData,
       { headers: { 'Content-Type': 'multipart/form-data' } },
+    )
+  })
+
+  it('uses the application-scoped candidate list contract', async () => {
+    const candidate = {
+      user: 8,
+      legal_role: 'inventor' as const,
+      planned_order: 1,
+      status: 'confirmed' as const,
+      identity_check_status: 'matched' as const,
+      note: '实名信息一致',
+    }
+
+    await getIPCandidates(18)
+    await addIPCandidate(18, candidate)
+    await updateIPCandidate(18, 5, {
+      planned_order: 2,
+      status: 'submitted',
+    })
+    await deleteIPCandidate(18, 5)
+
+    expect(requestMock.get).toHaveBeenCalledWith(
+      '/intellectual-property/applications/18/candidates/',
+    )
+    expect(requestMock.post).toHaveBeenCalledWith(
+      '/intellectual-property/applications/18/candidates/',
+      candidate,
+    )
+    expect(requestMock.patch).toHaveBeenCalledWith(
+      '/intellectual-property/applications/18/candidates/',
+      {
+        candidate_id: 5,
+        planned_order: 2,
+        status: 'submitted',
+      },
+    )
+    expect(requestMock.delete).toHaveBeenCalledWith(
+      '/intellectual-property/applications/18/candidates/',
+      { params: { candidate_id: 5 } },
     )
   })
 

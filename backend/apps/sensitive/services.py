@@ -146,6 +146,10 @@ class SensitiveDataService:
         except SensitiveAccessRequest.DoesNotExist:
             return False, '访问申请不存在'
 
+        from .permissions import can_review_sensitive_request
+        if not can_review_sensitive_request(approver, request_obj):
+            return False, '无权处理其他团队的敏感资料申请'
+
         if request_obj.applicant_id == approver.id:
             return False, '审批人不能审批自己的敏感资料访问申请'
 
@@ -188,6 +192,10 @@ class SensitiveDataService:
             ).get(id=request_id)
         except SensitiveAccessRequest.DoesNotExist:
             return False, '访问申请不存在'
+
+        from .permissions import can_review_sensitive_request
+        if not can_review_sensitive_request(approver, request_obj):
+            return False, '无权处理其他团队的敏感资料申请'
 
         if request_obj.applicant_id == approver.id:
             return False, '审批人不能处理自己的敏感资料访问申请'

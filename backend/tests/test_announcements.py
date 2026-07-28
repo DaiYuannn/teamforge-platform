@@ -178,6 +178,75 @@ class TestAnnouncementCreate:
         }, format='json')
         assert resp.status_code == 403
 
+    def test_active_team_co_lead_can_create(self, member_client, make_user):
+        from apps.common.team_models import Team, TeamMember
+
+        owner = make_user(email='announcement-owner@test.com')
+        team = Team.objects.create(
+            name='公告小团队',
+            code='ANNOUNCEMENT-SQUAD',
+            owner=owner,
+        )
+        TeamMember.objects.create(
+            team=team,
+            user=owner,
+            role=TeamMember.Role.OWNER,
+        )
+        TeamMember.objects.create(
+            team=team,
+            user=member_client.user,
+            role=TeamMember.Role.CO_LEAD,
+        )
+
+        resp = member_client.post('/api/v1/notifications/announcements/', {
+            'title': '共同负责人公告',
+            'content': '团队日常通知',
+            'status': 'published',
+        }, format='json')
+
+        assert resp.status_code == 201, resp.json()
+        assert extract_data(resp)['author'] == member_client.user.id
+
+    def test_announcement_supports_resource_categories_and_links(
+        self,
+        teacher_client,
+    ):
+        resp = teacher_client.post('/api/v1/notifications/announcements/', {
+            'title': '会议与模板资料',
+            'content': '请先看回放，再使用计划书模板。',
+            'category': 'meeting',
+            'status': 'published',
+            'resource_links': [
+                {
+                    'title': '腾讯会议回放',
+                    'url': 'https://example.com/replay',
+                },
+                {
+                    'title': '计划书模板',
+                    'url': 'https://example.com/template',
+                },
+            ],
+        }, format='json')
+
+        assert resp.status_code == 201, resp.json()
+        data = extract_data(resp)
+        assert data['category_display'] == '会议回放'
+        assert data['resource_links'][0] == {
+            'title': '腾讯会议回放',
+            'url': 'https://example.com/replay',
+        }
+
+    def test_resource_link_rejects_non_web_scheme(self, teacher_client):
+        resp = teacher_client.post('/api/v1/notifications/announcements/', {
+            'title': '危险链接',
+            'content': '链接不应被接受',
+            'resource_links': [
+                {'title': '本地文件', 'url': 'file:///tmp/private.docx'},
+            ],
+        }, format='json')
+
+        assert resp.status_code == 400
+
 
 @pytest.mark.api
 @pytest.mark.django_db

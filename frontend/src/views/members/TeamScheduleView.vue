@@ -1,8 +1,8 @@
 <template>
   <div class="page-container team-schedule-page">
-    <PageHeader title="团队灵活工时" subtitle="查看团队成员最近一次可投入时间与负载状态" />
+    <PageHeader title="团队可投入安排" subtitle="查看成员近期可参与工作的日期与大致容量，不比较实际工时" />
 
-    <section class="schedule-summary" aria-label="团队工时摘要">
+    <section class="schedule-summary" aria-label="团队可投入安排摘要">
       <div class="schedule-summary__intro">
         <span>当前团队</span>
         <strong>{{ scheduleList.length }} 人已填写</strong>
@@ -26,7 +26,7 @@
     <el-alert
       v-if="loadFailed"
       class="load-alert"
-      title="团队工时暂时无法加载"
+      title="团队可投入安排暂时无法加载"
       type="error"
       :closable="false"
       show-icon
@@ -36,10 +36,10 @@
       </template>
     </el-alert>
 
-    <section v-loading="loading" class="schedule-surface" aria-label="团队工时列表">
+    <section v-loading="loading" class="schedule-surface" aria-label="团队可投入安排列表">
       <el-table v-if="!isMobile" :data="scheduleList" table-layout="fixed">
         <template #empty>
-          <EmptyState v-if="!loading" text="暂无团队工时" compact />
+          <EmptyState v-if="!loading" text="暂无团队可投入安排" compact />
         </template>
         <el-table-column prop="user_name" label="成员" min-width="140">
           <template #default="{ row }"><strong class="member-name">{{ row.user_name || '-' }}</strong></template>
@@ -49,8 +49,8 @@
             {{ displayDate(row.period_start) }} - {{ displayDate(row.period_end) }}
           </template>
         </el-table-column>
-        <el-table-column label="可投入工时" width="112" align="right">
-          <template #default="{ row }">{{ scheduleHours(row as ScheduleRecord) }} 小时</template>
+        <el-table-column label="预计投入" width="100" align="right">
+          <template #default="{ row }">{{ totalCapacityDays(row as ScheduleRecord) }} 天</template>
         </el-table-column>
         <el-table-column label="负载" width="90" align="center">
           <template #default="{ row }">
@@ -65,8 +65,8 @@
         <el-table-column label="紧急" width="72" align="center">
           <template #default="{ row }">{{ row.can_urgent ? '可以' : '不可' }}</template>
         </el-table-column>
-        <el-table-column label="备注" min-width="160" show-overflow-tooltip>
-          <template #default="{ row }">{{ scheduleNotes(row as ScheduleRecord) || '-' }}</template>
+        <el-table-column label="可投入日期" min-width="240" show-overflow-tooltip>
+          <template #default="{ row }">{{ availabilitySummary(row as ScheduleRecord) }}</template>
         </el-table-column>
         <el-table-column label="填写时间" width="118">
           <template #default="{ row }">{{ displayDate(scheduleFilledAt(row as ScheduleRecord)) }}</template>
@@ -74,7 +74,7 @@
       </el-table>
 
       <div v-else class="mobile-schedule-list">
-        <EmptyState v-if="!loading && scheduleList.length === 0" text="暂无团队工时" compact />
+        <EmptyState v-if="!loading && scheduleList.length === 0" text="暂无团队可投入安排" compact />
         <article v-for="item in scheduleList" :key="item.id" class="schedule-card">
           <header>
             <div>
@@ -86,8 +86,8 @@
             </el-tag>
           </header>
           <div class="hours-row">
-            <span>可投入工时</span>
-            <strong>{{ scheduleHours(item) }} 小时</strong>
+            <span>预计可投入</span>
+            <strong>{{ totalCapacityDays(item) }} 天</strong>
           </div>
           <dl>
             <div>
@@ -98,9 +98,9 @@
               <dt>紧急任务</dt>
               <dd>{{ item.can_urgent ? '可以' : '不可' }}</dd>
             </div>
-            <div v-if="scheduleNotes(item)" class="schedule-card__notes">
-              <dt>备注</dt>
-              <dd>{{ scheduleNotes(item) }}</dd>
+            <div class="schedule-card__notes">
+              <dt>日期安排</dt>
+              <dd>{{ availabilitySummary(item) }}</dd>
             </div>
           </dl>
           <footer>填写于 {{ displayDate(scheduleFilledAt(item)) }}</footer>
@@ -115,7 +115,7 @@ import { computed, onMounted, ref } from 'vue'
 import { getAllLatestSchedules } from '@/api/members'
 import { formatDate } from '@/utils/format'
 import { useDevice } from '@/composables/useDevice'
-import type { FlexibleWorkSchedule } from '@/types'
+import type { AvailabilityWindow, FlexibleWorkSchedule } from '@/types'
 import EmptyState from '@/components/EmptyState.vue'
 import PageHeader from '@/components/PageHeader.vue'
 
@@ -128,19 +128,36 @@ const scheduleList = ref<ScheduleRecord[]>([])
 const saturatedCount = computed(() => scheduleList.value.filter((item) => item.is_saturated).length)
 const urgentCount = computed(() => scheduleList.value.filter((item) => item.can_urgent).length)
 const availableCount = computed(
-  () => scheduleList.value.filter((item) => !item.is_saturated && Number(scheduleHours(item)) > 0).length,
+  () => scheduleList.value.filter((item) => !item.is_saturated && Number(totalCapacityDays(item)) > 0).length,
 )
 
 function displayDate(value?: string | null): string {
   return value ? formatDate(value) : '-'
 }
 
-function scheduleHours(item: ScheduleRecord): number | string {
-  return item.work_hours ?? item.available_hours ?? '-'
+function availabilityWindows(item: ScheduleRecord): AvailabilityWindow[] {
+  const windows = item.detail?.availability_windows
+  return Array.isArray(windows) ? windows : []
 }
 
-function scheduleNotes(item: ScheduleRecord): string {
-  return item.notes ?? item.remark ?? ''
+function totalCapacityDays(item: ScheduleRecord): number | string {
+  const windows = availabilityWindows(item)
+  if (windows.length) {
+    return windows.reduce((sum, window) => sum + Number(window.capacity_days || 0), 0)
+  }
+  const legacyHours = Number(item.work_hours ?? item.available_hours)
+  return Number.isFinite(legacyHours) ? Number((legacyHours / 8).toFixed(1)) : '-'
+}
+
+function availabilitySummary(item: ScheduleRecord): string {
+  const windows = availabilityWindows(item)
+  if (!windows.length) return '旧记录未填写具体日期'
+  return windows.map((window) => {
+    const range = window.start_date === window.end_date
+      ? displayDate(window.start_date)
+      : `${displayDate(window.start_date)} 至 ${displayDate(window.end_date)}`
+    return `${range}（约 ${window.capacity_days} 天）${window.note ? `：${window.note}` : ''}`
+  }).join('；')
 }
 
 function scheduleFilledAt(item: ScheduleRecord): string | undefined {

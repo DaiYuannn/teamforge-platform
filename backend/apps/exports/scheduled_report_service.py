@@ -345,6 +345,94 @@ def _recipient_snapshot(schedule: ScheduledReport) -> list[dict]:
     ]
 
 
+def report_visible_project_ids(report, user) -> set[int]:
+    """返回报表按当前筛选条件会读取到的项目集合。"""
+    from common.project_access import scope_project_queryset
+
+    config = report.config or {}
+    data_source = config.get('data_source', 'project')
+    filters = config.get('filters', {}) or {}
+
+    if data_source == 'project':
+        from apps.projects.models import Project
+
+        queryset = scope_project_queryset(
+            Project.objects.all(),
+            user,
+            project_lookup='',
+        )
+        if filters.get('status'):
+            queryset = queryset.filter(status=filters['status'])
+        return set(queryset.values_list('id', flat=True))
+
+    model = None
+    if data_source == 'task':
+        from apps.tasks.models import Task
+
+        model = Task
+    elif data_source == 'finance':
+        from apps.finance.models import FinanceExpense
+
+        model = FinanceExpense
+    elif data_source == 'competition':
+        from apps.competitions.models import Competition
+
+        model = Competition
+    if model is None:
+        return set()
+
+    queryset = scope_project_queryset(
+        model.objects.all(),
+        user,
+        project_lookup='project',
+    )
+    if filters.get('project_id'):
+        queryset = queryset.filter(project_id=filters['project_id'])
+    if data_source == 'task' and filters.get('status'):
+        queryset = queryset.filter(status=filters['status'])
+    elif data_source == 'finance' and filters.get('category'):
+        queryset = queryset.filter(category=filters['category'])
+    elif data_source == 'competition' and filters.get('level'):
+        queryset = queryset.filter(level=filters['level'])
+    return set(queryset.values_list('project_id', flat=True))
+
+
+def report_recipient_scope_error(report, creator, recipients) -> str:
+    """确保接收人既属于允许的组织范围，也能看到报表涉及的每个项目。"""
+    from apps.projects.models import Project
+    from apps.users.models import User
+    from common.project_access import scope_organization_users, scope_project_queryset
+
+    recipients = list(recipients)
+    if any(not _is_internal_user(recipient) for recipient in recipients):
+        return '接收人必须是在队或暂离的内部成员'
+
+    recipient_ids = {recipient.pk for recipient in recipients}
+    organization_recipient_ids = set(
+        scope_organization_users(
+            User.objects.filter(pk__in=recipient_ids),
+            creator,
+        ).values_list('pk', flat=True)
+    )
+    if recipient_ids - organization_recipient_ids:
+        return '接收人必须与计划创建人属于同一团队组织'
+
+    report_project_ids = report_visible_project_ids(report, creator)
+    if not report_project_ids:
+        return ''
+    for recipient in recipients:
+        visible_project_ids = set(
+            scope_project_queryset(
+                Project.objects.filter(pk__in=report_project_ids),
+                recipient,
+                project_lookup='',
+            ).values_list('pk', flat=True)
+        )
+        if report_project_ids - visible_project_ids:
+            return f'接收人“{recipient.name}”无权查看报表涉及的全部项目'
+    return ''
+
+
 def _positive_seconds(setting_name: str, default: int) -> int:
     try:
         value = int(getattr(settings, setting_name, default))
@@ -373,6 +461,13 @@ def schedule_scope_error(schedule: ScheduledReport) -> str:
         return '计划引用了创建人无权使用的报表'
     if any(not _is_internal_user(user) for user in schedule.recipients.all()):
         return '计划包含外部、离队或已停用接收人'
+    recipient_error = report_recipient_scope_error(
+        schedule.report,
+        creator,
+        schedule.recipients.all(),
+    )
+    if recipient_error:
+        return recipient_error
     return ''
 
 

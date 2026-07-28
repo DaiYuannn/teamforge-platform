@@ -65,6 +65,13 @@ class IntellectualPropertyApplication(models.Model):
         verbose_name='关联项目',
         null=True, blank=True,
     )
+    related_projects = models.ManyToManyField(
+        Project,
+        through='IPApplicationProjectLink',
+        related_name='linked_ip_applications',
+        verbose_name='关联项目',
+        blank=True,
+    )
     # 当前状态
     status = models.CharField(
         '当前状态',
@@ -124,6 +131,7 @@ class IntellectualPropertyApplication(models.Model):
     return_count = models.IntegerField('退回次数', default=0)
     # 当前问题
     current_problem = models.TextField('当前问题', blank=True, default='')
+    status_note = models.TextField('状态说明', blank=True, default='')
     # 最终证书文件
     final_certificate_file = models.ForeignKey(
         FileAsset,
@@ -155,6 +163,132 @@ class IntellectualPropertyApplication(models.Model):
 
     def __str__(self):
         return f'{self.application_code} - {self.title}'
+
+
+class IPApplicationProjectLink(models.Model):
+    """一个成果可来源于或复用于多个项目。"""
+
+    class RelationType(models.TextChoices):
+        PRIMARY = 'primary', '主项目'
+        SOURCE = 'source', '成果来源'
+        USED_BY = 'used_by', '成果复用'
+
+    application = models.ForeignKey(
+        IntellectualPropertyApplication,
+        on_delete=models.CASCADE,
+        related_name='project_links',
+        verbose_name='知识产权申请',
+    )
+    project = models.ForeignKey(
+        Project,
+        on_delete=models.CASCADE,
+        related_name='ip_application_links',
+        verbose_name='关联项目',
+    )
+    relation_type = models.CharField(
+        '关联类型',
+        max_length=20,
+        choices=RelationType.choices,
+        default=RelationType.USED_BY,
+    )
+    note = models.TextField('关联说明', blank=True, default='')
+    created_at = models.DateTimeField('关联时间', auto_now_add=True)
+
+    class Meta:
+        db_table = 'ip_application_project_links'
+        verbose_name = '知识产权关联项目'
+        verbose_name_plural = verbose_name
+        constraints = [
+            models.UniqueConstraint(
+                fields=('application', 'project'),
+                name='uniq_ip_application_project',
+            ),
+            models.UniqueConstraint(
+                fields=('application',),
+                condition=models.Q(relation_type='primary'),
+                name='uniq_primary_project_per_ip_application',
+            ),
+        ]
+
+
+class IPApplicationCandidate(models.Model):
+    """拟申报/实际申报名单；不保存身份证等敏感明文。"""
+
+    class LegalRole(models.TextChoices):
+        INVENTOR = 'inventor', '发明人'
+        AUTHOR = 'author', '著作权人/作者'
+        APPLICANT = 'applicant', '申请人'
+        OTHER = 'other', '其他申报身份'
+
+    class CandidateStatus(models.TextChoices):
+        PROPOSED = 'proposed', '拟申报'
+        IDENTITY_PENDING = 'identity_pending', '待身份核验'
+        CONFIRMED = 'confirmed', '已确认'
+        SUBMITTED = 'submitted', '已正式提交'
+        WITHDRAWN = 'withdrawn', '已撤出'
+
+    class IdentityCheckStatus(models.TextChoices):
+        PENDING = 'pending', '待核验'
+        MATCHED = 'matched', '姓名证件一致'
+        MISMATCHED = 'mismatched', '姓名证件不一致'
+        NOT_REQUIRED = 'not_required', '无需核验'
+
+    application = models.ForeignKey(
+        IntellectualPropertyApplication,
+        on_delete=models.CASCADE,
+        related_name='candidates',
+        verbose_name='知识产权申请',
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name='ip_candidate_records',
+        verbose_name='拟申报成员',
+    )
+    legal_role = models.CharField(
+        '申报身份',
+        max_length=20,
+        choices=LegalRole.choices,
+        default=LegalRole.INVENTOR,
+    )
+    planned_order = models.PositiveIntegerField('拟署名顺序', default=1)
+    status = models.CharField(
+        '名单状态',
+        max_length=30,
+        choices=CandidateStatus.choices,
+        default=CandidateStatus.PROPOSED,
+        db_index=True,
+    )
+    identity_check_status = models.CharField(
+        '身份核验状态',
+        max_length=20,
+        choices=IdentityCheckStatus.choices,
+        default=IdentityCheckStatus.PENDING,
+    )
+    checked_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        related_name='checked_ip_candidates',
+        verbose_name='核验人',
+        null=True,
+        blank=True,
+    )
+    checked_at = models.DateTimeField('核验时间', null=True, blank=True)
+    note = models.TextField('说明', blank=True, default='')
+    created_at = models.DateTimeField('创建时间', auto_now_add=True)
+    updated_at = models.DateTimeField('更新时间', auto_now=True)
+
+    class Meta:
+        db_table = 'ip_application_candidates'
+        verbose_name = '知识产权拟申报名单'
+        verbose_name_plural = verbose_name
+        ordering = ['planned_order', 'id']
+        constraints = [
+            models.UniqueConstraint(
+                fields=('application', 'user', 'legal_role'),
+                name='uniq_ip_candidate_legal_role',
+            ),
+        ]
 
 
 class IPApplicationContributor(models.Model):

@@ -237,7 +237,7 @@
                 <el-table-column prop="level" label="级别" width="90">
                   <template #default="{ row }">
                     <el-tag :type="FILE_LEVEL_MAP[row.level]?.tagType as any" size="small" effect="plain">
-                      {{ row.level_display || FILE_LEVEL_MAP[row.level]?.label || row.level }}
+                      {{ FILE_LEVEL_MAP[row.level]?.label || row.level_display || row.level }}
                     </el-tag>
                   </template>
                 </el-table-column>
@@ -287,7 +287,7 @@
                     <div><h3>{{ item.name }}</h3><span>{{ item.content_type || '未知类型' }}</span></div>
                   </div>
                   <el-tag :type="FILE_LEVEL_MAP[item.level]?.tagType as any" size="small" effect="plain">
-                    {{ item.level_display || FILE_LEVEL_MAP[item.level]?.label || item.level }}
+                    {{ FILE_LEVEL_MAP[item.level]?.label || item.level_display || item.level }}
                   </el-tag>
                 </div>
                 <div v-if="item.tags?.length" class="file-tags mobile-tags">
@@ -432,10 +432,13 @@
         </el-form-item>
         <el-form-item label="访问级别" required>
           <el-radio-group v-model="uploadForm.level">
-            <el-radio-button value="public">公开</el-radio-button>
-            <el-radio-button value="internal">内部</el-radio-button>
-            <el-radio-button value="sensitive">敏感</el-radio-button>
+            <el-radio-button value="public">全实践团队</el-radio-button>
+            <el-radio-button value="internal">本项目成员</el-radio-button>
+            <el-radio-button value="sensitive">敏感审批</el-radio-button>
           </el-radio-group>
+          <p class="form-help">
+            “全实践团队”仍需登录；互联网公开只通过公开门户或单独创建的分享链接。
+          </p>
         </el-form-item>
         <el-form-item label="文件" required>
           <el-upload
@@ -1387,6 +1390,14 @@ onUnmounted(releasePreviewUrl)
 </script>
 
 <style lang="scss" scoped>
+.form-help {
+  width: 100%;
+  margin: 6px 0 0;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .file-list-page {
   padding-bottom: 32px;
 }

@@ -36,7 +36,7 @@ class TestSensitiveDataAPI:
 
     def test_sensitive_request_create(self, member_client, make_sensitive_data):
         """P03: 创建敏感资料访问申请"""
-        sd = make_sensitive_data()
+        sd = make_sensitive_data(uploader=member_client.user)
         resp = member_client.post('/api/v1/sensitive/requests/', {
             'sensitive_data': sd.id,
             'usage_scenario': '项目需要查看身份证号',
@@ -208,7 +208,7 @@ class TestSensitiveDataAPI:
         assert request_obj.status == SensitiveAccessRequest.Status.PENDING
         assert request_obj.approver_id is None
 
-    @pytest.mark.parametrize('role', ['sens_approver', 'teacher', 'sys_admin'])
+    @pytest.mark.parametrize('role', ['sens_approver'])
     def test_pending_approve_roles_share_queue_but_exclude_own_requests(
         self,
         role,

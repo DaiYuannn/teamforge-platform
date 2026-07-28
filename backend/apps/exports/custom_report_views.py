@@ -10,6 +10,7 @@ from rest_framework.decorators import action
 from rest_framework.viewsets import ModelViewSet
 
 from common.permissions import IsInternalTeamMember, user_has_custom_permission
+from common.project_access import scope_project_queryset
 from common.response import error_response, success_response
 from .custom_report_models import CustomReport
 from .custom_report_serializers import (
@@ -21,6 +22,7 @@ from .scheduled_report_models import ScheduledReport
 from .scheduled_report_service import (
     compute_next_run,
     execute_scheduled_report,
+    report_recipient_scope_error,
     schedule_scope_error,
 )
 
@@ -134,7 +136,11 @@ def _generate_report_data(report, *, user):
     if data_source == 'task':
         from apps.tasks.models import Task
 
-        qs = Task.objects.all()
+        qs = scope_project_queryset(
+            Task.objects.all(),
+            user,
+            project_lookup='project',
+        )
         if filters.get('project_id'):
             qs = qs.filter(project_id=filters['project_id'])
         if filters.get('status'):
@@ -171,7 +177,11 @@ def _generate_report_data(report, *, user):
     elif data_source == 'finance':
         from apps.finance.models import FinanceExpense
 
-        qs = FinanceExpense.objects.all()
+        qs = scope_project_queryset(
+            FinanceExpense.objects.all(),
+            user,
+            project_lookup='project',
+        )
         if filters.get('project_id'):
             qs = qs.filter(project_id=filters['project_id'])
         if filters.get('category'):
@@ -201,7 +211,11 @@ def _generate_report_data(report, *, user):
     elif data_source == 'competition':
         from apps.competitions.models import Competition
 
-        qs = Competition.objects.all()
+        qs = scope_project_queryset(
+            Competition.objects.all(),
+            user,
+            project_lookup='project',
+        )
         if filters.get('project_id'):
             qs = qs.filter(project_id=filters['project_id'])
         if filters.get('level'):
@@ -226,7 +240,11 @@ def _generate_report_data(report, *, user):
     elif data_source == 'project':
         from apps.projects.models import Project
 
-        qs = Project.objects.all()
+        qs = scope_project_queryset(
+            Project.objects.all(),
+            user,
+            project_lookup='',
+        )
         if filters.get('status'):
             qs = qs.filter(status=filters['status'])
         trend_queryset = qs
@@ -434,6 +452,18 @@ class ScheduledReportViewSet(ModelViewSet):
     )
     def download_execution(self, request, pk=None, execution_id=None):
         schedule = self.get_object()
+        creator = schedule.created_by or schedule.report.created_by
+        recipient_error = report_recipient_scope_error(
+            schedule.report,
+            creator,
+            [request.user],
+        )
+        if recipient_error:
+            return error_response(
+                message='当前账号已无权下载该报表',
+                code=1003,
+                http_status=status.HTTP_403_FORBIDDEN,
+            )
         execution = schedule.executions.filter(pk=execution_id).first()
         if not execution or not execution.file:
             return error_response(message='报表文件不存在', code=404)

@@ -3,6 +3,15 @@
     <PageHeader title="成员详情" subtitle="团队成员资料、项目参与和成长记录">
       <template #actions>
         <el-button :icon="ArrowLeft" @click="$router.back()">返回</el-button>
+        <el-button
+          v-if="member"
+          type="primary"
+          plain
+          :icon="Lock"
+          @click="openSensitiveCenter"
+        >
+          敏感资料
+        </el-button>
       </template>
     </PageHeader>
 
@@ -44,6 +53,10 @@
 
         <dl class="profile-details">
           <div>
+            <dt>学校</dt>
+            <dd>{{ member?.school || '-' }}</dd>
+          </div>
+          <div>
             <dt>年级</dt>
             <dd>{{ member?.grade || '-' }}</dd>
           </div>
@@ -58,6 +71,10 @@
           <div>
             <dt>加入时间</dt>
             <dd>{{ displayDate(member?.team_joined_at || member?.date_joined) }}</dd>
+          </div>
+          <div>
+            <dt>所属小组</dt>
+            <dd>{{ teamMembershipText }}</dd>
           </div>
           <div v-if="member?.team_left_at">
             <dt>离队时间</dt>
@@ -189,8 +206,8 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { useRoute } from 'vue-router'
-import { ArrowLeft, Folder } from '@element-plus/icons-vue'
+import { useRoute, useRouter } from 'vue-router'
+import { ArrowLeft, Folder, Lock } from '@element-plus/icons-vue'
 import { getGrowthTimeline, getMember, type GrowthTimelineData } from '@/api/members'
 import { formatDate } from '@/utils/format'
 import { useDevice } from '@/composables/useDevice'
@@ -200,6 +217,7 @@ import EmptyState from '@/components/EmptyState.vue'
 import PageHeader from '@/components/PageHeader.vue'
 
 const route = useRoute()
+const router = useRouter()
 const { isMobile } = useDevice()
 const memberId = Number(route.params.id)
 const loading = ref(false)
@@ -211,6 +229,28 @@ const timelineData = ref<GrowthTimelineData | null>(null)
 const memberName = computed(
   () => member.value?.name || member.value?.user_name || member.value?.username || '成员',
 )
+const teamMembershipText = computed(() => {
+  const memberships = member.value?.team_memberships || []
+  return memberships.length
+    ? memberships.map((item) => `${item.team_name}（${item.role_display}）`).join('、')
+    : '未分组'
+})
+
+function openSensitiveCenter(): void {
+  if (!member.value) return
+  const firstActiveTeam = member.value.team_memberships?.find(
+    (item) => item.status === 'active',
+  )
+  void router.push({
+    name: 'SensitiveCenter',
+    query: {
+      tab: 'my-data',
+      subject_user: String(member.value.id),
+      subject_name: memberName.value,
+      ...(firstActiveTeam ? { team: String(firstActiveTeam.team_id) } : {}),
+    },
+  })
+}
 
 const EVENT_TYPE_LABEL: Record<string, string> = {
   contribution: '贡献',

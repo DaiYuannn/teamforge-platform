@@ -6,6 +6,7 @@ import type {
   SensitiveAccessRequestCreateParams,
   SensitiveAccessRequestReviewParams,
   SensitiveData,
+  SensitiveDataCreateParams,
   SensitiveDataQueryParams,
 } from '@/types'
 
@@ -24,7 +25,7 @@ export const getSensitiveData = (
 
 /** 创建敏感资料 */
 export const createSensitiveData = (
-  data: Record<string, unknown>,
+  data: SensitiveDataCreateParams,
 ): Promise<SensitiveData> => post(`${BASE}/data/`, data)
 
 /** 获取我的敏感资料 */

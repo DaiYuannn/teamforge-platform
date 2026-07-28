@@ -111,9 +111,17 @@ class TestCompetitionFormContract:
 @pytest.mark.django_db
 class TestContributionProofUploadContract:
     def test_proof_upload_creates_internal_file_in_same_project(
-        self, api_client, make_project,
+        self, api_client, make_project, make_user,
     ):
+        from apps.contributions.models import ProjectContributionReviewer
+
         project = make_project()
+        reviewer = make_user(email='proof-reviewer@example.com')
+        ProjectContributionReviewer.objects.create(
+            project=project,
+            user=reviewer,
+            is_independent=True,
+        )
         upload = SimpleUploadedFile(
             'contribution-proof.txt',
             b'proof content',

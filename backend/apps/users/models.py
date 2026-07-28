@@ -59,6 +59,8 @@ class User(AbstractUser):
     grade = models.CharField('年级', max_length=50, blank=True, default='')
     # 专业
     major = models.CharField('专业', max_length=100, blank=True, default='')
+    # 学校
+    school = models.CharField('学校', max_length=150, blank=True, default='')
     membership_status = models.CharField(
         '成员状态',
         max_length=20,

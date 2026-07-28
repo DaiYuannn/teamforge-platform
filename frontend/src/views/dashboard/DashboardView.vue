@@ -272,16 +272,16 @@
           <el-tab-pane label="经费" name="finance">
             <div class="tab-action"><el-button link type="primary" @click="goTo('/finance')">查看经费明细<el-icon><ArrowRight /></el-icon></el-button></div>
             <dl class="finance-summary">
-              <div><dt>总经费</dt><dd>{{ formatMoneyWithComma(dashboardData?.finance_overview?.total_income) }}</dd></div>
-              <div><dt>已使用</dt><dd>{{ formatMoneyWithComma(dashboardData?.finance_overview?.total_used) }}</dd></div>
-              <div><dt>剩余</dt><dd>{{ formatMoneyWithComma(dashboardData?.finance_overview?.total_remaining) }}</dd></div>
+              <div><dt>核定上限</dt><dd>{{ formatMoneyWithComma(dashboardData?.finance_overview?.total_planned ?? dashboardData?.finance_overview?.total_income) }}</dd></div>
+              <div><dt>已发生</dt><dd>{{ formatMoneyWithComma(dashboardData?.finance_overview?.total_committed ?? dashboardData?.finance_overview?.total_used) }}</dd></div>
+              <div><dt>可用额度</dt><dd>{{ formatMoneyWithComma(dashboardData?.finance_overview?.total_available ?? dashboardData?.finance_overview?.total_remaining) }}</dd></div>
             </dl>
             <template v-if="financeTop5.length">
               <el-table v-if="!isMobile" :data="financeTop5" size="small" class="finance-table">
                 <el-table-column prop="project_name" label="项目" min-width="150" show-overflow-tooltip />
                 <el-table-column label="预算" min-width="120" align="right"><template #default="{ row }">{{ formatMoneyWithComma(row.budget) }}</template></el-table-column>
-                <el-table-column label="已使用" min-width="120" align="right"><template #default="{ row }">{{ formatMoneyWithComma(row.expense) }}</template></el-table-column>
-                <el-table-column label="剩余" min-width="120" align="right"><template #default="{ row }"><span :class="{ danger: row.remaining < 0 }">{{ formatMoneyWithComma(row.remaining) }}</span></template></el-table-column>
+                <el-table-column label="已发生" min-width="120" align="right"><template #default="{ row }">{{ formatMoneyWithComma(row.expense) }}</template></el-table-column>
+                <el-table-column label="可用额度" min-width="120" align="right"><template #default="{ row }"><span :class="{ danger: row.remaining < 0 }">{{ formatMoneyWithComma(row.remaining) }}</span></template></el-table-column>
                 <el-table-column label="状态" width="96" align="center"><template #default="{ row }"><el-tag size="small" :type="financeTagType(row)">{{ financeStatus(row) }}</el-tag></template></el-table-column>
               </el-table>
               <div v-else class="mobile-finance-list">
@@ -289,8 +289,8 @@
                   <header><strong>{{ item.project_name || '未命名项目' }}</strong><el-tag size="small" :type="financeTagType(item)">{{ financeStatus(item) }}</el-tag></header>
                   <dl>
                     <div><dt>预算</dt><dd>{{ formatMoneyWithComma(item.budget) }}</dd></div>
-                    <div><dt>已使用</dt><dd>{{ formatMoneyWithComma(item.expense) }}</dd></div>
-                    <div><dt>剩余</dt><dd :class="{ danger: item.remaining < 0 }">{{ formatMoneyWithComma(item.remaining) }}</dd></div>
+                    <div><dt>已发生</dt><dd>{{ formatMoneyWithComma(item.expense) }}</dd></div>
+                    <div><dt>可用额度</dt><dd :class="{ danger: item.remaining < 0 }">{{ formatMoneyWithComma(item.remaining) }}</dd></div>
                   </dl>
                 </div>
               </div>
@@ -444,6 +444,8 @@ const todoLabels: Record<string, string> = {
   approval: '敏感审批',
   contribution_review: '贡献审核',
   ip_todo: '知识产权',
+  finance_review: '报销审核',
+  finance_payment: '待登记打款',
 }
 const riskLabels: Record<string, string> = { stale_project: '项目停滞', overdue_task: '任务逾期', upcoming_competition: '比赛临近' }
 const chartPrimaryColor = computed(() => userStore.primaryColor)
@@ -472,7 +474,7 @@ const staleProjectCount = computed(() => new Set(riskItems.value.filter((item) =
 const healthyActiveProjectCount = computed(() => Math.max(0, activeProjectCount.value - staleProjectCount.value))
 const projectHealthRate = computed(() => activeProjectCount.value ? Math.round(healthyActiveProjectCount.value / activeProjectCount.value * 100) : 0)
 const projectHealthText = computed(() => activeProjectCount.value ? `${healthyActiveProjectCount.value} / ${activeProjectCount.value} 个项目近 11 日有更新` : '暂无进行中项目')
-const pendingApprovalCount = computed(() => myTodos.value.filter((todo) => ['approval', 'contribution_review', 'ip_todo'].includes(todo.type)).length)
+const pendingApprovalCount = computed(() => myTodos.value.filter((todo) => ['approval', 'contribution_review', 'ip_todo', 'finance_review', 'finance_payment'].includes(todo.type)).length)
 const todayTodos = computed(() => [...myTodos.value].sort((a, b) => dateValue(a.due_date) - dateValue(b.due_date)).slice(0, 5))
 const todayTodoCount = computed(() => myTodos.value.length)
 const ipTodoCount = computed(() => myTodos.value.filter((todo) => todo.type === 'ip_todo').length)
@@ -485,8 +487,10 @@ const signalItems = computed(() => [
 
 function toAmount(value: number | string | null | undefined): number { const numberValue = Number(value); return Number.isFinite(numberValue) ? numberValue : 0 }
 const financeTop5 = computed(() => (dashboardData.value?.finance_overview?.project_finance || []).slice(0, 5).map((item: any) => ({
-  project_name: item.project_name, budget: toAmount(item.bonus_amount) + toAmount(item.other_income),
-  expense: toAmount(item.used_amount), remaining: toAmount(item.remaining_amount),
+  project_name: item.project_name,
+  budget: toAmount(item.budget_basis ?? (toAmount(item.bonus_amount) + toAmount(item.other_income))),
+  expense: toAmount(item.committed_amount ?? item.used_amount),
+  remaining: toAmount(item.available_amount ?? item.remaining_amount),
 })))
 const competitionEvents = computed<CompetitionEvent[]>(() => {
   const direct = (dashboardData.value?.calendar_events || []).filter((event: any) => event.type === 'competition').map((event: any) => ({ id: event.id, title: event.title, description: event.description, start: event.start }))
@@ -512,8 +516,8 @@ function isToday(value: string | null | undefined): boolean { return dateKey(val
 function dateValue(value: string | null | undefined): number { const parsed = value ? new Date(value).getTime() : NaN; return Number.isNaN(parsed) ? Number.MAX_SAFE_INTEGER : parsed }
 function todoDeadlineText(value: string | null | undefined): string { if (!value) return '无截止时间'; if (isToday(value)) return '今天'; return dateValue(value) < Date.now() ? `已逾期 · ${formatDate(value)}` : formatDate(value) }
 function todoTypeLabel(type: string): string { return todoLabels[type] || type }
-function todoTagType(type: string): any { return ({ overdue_task: 'danger', approval: 'warning', contribution_review: 'success', ip_todo: 'warning', task: 'primary' } as Record<string, string>)[type] || 'info' }
-function todoTone(type: string): string { if (type === 'overdue_task') return 'danger'; if (['approval', 'ip_todo'].includes(type)) return 'warning'; if (type === 'contribution_review') return 'success'; return 'primary' }
+function todoTagType(type: string): any { return ({ overdue_task: 'danger', approval: 'warning', contribution_review: 'success', ip_todo: 'warning', finance_review: 'warning', finance_payment: 'primary', task: 'primary' } as Record<string, string>)[type] || 'info' }
+function todoTone(type: string): string { if (type === 'overdue_task') return 'danger'; if (['approval', 'ip_todo', 'finance_review'].includes(type)) return 'warning'; if (type === 'contribution_review') return 'success'; return 'primary' }
 function riskTypeLabel(type: string): string { return riskLabels[type] || '提醒' }
 function riskTagType(type: string): any { return type === 'overdue_task' ? 'danger' : ['stale_project', 'upcoming_competition'].includes(type) ? 'warning' : 'info' }
 function riskTone(type: string): string { return type === 'overdue_task' ? 'danger' : ['stale_project', 'upcoming_competition'].includes(type) ? 'warning' : 'neutral' }

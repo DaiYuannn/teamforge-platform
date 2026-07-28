@@ -58,6 +58,28 @@
         </div>
       </section>
 
+      <section class="detail-section">
+        <h3>负责人和实际参赛名单</h3>
+        <div v-if="participants.length" class="participant-list">
+          <div
+            v-for="participant in participants"
+            :key="participant.id"
+            class="participant-item"
+            :class="{ 'is-withdrawn': participant.participation_status === 'withdrawn' }"
+          >
+            <div>
+              <strong>{{ participant.user_detail?.name || `成员 ${participant.user}` }}</strong>
+              <span>{{ participant.role_display || participantRoleLabel(participant.role) }}</span>
+            </div>
+            <p>{{ participant.responsibility || '暂未填写具体分工' }}</p>
+            <el-tag size="small" effect="plain">
+              {{ participant.participation_status_display || '已确认' }}
+            </el-tag>
+          </div>
+        </div>
+        <el-empty v-else :image-size="64" description="尚未登记实际参赛成员" />
+      </section>
+
       <section v-if="competition.not_promoted_reason" class="detail-section">
         <h3>未晋级原因</h3>
         <p class="detail-copy">{{ competition.not_promoted_reason }}</p>
@@ -81,6 +103,9 @@
     </template>
 
     <template #footer>
+      <el-button v-if="canManage && competition" type="primary" @click="emit('edit', competition)">
+        编辑比赛与名单
+      </el-button>
       <el-button @click="dialogVisible = false">关闭</el-button>
     </template>
   </el-dialog>
@@ -103,10 +128,12 @@ import type { Competition } from '@/types'
 const props = defineProps<{
   visible: boolean
   competition: Competition | null
+  canManage?: boolean
 }>()
 
 const emit = defineEmits<{
   (event: 'update:visible', value: boolean): void
+  (event: 'edit', value: Competition): void
 }>()
 
 const { isMobile } = useDevice()
@@ -132,6 +159,16 @@ const milestones = computed(() => {
     { key: 'result_date', label: '结果公布', value: value.result_date },
   ]
 })
+
+const participants = computed(() => props.competition?.participants || [])
+
+function participantRoleLabel(role: string): string {
+  return {
+    leader: '比赛负责人',
+    member: '参赛成员',
+    advisor: '指导老师',
+  }[role] || role
+}
 
 function displayDate(value?: string | null): string {
   return value ? formatDate(value) : '待确定'
@@ -222,6 +259,48 @@ function displayDateTime(value?: string | null): string {
   }
 }
 
+.participant-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.participant-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px 12px;
+  padding: 12px;
+  background: var(--color-surface-subtle);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-sm);
+
+  > div {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+
+  strong {
+    color: var(--color-text);
+    font-size: 13px;
+  }
+
+  span,
+  p {
+    color: var(--color-text-muted);
+    font-size: 12px;
+  }
+
+  p {
+    grid-column: 1 / -1;
+    margin: 0;
+  }
+}
+
+.participant-item.is-withdrawn {
+  opacity: 0.68;
+}
+
 .narrative-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -275,6 +354,10 @@ function displayDateTime(value?: string | null): string {
   }
 
   .narrative-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .participant-list {
     grid-template-columns: minmax(0, 1fr);
   }
 

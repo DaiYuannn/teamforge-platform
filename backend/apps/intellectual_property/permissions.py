@@ -6,6 +6,7 @@ from django.db.models import Q
 from rest_framework.permissions import BasePermission, SAFE_METHODS
 
 from common.project_access import is_exited_member, is_external_collaborator
+from common.project_access import project_can_manage
 
 
 PRIVILEGED_IP_ROLES = ('sys_admin', 'teacher')
@@ -39,18 +40,29 @@ def _is_project_member(user, application):
     if user.global_role in PRIVILEGED_IP_ROLES:
         return True
     project = getattr(application, 'related_project', None)
-    if project is None:
+    project_ids = set()
+    if project is not None:
+        project_ids.add(project.id)
+    if getattr(application, 'pk', None):
+        project_ids.update(
+            application.project_links.values_list('project_id', flat=True)
+        )
+    if not project_ids:
         return False
     from apps.projects.models import ProjectMember
     active_membership = ProjectMember.objects.filter(
-        project=project,
+        project_id__in=project_ids,
         user=user,
         status=ProjectMember.Status.ACTIVE,
     ).exists()
     if is_external_collaborator(user):
         return active_membership
     # 内部项目负责人或仍在项目中的成员可访问。
-    if project.leader_id == user.id:
+    from apps.projects.models import Project
+    if any(
+        project_can_manage(user, linked_project)
+        for linked_project in Project.objects.filter(id__in=project_ids)
+    ):
         return True
     return active_membership
 
@@ -79,8 +91,14 @@ def accessible_ip_applications(user):
 
     if is_external_collaborator(user):
         return queryset.filter(
-            related_project__members__user=user,
-            related_project__members__status=ProjectMember.Status.ACTIVE,
+            Q(
+                related_project__members__user=user,
+                related_project__members__status=ProjectMember.Status.ACTIVE,
+            )
+            | Q(
+                project_links__project__members__user=user,
+                project_links__project__members__status=ProjectMember.Status.ACTIVE,
+            )
         ).distinct()
 
     return queryset.filter(
@@ -88,6 +106,11 @@ def accessible_ip_applications(user):
         | Q(
             related_project__members__user=user,
             related_project__members__status=ProjectMember.Status.ACTIVE,
+        )
+        | Q(project_links__project__leader=user)
+        | Q(
+            project_links__project__members__user=user,
+            project_links__project__members__status=ProjectMember.Status.ACTIVE,
         )
     ).distinct()
 
@@ -123,8 +146,17 @@ def _request_project(request):
 def _is_application_leader_or_privileged(user, application):
     if user.global_role in PRIVILEGED_IP_ROLES:
         return True
-    project = getattr(application, 'related_project', None)
-    return project is not None and project.leader_id == user.id
+    # 写权限只跟随主项目。成果复用项目的负责人可查看关联成果，
+    # 但不能据此核验身份、改主申请或推进申请流程。
+    primary_project = getattr(application, 'related_project', None)
+    if primary_project is not None:
+        return project_can_manage(user, primary_project)
+    primary_link = application.project_links.select_related('project').filter(
+        relation_type='primary',
+    ).first()
+    return bool(
+        primary_link and project_can_manage(user, primary_link.project)
+    )
 
 
 class IsIPProjectMember(BasePermission):
@@ -178,7 +210,7 @@ class IsProjectLeaderOrTeacherOrAdminForIP(BasePermission):
             if application is not None:
                 return _is_application_leader_or_privileged(request.user, application)
             project = _request_project(request)
-            return project is not None and project.leader_id == request.user.id
+            return project_can_manage(request.user, project)
 
         # 非创建写操作继续执行到对象级权限，避免把项目负责人挡在入口处。
         return True
@@ -226,8 +258,7 @@ class IsMainWriterOrExecutor(BasePermission):
         if application.applicant_executor_id == request.user.id:
             return True
         # 申请关联项目的负责人
-        project = getattr(application, 'related_project', None)
-        if project is not None and project.leader_id == request.user.id:
+        if _is_application_leader_or_privileged(request.user, application):
             return True
         return False
 

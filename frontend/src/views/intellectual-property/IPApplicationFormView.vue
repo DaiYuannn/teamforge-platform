@@ -11,6 +11,14 @@
         <h2>成果档案</h2>
         <p>这些信息将作为后续材料、审核与授权流程的基础。</p>
       </header>
+      <el-alert
+        v-if="!isEdit"
+        class="candidate-maintenance-tip"
+        title="先创建成果档案；创建成功后会进入详情页，由项目负责人维护拟申报姓名、申报身份、署名顺序和实名核验状态。"
+        type="info"
+        :closable="false"
+        show-icon
+      />
       <el-form
         ref="formRef"
         :model="form"
@@ -28,6 +36,31 @@
           <el-col :xs="24" :sm="12">
             <el-form-item label="内部编号" prop="application_code">
               <el-input v-model="form.application_code" placeholder="请输入内部编号" />
+            </el-form-item>
+          </el-col>
+        </el-row>
+
+        <el-row :gutter="20">
+          <el-col :span="24">
+            <el-form-item label="复用 / 来源项目" prop="related_project_ids">
+              <el-select
+                v-model="form.related_project_ids"
+                multiple
+                filterable
+                collapse-tags
+                collapse-tags-tooltip
+                placeholder="可关联多个会使用该成果的项目"
+                :disabled="!canManageRoles"
+                style="width: 100%"
+              >
+                <el-option
+                  v-for="proj in projectList"
+                  :key="proj.id"
+                  :label="proj.name"
+                  :value="proj.id"
+                />
+              </el-select>
+              <span class="field-tip">主项目用于流程归属，其余项目用于标记成果来源或复用关系。</span>
             </el-form-item>
           </el-col>
         </el-row>
@@ -202,6 +235,15 @@
           />
         </el-form-item>
 
+        <el-form-item label="状态说明" prop="status_note">
+          <el-input
+            v-model="form.status_note"
+            type="textarea"
+            :rows="2"
+            placeholder="暂停、延期或终止时必须说明原因"
+          />
+        </el-form-item>
+
         <el-form-item label="成果简介" prop="intro">
           <el-input
             v-model="form.intro"
@@ -231,7 +273,7 @@ import { createIPApplication, updateIPApplication, getIPApplication } from '@/ap
 import { getProject, getProjectMembers, getProjects } from '@/api/projects'
 import { getUsers } from '@/api/users'
 import { IP_TYPE_MAP } from '@/utils/constants'
-import type { Project } from '@/types'
+import type { Project, ProjectMember } from '@/types'
 import type { IPParticipantOption } from '@/types/intellectualProperty'
 import PageHeader from '@/components/PageHeader.vue'
 import { useDevice } from '@/composables/useDevice'
@@ -257,6 +299,7 @@ const teachersLoading = ref(false)
 const projectList = ref<Project[]>([])
 const userList = ref<IPParticipantOption[]>([])
 const teacherList = ref<IPParticipantOption[]>([])
+const projectLeaderOptions = ref<IPParticipantOption[]>([])
 const loadedReviewerOption = ref<IPParticipantOption | null>(null)
 const loadedTeacherOption = ref<IPParticipantOption | null>(null)
 
@@ -270,17 +313,10 @@ const selectedProject = computed(() =>
 )
 const canManageRoles = computed(() =>
   isPrivileged.value
-  || Boolean(selectedProject.value?.leader === userStore.userInfo?.id),
+  || Boolean(selectedProject.value?.can_manage),
 )
 const projectReviewerOptions = computed<IPParticipantOption[]>(() => {
-  const options: IPParticipantOption[] = []
-  const project = selectedProject.value
-  if (project) {
-    options.push({
-      id: project.leader,
-      name: project.leader_name || '项目负责人',
-    })
-  }
+  const options: IPParticipantOption[] = [...projectLeaderOptions.value]
   const loaded = loadedReviewerOption.value
   if (loaded && !options.some((option) => option.id === loaded.id)) {
     options.push({ ...loaded, name: `${loaded.name || loaded.email || '历史审核人'}（历史分配）` })
@@ -294,6 +330,7 @@ const form = reactive({
   application_code: '',
   ip_type: '',
   related_project: null as number | null,
+  related_project_ids: [] as number[],
   main_writer: null as number | null,
   applicant_executor: null as number | null,
   material_manager: null as number | null,
@@ -301,6 +338,7 @@ const form = reactive({
   teacher_confirmer: null as number | null,
   start_date: null as string | null,
   current_problem: '',
+  status_note: '',
   intro: '',
 })
 
@@ -321,13 +359,11 @@ const rules = computed<FormRules>(() => ({
 // 加载项目列表（下拉选项）
 async function loadProjects(): Promise<void> {
   try {
-    const user = userStore.userInfo || await userStore.fetchProfile()
-    const response = await getProjects({
-      page: 1,
-      page_size: 100,
-      ...(isPrivileged.value ? {} : { leader: user.id }),
-    })
-    const projects = [...response.results]
+    if (!userStore.userInfo) await userStore.fetchProfile()
+    const response = await getProjects({ page: 1, page_size: 100 })
+    const projects = isPrivileged.value || isEdit.value
+      ? [...response.results]
+      : response.results.filter((project) => project.can_manage)
     const relatedProjectId = form.related_project
     if (
       relatedProjectId
@@ -366,6 +402,7 @@ async function loadParticipantOptions(projectId: number | null): Promise<void> {
   participantsLoading.value = true
   try {
     if (!projectId) {
+      projectLeaderOptions.value = []
       if (!isPrivileged.value) {
         userList.value = []
         return
@@ -378,9 +415,11 @@ async function loadParticipantOptions(projectId: number | null): Promise<void> {
     const project = projectList.value.find((item) => item.id === projectId) || await getProject(projectId)
     const members = await getProjectMembers(projectId)
     userList.value = buildProjectParticipantOptions(project, members)
+    projectLeaderOptions.value = buildProjectLeaderOptions(project, members)
 
   } catch {
     userList.value = []
+    projectLeaderOptions.value = []
   } finally {
     participantsLoading.value = false
   }
@@ -413,9 +452,36 @@ async function handleProjectChange(projectId: number | null): Promise<void> {
   form.main_writer = null
   form.applicant_executor = null
   form.material_manager = null
-  const project = projectList.value.find((item) => item.id === projectId)
-  form.project_reviewer = project?.leader || null
+  if (projectId && !form.related_project_ids.includes(projectId)) {
+    form.related_project_ids.push(projectId)
+  }
   await loadParticipantOptions(projectId)
+  form.project_reviewer = projectLeaderOptions.value[0]?.id || null
+}
+
+function buildProjectLeaderOptions(
+  project: Project,
+  members: readonly ProjectMember[],
+): IPParticipantOption[] {
+  const leaders = new Map<number, IPParticipantOption>()
+  leaders.set(project.leader, {
+    id: project.leader,
+    name: project.leader_name || '项目牵头负责人',
+  })
+  members
+    .filter((member) =>
+      member.role_in_project === 'leader'
+      && (!member.status || member.status === 'active'),
+    )
+    .forEach((member) => {
+      const detail = member.user_detail || {}
+      leaders.set(member.user, {
+        id: member.user,
+        name: detail.name || member.user_name || `成员 ${member.user}`,
+        email: detail.email,
+      })
+    })
+  return Array.from(leaders.values())
 }
 
 // 编辑模式下加载已有数据
@@ -427,6 +493,7 @@ async function loadData(): Promise<void> {
     application_code: res.application_code || '',
     ip_type: res.ip_type || '',
     related_project: res.related_project || null,
+    related_project_ids: res.related_project_ids || (res.related_project ? [res.related_project] : []),
     main_writer: res.main_writer || null,
     applicant_executor: res.applicant_executor || null,
     material_manager: res.material_manager || null,
@@ -434,6 +501,7 @@ async function loadData(): Promise<void> {
     teacher_confirmer: res.teacher_confirmer || null,
     start_date: res.start_date || null,
     current_problem: res.current_problem || '',
+    status_note: res.status_note || '',
     intro: res.intro || '',
   })
   loadedReviewerOption.value = res.project_reviewer_detail
@@ -466,6 +534,7 @@ async function handleSubmit(): Promise<void> {
       if (isEdit.value && !canManageRoles.value) {
         for (const field of [
           'related_project',
+          'related_project_ids',
           'main_writer',
           'applicant_executor',
           'material_manager',
@@ -478,11 +547,15 @@ async function handleSubmit(): Promise<void> {
       if (isEdit.value) {
         await updateIPApplication(editId.value, payload)
         ElMessage.success('申请更新成功')
+        router.push(`/intellectual-property/${editId.value}`)
       } else {
-        await createIPApplication(payload)
-        ElMessage.success('申请创建成功')
+        const created = await createIPApplication(payload)
+        ElMessage.success('申请创建成功，请继续维护拟申报名单')
+        router.push({
+          path: `/intellectual-property/${created.id}`,
+          query: { tab: 'people' },
+        })
       }
-      router.push('/intellectual-property')
     } catch {
       // 错误已由拦截器处理
     } finally {
@@ -541,6 +614,10 @@ onMounted(initialize)
   margin-top: 4px;
   color: var(--color-text-muted);
   font-size: 12px;
+}
+
+.candidate-maintenance-tip {
+  margin: -6px 0 20px;
 }
 
 .form-subsection {

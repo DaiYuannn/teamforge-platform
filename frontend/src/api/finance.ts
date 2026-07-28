@@ -75,6 +75,21 @@ export function getFinanceBudgetByProject(projectId: number): Promise<FinanceBud
   return getAllFinanceBudgets({ project: projectId })
 }
 
+export function createFinanceBudget(data: {
+  project: number
+  planned_amount: number
+  period?: string
+}): Promise<FinanceBudget> {
+  return post<FinanceBudget>('/finance/budgets/', data)
+}
+
+export function updateFinanceBudget(
+  id: number,
+  data: { planned_amount: number; period?: string },
+): Promise<FinanceBudget> {
+  return patch<FinanceBudget>(`/finance/budgets/${id}/`, data)
+}
+
 /** 获取经费支出列表 */
 export function getFinanceExpenses(params: ExpenseQueryParams): Promise<PaginatedResponse<FinanceExpense>> {
   return get<PaginatedResponse<FinanceExpense>>('/finance/expenses/', params)

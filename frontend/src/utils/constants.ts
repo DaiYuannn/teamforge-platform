@@ -149,9 +149,9 @@ export const COMPETITION_STAGE_OPTIONS = [
 
 // 文件级别映射
 export const FILE_LEVEL_MAP: Record<string, { label: string; tagType: string }> = {
-  public: { label: '公开', tagType: 'success' },
-  internal: { label: '内部', tagType: 'warning' },
-  sensitive: { label: '敏感', tagType: 'danger' },
+  public: { label: '全实践团队登录可见', tagType: 'success' },
+  internal: { label: '仅本项目成员', tagType: 'warning' },
+  sensitive: { label: '敏感审批', tagType: 'danger' },
 }
 
 // 导入模块映射
@@ -427,8 +427,10 @@ export const OBJECTION_STATUS_MAP: Record<string, { label: string; tagType: stri
 export const SENSITIVE_DATA_TYPE_MAP: Record<string, { label: string; tagType: string }> = {
   phone: { label: '手机号', tagType: 'primary' },
   id_card: { label: '身份证号', tagType: 'danger' },
+  bank_account: { label: '银行账号', tagType: 'warning' },
   bank_card: { label: '银行卡号', tagType: 'warning' },
   address: { label: '家庭住址', tagType: 'info' },
+  signature: { label: '签名', tagType: 'warning' },
   emergency_contact: { label: '紧急联系人', tagType: 'success' },
   other: { label: '其他', tagType: 'info' },
 }

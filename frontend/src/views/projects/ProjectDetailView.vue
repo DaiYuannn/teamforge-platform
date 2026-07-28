@@ -50,8 +50,8 @@
 
       <div class="summary-grid">
         <div class="summary-metric">
-          <span>负责人</span>
-          <strong>{{ project?.leader_name || '-' }}</strong>
+          <span>项目负责人</span>
+          <strong>{{ project?.leader_names?.join('、') || project?.leader_name || '-' }}</strong>
           <small class="leader-update-copy">{{ leaderUpdateSummary }}</small>
         </div>
         <div class="summary-metric">
@@ -115,7 +115,15 @@
           <el-descriptions :column="descriptionColumns" border>
             <el-descriptions-item label="项目编号">{{ project?.code }}</el-descriptions-item>
             <el-descriptions-item label="项目名称">{{ project?.name }}</el-descriptions-item>
-            <el-descriptions-item label="负责人">{{ project?.leader_name }}</el-descriptions-item>
+            <el-descriptions-item label="项目牵头 / 共同负责人">
+              {{ project?.leader_names?.join('、') || project?.leader_name || '-' }}
+            </el-descriptions-item>
+            <el-descriptions-item label="关联小组">
+              {{ project?.team_names?.join('、') || '未限定小组' }}
+            </el-descriptions-item>
+            <el-descriptions-item label="可见范围">
+              {{ project?.visibility_display || '全团队' }}
+            </el-descriptions-item>
             <el-descriptions-item label="当前阶段">
               <el-tag type="info" effect="plain" size="small">
                 {{ project?.current_stage_display || getStageLabel(project?.current_stage || '') }}
@@ -1078,12 +1086,23 @@ const displayRankings = computed(() =>
 )
 const publicRankings = computed(() => displayRankings.value.filter((item) => item.is_public))
 
-// 是否项目负责人（当前用户为项目 leader）
+// 牵头负责人和项目成员表中的共同负责人拥有同级项目管理权限。
 const isProjectLeader = computed(() => {
-  return userStore.userInfo?.id === project.value?.leader
+  const currentUserId = userStore.userInfo?.id
+  if (!currentUserId) return false
+  if (currentUserId === project.value?.leader) return true
+  return members.value.some(
+    (member) =>
+      member.user === currentUserId
+      && member.role_in_project === 'leader'
+      && member.status !== 'exited',
+  )
 })
 const canManageProjectWorkflow = computed(() =>
-  isProjectLeader.value || userStore.isTeacher || userStore.isAdmin
+  Boolean(project.value?.can_manage)
+  || isProjectLeader.value
+  || userStore.isTeacher
+  || userStore.isAdmin
 )
 const leaderUpdateCadence = computed(() =>
   getLeaderUpdateCadence(

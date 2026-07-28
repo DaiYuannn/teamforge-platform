@@ -9,6 +9,7 @@ from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, extend_sche
 from rest_framework.views import APIView
 
 from common.permissions import IsInternalTeamMember
+from common.project_access import user_can_access_project
 from common.response import error_response
 from .services import ExcelExportService, CsvExportService
 from .word_service import WordExportService
@@ -22,7 +23,10 @@ _TEMPLATE_HEADERS = {
         '项目名称', '项目编号', '负责人邮箱', '负责人ID', '当前阶段', '状态',
         '开始时间', '预计结束', '实际结束', '简介', '优先级',
     ],
-    'members': ['姓名', '邮箱', '手机号', '年级', '专业', '角色', '成员状态', '加入团队日期'],
+    'members': [
+        '姓名', '邮箱', '手机号', '学校', '年级', '专业', '角色',
+        '成员状态', '加入团队日期', '加入小团队编号',
+    ],
     'competitions': ['比赛名称', '项目编号', '级别', '主办单位', '报名日期', '答辩日期', '结果日期', '状态'],
     'finance': ['支出标题', '金额', '项目编号', '支出日期', '类别', '用途', '经办人邮箱'],
     'finance_budget': ['项目编号', '奖金总额', '其他收入', '统计周期'],
@@ -188,17 +192,47 @@ class ExportView(APIView):
         if not export_type:
             return error_response(message='请提供 type 参数指定导出类型', code=1001)
 
+        project = None
+        if project_id not in (None, ''):
+            try:
+                project_id = int(project_id)
+            except (TypeError, ValueError):
+                return error_response(message='project_id 必须是整数', code=1001)
+            from apps.projects.models import Project
+
+            project = Project.objects.filter(pk=project_id).first()
+            if project is None or not user_can_access_project(
+                request.user,
+                project,
+            ):
+                return error_response(message='项目不存在或无权导出', code=1004)
+
+        if ip_id not in (None, ''):
+            try:
+                ip_id = int(ip_id)
+            except (TypeError, ValueError):
+                return error_response(message='ip_id 必须是整数', code=1001)
+            from apps.intellectual_property.permissions import (
+                accessible_ip_applications,
+            )
+
+            if not accessible_ip_applications(request.user).filter(pk=ip_id).exists():
+                return error_response(message='知识产权档案不存在或无权导出', code=1004)
+
         try:
             # ============ Excel 导出 ============
             if fmt == 'xlsx':
                 if export_type == 'projects':
-                    return ExcelExportService.export_projects()
+                    return ExcelExportService.export_projects(user=request.user)
                 elif export_type == 'finance_budget':
-                    return ExcelExportService.export_finance_budget()
+                    return ExcelExportService.export_finance_budget(user=request.user)
                 elif export_type == 'finance_detail':
                     if not project_id:
                         return error_response(message='经费明细导出需提供 project_id', code=1001)
-                    return ExcelExportService.export_finance_detail(project_id)
+                    return ExcelExportService.export_finance_detail(
+                        project_id,
+                        user=request.user,
+                    )
                 elif export_type == 'tasks':
                     return ExcelExportService.export_tasks(
                         project_id,
@@ -208,17 +242,21 @@ class ExportView(APIView):
                 elif export_type == 'contributions':
                     if not project_id:
                         return error_response(message='贡献记录导出需提供 project_id', code=1001)
-                    return ExcelExportService.export_contributions(project_id)
+                    return ExcelExportService.export_contributions(
+                        project_id,
+                        user=request.user,
+                    )
                 elif export_type == 'ip_applications':
-                    return ExcelExportService.export_ip_applications()
+                    return ExcelExportService.export_ip_applications(user=request.user)
                 elif export_type == 'members':
-                    return ExcelExportService.export_members()
+                    return ExcelExportService.export_members(user=request.user)
                 elif export_type == 'competitions':
                     return ExcelExportService.export_competitions(
                         search=request.query_params.get('search', ''),
                         level=request.query_params.get('level', ''),
                         status=request.query_params.get('status', ''),
                         project_id=project_id,
+                        user=request.user,
                     )
 
             # ============ Word 导出 ============
@@ -239,18 +277,26 @@ class ExportView(APIView):
                         return error_response(message='项目报告导出需提供 project_id', code=1001)
                     return PdfExportService.export_project_report(project_id)
                 elif export_type == 'finance_report':
+                    if not project_id:
+                        return error_response(
+                            message='经费报告导出需提供 project_id',
+                            code=1001,
+                        )
                     return PdfExportService.export_finance_report(project_id)
 
             # ============ CSV 导出 ============
             elif fmt == 'csv':
                 if export_type == 'projects':
-                    return CsvExportService.export_projects()
+                    return CsvExportService.export_projects(user=request.user)
                 elif export_type == 'finance_budget':
-                    return CsvExportService.export_finance_budget()
+                    return CsvExportService.export_finance_budget(user=request.user)
                 elif export_type == 'finance_detail':
                     if not project_id:
                         return error_response(message='经费明细导出需提供 project_id', code=1001)
-                    return CsvExportService.export_finance_detail(project_id)
+                    return CsvExportService.export_finance_detail(
+                        project_id,
+                        user=request.user,
+                    )
                 elif export_type == 'tasks':
                     return CsvExportService.export_tasks(
                         project_id,
@@ -260,17 +306,21 @@ class ExportView(APIView):
                 elif export_type == 'contributions':
                     if not project_id:
                         return error_response(message='贡献记录导出需提供 project_id', code=1001)
-                    return CsvExportService.export_contributions(project_id)
+                    return CsvExportService.export_contributions(
+                        project_id,
+                        user=request.user,
+                    )
                 elif export_type == 'ip_applications':
-                    return CsvExportService.export_ip_applications()
+                    return CsvExportService.export_ip_applications(user=request.user)
                 elif export_type == 'members':
-                    return CsvExportService.export_members()
+                    return CsvExportService.export_members(user=request.user)
                 elif export_type == 'competitions':
                     return CsvExportService.export_competitions(
                         search=request.query_params.get('search', ''),
                         level=request.query_params.get('level', ''),
                         status=request.query_params.get('status', ''),
                         project_id=project_id,
+                        user=request.user,
                     )
 
             # 不支持的类型/格式组合
