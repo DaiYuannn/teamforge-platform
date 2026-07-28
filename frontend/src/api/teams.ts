@@ -1,5 +1,5 @@
 import { get, post, patch, del } from './request'
-import type { PaginatedResponse } from '@/types'
+import type { PaginatedResponse, PaginationParams } from '@/types'
 
 export interface Team {
   id: number
@@ -51,8 +51,8 @@ export interface TeamCandidate {
   membership_status: string
 }
 
-export function getTeams(): Promise<PaginatedResponse<Team>> {
-  return get<PaginatedResponse<Team>>('/teams/')
+export function getTeams(params?: PaginationParams): Promise<PaginatedResponse<Team>> {
+  return get<PaginatedResponse<Team>>('/teams/', params)
 }
 
 export function createTeam(data: Partial<Team>): Promise<Team> {

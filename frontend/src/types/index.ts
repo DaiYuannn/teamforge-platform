@@ -155,6 +155,44 @@ export type ProjectStage =
 export type ProjectStatus = 'active' | 'paused' | 'closed'
 export type ProjectVisibility = 'project' | 'teams' | 'organization'
 
+export interface ProjectTeamSummary {
+  id: number
+  name: string
+  team_type: 'organization' | 'squad'
+  team_type_display: string
+  parent_id?: number | null
+  parent_name?: string
+  leader_names: string[]
+}
+
+export interface ProjectCompetitionSummary {
+  id: number
+  name: string
+  status: string
+  status_display: string
+  leader_names: string[]
+  participant_count: number
+  is_awarded: boolean
+  award_level?: string
+}
+
+export interface ProjectMemberWorkSummary {
+  user_id: number
+  name: string
+  project_role: string
+  project_role_display: string
+  is_primary_leader: boolean
+  assigned_task_count: number
+  collaborating_task_count: number
+  active_task_count: number
+  active_task_titles: string[]
+  competition_names: string[]
+  competition_responsibilities: Array<{
+    competition_name: string
+    responsibility: string
+  }>
+}
+
 // 项目
 export interface Project {
   id: number
@@ -164,8 +202,10 @@ export interface Project {
   leader: number
   leader_name?: string
   leader_names?: string[]
+  co_leader_names?: string[]
   teams?: number[]
   team_names?: string[]
+  team_details?: ProjectTeamSummary[]
   visibility?: ProjectVisibility
   visibility_display?: string
   current_stage?: number
@@ -183,6 +223,10 @@ export interface Project {
   member_count?: number
   task_count?: number
   competition_count?: number
+  competition_summaries?: ProjectCompetitionSummary[]
+  member_work_summary?: ProjectMemberWorkSummary[]
+  finance_spending?: number | string | null
+  finance_available?: number | string | null
   finance_balance?: number | string
   can_manage?: boolean
 }
@@ -303,6 +347,11 @@ export interface Competition {
   participants?: CompetitionParticipant[]
   participant_count?: number
   leader_names?: string[]
+  project_leader_names?: string[]
+  project_team_names?: string[]
+  competition_contributions?: CompetitionContributionEvidence[]
+  reusable_contributions?: CompetitionContributionEvidence[]
+  contribution_reuse_note?: string
   can_manage?: boolean
   created_at: string
   updated_at?: string
@@ -320,6 +369,33 @@ export interface CompetitionParticipant {
   responsibility?: string
   joined_at?: string
   updated_at?: string
+}
+
+export interface CompetitionContributionEvidence {
+  id: number
+  project: number
+  project_name?: string
+  user: number
+  user_name?: string
+  contribution_type: ContributionType
+  contribution_type_display?: string
+  content?: string
+  description?: string
+  weight?: number
+  status: string
+  status_display?: string
+  source_type?: 'manual' | 'task' | 'competition' | 'ip' | 'system'
+  source_type_display?: string
+  source_verified?: boolean
+  related_object_id?: number | null
+  origin_competition_name?: string
+  proof_file?: number | null
+  proof_file_name?: string
+  reuse_scope: 'same_project' | 'visible_other_project'
+  reuse_scope_display: string
+  reuse_eligible: boolean
+  reuse_reason: string
+  created_at: string
 }
 
 // 比赛创建/更新参数

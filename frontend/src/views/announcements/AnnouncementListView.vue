@@ -45,6 +45,11 @@
           </template>
         </el-table-column>
         <el-table-column prop="category_display" label="分类" width="120" />
+        <el-table-column label="发布范围" min-width="150">
+          <template #default="{ row }">
+            <el-tag type="info" size="small">{{ scopeLabel(row) }}</el-tag>
+          </template>
+        </el-table-column>
         <el-table-column prop="status_display" label="状态" width="100">
           <template #default="{ row }">
             <el-tag :type="row.status === 'published' ? 'success' : row.status === 'archived' ? 'info' : 'warning'" size="small">
@@ -58,17 +63,19 @@
         </el-table-column>
         <el-table-column v-if="canCreate" label="操作" width="104" align="right" fixed="right">
           <template #default="{ row }">
-            <el-tooltip :content="row.is_pinned ? '取消置顶' : '置顶'" placement="top">
-              <el-button
-                text
-                :icon="row.is_pinned ? Bottom : Top"
-                :aria-label="row.is_pinned ? '取消置顶' : '置顶'"
-                @click="handlePin(row)"
-              />
-            </el-tooltip>
-            <el-tooltip content="删除公告" placement="top">
-              <el-button text type="danger" :icon="Delete" aria-label="删除公告" @click="handleDelete(row)" />
-            </el-tooltip>
+            <template v-if="row.can_manage">
+              <el-tooltip :content="row.is_pinned ? '取消置顶' : '置顶'" placement="top">
+                <el-button
+                  text
+                  :icon="row.is_pinned ? Bottom : Top"
+                  :aria-label="row.is_pinned ? '取消置顶' : '置顶'"
+                  @click="handlePin(row)"
+                />
+              </el-tooltip>
+              <el-tooltip content="删除公告" placement="top">
+                <el-button text type="danger" :icon="Delete" aria-label="删除公告" @click="handleDelete(row)" />
+              </el-tooltip>
+            </template>
           </template>
         </el-table-column>
       </el-table>
@@ -90,10 +97,11 @@
           </div>
           <div class="mobile-meta">
             <span>{{ row.category_display }}</span>
+            <span>{{ scopeLabel(row) }}</span>
             <span>{{ row.author_name || '-' }}</span>
             <time>{{ formatDate(row.published_at) }}</time>
           </div>
-          <div v-if="canCreate" class="mobile-actions">
+          <div v-if="row.can_manage" class="mobile-actions">
             <el-button text :icon="row.is_pinned ? Bottom : Top" @click="handlePin(row)">
               {{ row.is_pinned ? '取消置顶' : '置顶' }}
             </el-button>
@@ -143,6 +151,81 @@
             <el-option label="其他" value="other" />
           </el-select>
         </el-form-item>
+        <el-form-item
+          v-if="organizationOptions.length"
+          label="所属团队"
+          prop="organization"
+        >
+          <el-select
+            v-model="form.organization"
+            placeholder="选择公告所属的实践团队"
+            style="width: 100%"
+            @change="handleOrganizationChange"
+          >
+            <el-option
+              v-for="team in organizationOptions"
+              :key="team.id"
+              :label="team.name"
+              :value="team.id"
+            />
+          </el-select>
+        </el-form-item>
+        <el-alert
+          v-else
+          type="info"
+          :closable="false"
+          title="当前为旧版单团队兼容模式，公告将沿用原有团队范围。"
+          class="legacy-scope-alert"
+        />
+        <el-form-item label="发布范围" prop="audience">
+          <el-select v-model="form.audience" style="width: 100%" @change="handleAudienceChange">
+            <el-option
+              label="全实践团队"
+              value="organization"
+              :disabled="!canPublishOrganization"
+            />
+            <el-option label="指定小团队" value="teams" />
+            <el-option label="指定项目" value="projects" />
+            <el-option
+              label="互联网公开"
+              value="public"
+              :disabled="!canPublishOrganization"
+            />
+          </el-select>
+          <span class="form-tip audience-tip">{{ audienceTip }}</span>
+        </el-form-item>
+        <el-form-item v-if="form.audience === 'teams'" label="目标小团队" prop="target_teams">
+          <el-select
+            v-model="form.target_teams"
+            multiple
+            filterable
+            placeholder="选择一个或多个自己负责的小团队"
+            style="width: 100%"
+          >
+            <el-option
+              v-for="team in squadOptions"
+              :key="team.id"
+              :label="team.name"
+              :value="team.id"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item v-if="form.audience === 'projects'" label="目标项目" prop="target_projects">
+          <el-select
+            v-model="form.target_projects"
+            multiple
+            filterable
+            placeholder="选择一个或多个自己负责的项目"
+            style="width: 100%"
+          >
+            <el-option
+              v-for="project in eligibleProjectOptions"
+              :key="project.id"
+              :label="`${project.name}（${project.code}）`"
+              :value="project.id"
+            />
+          </el-select>
+        </el-form-item>
         <el-form-item label="内容" prop="content">
           <el-input v-model="form.content" type="textarea" :rows="6" placeholder="请输入公告内容" />
         </el-form-item>
@@ -173,10 +256,6 @@
             <el-radio value="published">发布</el-radio>
           </el-radio-group>
         </el-form-item>
-        <el-form-item label="公开">
-          <el-switch v-model="form.is_public" />
-          <span class="form-tip">开启后互联网未登录访客也可见；关闭时仅实践团队登录成员可见。</span>
-        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="showDialog = false">取消</el-button>
@@ -193,6 +272,7 @@
       <template v-if="selectedAnnouncement">
         <div class="detail-meta">
           <el-tag size="small">{{ selectedAnnouncement.category_display }}</el-tag>
+          <el-tag type="info" size="small">{{ scopeLabel(selectedAnnouncement) }}</el-tag>
           <span>{{ selectedAnnouncement.author_name || '-' }}</span>
           <span>{{ formatDate(selectedAnnouncement.published_at || selectedAnnouncement.created_at) }}</span>
         </div>
@@ -221,17 +301,18 @@ import { Bottom, Delete, Plus, Top } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { useUserStore } from '@/stores/user'
 import { get, post, del } from '@/api/request'
-import { getTeams } from '@/api/teams'
+import { getTeams, type Team } from '@/api/teams'
+import { getProjects } from '@/api/projects'
+import type { Project } from '@/types'
 import { formatDate } from '@/utils/format'
 import { useDevice } from '@/composables/useDevice'
 
 const userStore = useUserStore()
 const managesTeam = ref(false)
-const canCreate = computed(() =>
+const hasGlobalAnnouncementCapability = computed(() =>
   userStore.isAdmin
   || userStore.isTeacher
-  || Boolean(userStore.userInfo?.permission_codes?.includes('announcement.manage'))
-  || managesTeam.value,
+  || Boolean(userStore.userInfo?.permission_codes?.includes('announcement.manage')),
 )
 const { isMobile } = useDevice()
 
@@ -243,6 +324,37 @@ const page = ref(1)
 const pageSize = userStore.itemsPerPage
 const total = ref(0)
 const filterCategory = ref('')
+const teamOptions = ref<Team[]>([])
+const projectOptions = ref<Project[]>([])
+const scopeOptionsLoaded = ref(false)
+const affiliatedRootIds = computed(() => {
+  const userId = userStore.userInfo?.id
+  return new Set(
+    teamOptions.value
+      .filter((team) =>
+        Boolean(team.current_user_role)
+        || (userId != null && team.owner === userId),
+      )
+      .map((team) => team.parent || team.id),
+  )
+})
+const organizationOptions = computed(() =>
+  teamOptions.value.filter((team) =>
+    team.team_type === 'organization'
+    && affiliatedRootIds.value.has(team.id),
+  ),
+)
+const canCreate = computed(() =>
+  managesTeam.value
+  || (
+    hasGlobalAnnouncementCapability.value
+    && (
+      !scopeOptionsLoaded.value
+      || teamOptions.value.length === 0
+      || organizationOptions.value.length > 0
+    )
+  ),
+)
 
 const showDialog = ref(false)
 const submitting = ref(false)
@@ -252,13 +364,78 @@ const form = reactive({
   content: '',
   category: 'system',
   status: 'published',
-  is_public: false,
+  audience: 'organization',
+  organization: null as number | null,
+  target_teams: [] as number[],
+  target_projects: [] as number[],
   resource_links: [] as Array<{ title: string; url: string }>,
 })
+const squadOptions = computed(() =>
+  teamOptions.value.filter((team) =>
+    team.team_type === 'squad'
+    && team.parent === form.organization
+    && Boolean(team.can_manage),
+  ),
+)
+const canPublishOrganization = computed(() =>
+  organizationOptions.value.some((team) =>
+    team.id === form.organization
+    && (
+      Boolean(team.can_manage)
+      || userStore.isTeacher
+      || Boolean(userStore.userInfo?.permission_codes?.includes('announcement.manage'))
+    ),
+  ),
+)
+const eligibleProjectOptions = computed(() =>
+  projectOptions.value.filter((project) => {
+    if (!form.organization || !project.team_details?.length) return true
+    return project.team_details.some((team) =>
+      (team.parent_id || team.id) === form.organization,
+    )
+  }),
+)
 const rules: FormRules = {
   title: [{ required: true, message: '请输入标题', trigger: 'blur' }],
   content: [{ required: true, message: '请输入内容', trigger: 'blur' }],
+  organization: [{
+    validator: (_rule, value, callback) => {
+      if (organizationOptions.value.length > 0 && !value) {
+        callback(new Error('请选择所属实践团队'))
+        return
+      }
+      callback()
+    },
+    trigger: 'change',
+  }],
+  audience: [{ required: true, message: '请选择发布范围', trigger: 'change' }],
+  target_teams: [{
+    validator: (_rule, value, callback) => {
+      if (form.audience === 'teams' && (!value || value.length === 0)) {
+        callback(new Error('请选择至少一个目标小团队'))
+        return
+      }
+      callback()
+    },
+    trigger: 'change',
+  }],
+  target_projects: [{
+    validator: (_rule, value, callback) => {
+      if (form.audience === 'projects' && (!value || value.length === 0)) {
+        callback(new Error('请选择至少一个目标项目'))
+        return
+      }
+      callback()
+    },
+    trigger: 'change',
+  }],
 }
+const audienceTip = computed(() => ({
+  organization: '所属实践团队的登录成员可见。',
+  teams: '只有选中的小团队成员可见，其他小团队不会看到。',
+  projects: '只有选中项目的参与成员和项目负责人可见。',
+  public: '发布后互联网未登录访客也可见，请勿包含内部或敏感内容。',
+}[form.audience] || ''))
 
 async function loadData(): Promise<void> {
   loading.value = true
@@ -276,19 +453,67 @@ async function loadData(): Promise<void> {
 }
 
 async function loadManagePermission(): Promise<void> {
-  if (
-    userStore.isAdmin
-    || userStore.isTeacher
-    || userStore.userInfo?.permission_codes?.includes('announcement.manage')
-  ) {
-    managesTeam.value = true
-    return
-  }
   try {
-    managesTeam.value = (await getTeams()).results.some((team) => team.can_manage)
+    const teamResponse = await getTeams({ page: 1, page_size: 200 })
+    teamOptions.value = teamResponse.results
+    managesTeam.value = teamOptions.value.some((team) =>
+      Boolean(team.can_manage)
+      && affiliatedRootIds.value.has(team.parent || team.id),
+    )
+    scopeOptionsLoaded.value = true
+    if (!form.organization && organizationOptions.value.length === 1) {
+      form.organization = organizationOptions.value[0].id
+    }
+    if (
+      form.organization
+      && !canPublishOrganization.value
+      && form.audience === 'organization'
+    ) {
+      form.audience = squadOptions.value.length ? 'teams' : 'projects'
+    }
+    if (canCreate.value) {
+      const projectResponse = await getProjects({
+        page: 1,
+        page_size: 200,
+        scope: 'managed',
+      })
+      projectOptions.value = projectResponse.results
+    }
   } catch {
     managesTeam.value = false
+  } finally {
+    scopeOptionsLoaded.value = true
   }
+}
+
+function handleAudienceChange(): void {
+  form.target_teams.splice(0)
+  form.target_projects.splice(0)
+}
+
+function handleOrganizationChange(): void {
+  form.target_teams.splice(0)
+  form.target_projects.splice(0)
+  if (!canPublishOrganization.value && form.audience === 'organization') {
+    form.audience = squadOptions.value.length ? 'teams' : 'projects'
+  }
+}
+
+function scopeLabel(row: any): string {
+  if (row.audience === 'teams') {
+    return row.target_team_names?.length
+      ? `小团队：${row.target_team_names.join('、')}`
+      : '指定小团队'
+  }
+  if (row.audience === 'projects') {
+    return row.target_project_names?.length
+      ? `项目：${row.target_project_names.join('、')}`
+      : '指定项目'
+  }
+  if (row.audience === 'public' || row.is_public) return '互联网公开'
+  return row.organization_name
+    ? `全团队：${row.organization_name}`
+    : '全实践团队'
 }
 
 function handleCategoryChange(): void {
@@ -308,7 +533,9 @@ async function handleSubmit(): Promise<void> {
     form.content = ''
     form.category = 'system'
     form.status = 'published'
-    form.is_public = false
+    form.audience = 'organization'
+    form.target_teams.splice(0)
+    form.target_projects.splice(0)
     form.resource_links.splice(0)
     loadData()
   } catch {
@@ -417,6 +644,17 @@ onMounted(() => {
   margin-left: 8px;
   font-size: 12px;
   color: var(--color-text-muted);
+}
+
+.audience-tip {
+  display: block;
+  width: 100%;
+  margin: 6px 0 0;
+  line-height: 1.5;
+}
+
+.legacy-scope-alert {
+  margin-bottom: 18px;
 }
 
 .resource-editor {

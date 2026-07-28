@@ -26,6 +26,7 @@ from apps.finance.models import FinanceBudget, FinanceExpense
 from apps.competitions.models import Competition
 from apps.users.models import User
 from apps.notifications.models import Announcement
+from apps.notifications.announcement_access import scope_announcements_for_user
 
 
 class DashboardNamedCountSerializer(serializers.Serializer):
@@ -415,9 +416,18 @@ class DashboardView(APIView):
 
         # ============ 6. 公告区 ============
         # 已发布公告，按置顶优先、发布时间倒序取最新 5 条
-        latest_announcements = Announcement.objects.select_related('author').filter(
-            status=Announcement.Status.PUBLISHED,
-        ).order_by('-is_pinned', '-published_at', '-created_at')[:5]
+        visible_announcements = scope_announcements_for_user(
+            Announcement.objects.select_related(
+                'author',
+                'organization',
+            ).prefetch_related('target_teams', 'target_projects'),
+            request.user,
+        )
+        latest_announcements = visible_announcements.order_by(
+            '-is_pinned',
+            '-published_at',
+            '-created_at',
+        )[:5]
         announcement_items = []
         for ann in latest_announcements:
             announcement_items.append({
@@ -433,7 +443,7 @@ class DashboardView(APIView):
             })
 
         announcements = {
-            'total': Announcement.objects.filter(status=Announcement.Status.PUBLISHED).count(),
+            'total': visible_announcements.count(),
             'items': announcement_items,
         }
 

@@ -28,12 +28,13 @@ class TestFinanceAPI:
 
     def test_finance_list_accessible_by_member(self, member_client, make_finance):
         """P04: 经费列表对所有登录成员公开"""
-        make_finance()
+        make_finance(purpose='安全比赛报名与材料打印')
         resp = member_client.get('/api/v1/finance/expenses/')
         assert resp.status_code == 200
         data = extract_data(resp)
         results = data.get('results', data) if isinstance(data, dict) else data
         assert len(results) > 0
+        assert results[0]['purpose'] == '安全比赛报名与材料打印'
 
     def test_finance_create(self, teacher_client, make_project):
         """P04: 创建经费记录"""

@@ -36,26 +36,81 @@
     </div>
 
     <section v-loading="loading" class="metric-strip" aria-label="经费概览">
+      <div class="metric-item metric-item--spending">
+        <span>已记录支出</span>
+        <strong class="tabular-nums">{{ formatMoneyWithComma(totalRecordedExpense) }}</strong>
+        <small>{{ expenseList.length }} 笔；先看实际花在哪里，再看报销和余额</small>
+      </div>
+      <div class="metric-item">
+        <span>报销进度</span>
+        <strong class="tabular-nums">{{ formatMoneyWithComma(totalExpense) }}</strong>
+        <small>已完成；流程中 {{ formatMoneyWithComma(totalPending) }}，未进入流程 {{ formatMoneyWithComma(totalUncommitted) }}</small>
+      </div>
       <div class="metric-item">
         <span>核定预算上限</span>
         <strong class="tabular-nums">{{ formatMoneyWithComma(totalPlanned) }}</strong>
-        <small>未单独设置的项目暂按累计入账控制</small>
-      </div>
-      <div class="metric-item">
-        <span>已发生支出</span>
-        <strong class="tabular-nums">{{ formatMoneyWithComma(totalCommitted) }}</strong>
-        <small>已完成 {{ formatMoneyWithComma(totalExpense) }}，流程中 {{ formatMoneyWithComma(totalPending) }}</small>
+        <small>累计入账 {{ formatMoneyWithComma(totalIncome) }}；未单设时沿用入账额</small>
       </div>
       <div class="metric-item" :class="{ 'metric-item--danger': totalAvailable < 0 }">
-        <span>可用额度</span>
+        <span>计算可用额度</span>
         <strong class="tabular-nums">{{ formatMoneyWithComma(totalAvailable) }}</strong>
-        <small>{{ totalAvailable < 0 ? '当前已超出核定预算' : '扣除审核中和待打款支出' }}</small>
+        <small>{{ totalAvailable < 0 ? '计算结果已超预算' : '计算值＝预算控制基准－已完成及流程中支出' }}</small>
       </div>
-      <div class="metric-item">
-        <span>累计入账</span>
-        <strong class="tabular-nums">{{ formatMoneyWithComma(totalIncome) }}</strong>
-        <small>{{ incomeList.length }} 笔收入流水；不等同于核定预算</small>
-      </div>
+    </section>
+
+    <section class="workspace-panel spending-destination-panel">
+      <header class="panel-header">
+        <div>
+          <h2>钱花在哪里</h2>
+          <p>按项目汇总已记录支出，并列出经手人、用途和报销进度</p>
+        </div>
+        <el-tag v-if="spendingDestinations.length" type="primary" effect="plain">
+          {{ spendingDestinations.length }} 个项目
+        </el-tag>
+      </header>
+      <el-table v-if="spendingDestinations.length" :data="spendingDestinations" class="destination-table">
+        <el-table-column prop="projectName" label="项目" min-width="150" show-overflow-tooltip />
+        <el-table-column label="已记录支出" width="138" align="right">
+          <template #default="{ row }">
+            <strong class="destination-amount tabular-nums">{{ formatMoneyWithComma(row.total) }}</strong>
+            <small>{{ row.count }} 笔</small>
+          </template>
+        </el-table-column>
+        <el-table-column label="谁花的" min-width="190">
+          <template #default="{ row }">
+            <div class="destination-lines">
+              <span v-for="person in row.people" :key="person.name">
+                {{ person.name }} {{ formatMoneyWithComma(person.amount) }}
+              </span>
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column label="花在什么地方" min-width="240">
+          <template #default="{ row }">
+            <div class="destination-lines">
+              <span v-for="purpose in row.purposes" :key="purpose.name">
+                {{ purpose.name }} {{ formatMoneyWithComma(purpose.amount) }}
+              </span>
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column label="报销情况" min-width="185">
+          <template #default="{ row }">
+            <div class="destination-status">
+              <span>完成 {{ formatMoneyWithComma(row.completed) }}</span>
+              <span>流程中 {{ formatMoneyWithComma(row.pending) }}</span>
+              <span v-if="row.uncommitted > 0">未进入流程 {{ formatMoneyWithComma(row.uncommitted) }}</span>
+            </div>
+          </template>
+        </el-table-column>
+      </el-table>
+      <EmptyState
+        v-else-if="!loading"
+        text="暂无支出明细"
+        description="新增支出后，这里会直接显示项目、经手人和用途。"
+        icon="Wallet"
+        compact
+      />
     </section>
 
     <div class="finance-overview-grid">
@@ -63,7 +118,7 @@
         <header class="panel-header">
           <div>
             <h2>支出结构</h2>
-            <p>按支出类别比较金额</p>
+            <p>按全部已记录支出的类别比较金额</p>
           </div>
         </header>
         <div v-if="categoryBreakdown.length" ref="chartRef" class="chart-container" />
@@ -79,8 +134,8 @@
       <section class="workspace-panel risk-panel">
         <header class="panel-header">
           <div>
-            <h2>预算关注</h2>
-            <p>优先显示超支和使用率较高的项目</p>
+            <h2>项目支出与计算余额</h2>
+            <p>每个项目先显示支出，再显示预算上限和系统计算值</p>
           </div>
           <el-tag v-if="riskProjects.length" type="warning" size="small">
             {{ riskProjects.length }} 项需关注
@@ -92,7 +147,8 @@
             <div class="project-budget-head">
               <div>
                 <h3>{{ item.projectName }}</h3>
-                <span>已发生 {{ formatMoneyWithComma(item.expense) }} / 上限 {{ formatMoneyWithComma(item.budget) }}</span>
+                <span>已记录支出 {{ formatMoneyWithComma(item.recorded) }} / 上限 {{ formatMoneyWithComma(item.budget) }}</span>
+                <span>进入预算占用 {{ formatMoneyWithComma(item.expense) }} · 计算可用 {{ formatMoneyWithComma(item.available) }}</span>
               </div>
               <span class="utilization" :data-tone="item.tone">{{ item.rate }}%</span>
             </div>
@@ -547,8 +603,27 @@ interface ProjectFinanceRow {
   projectName: string
   budget: number
   expense: number
+  recorded: number
+  available: number
   rate: number
   tone: BudgetTone
+}
+
+interface SpendingGroup {
+  name: string
+  amount: number
+}
+
+interface SpendingDestinationRow {
+  projectId: number
+  projectName: string
+  total: number
+  count: number
+  people: SpendingGroup[]
+  purposes: SpendingGroup[]
+  completed: number
+  pending: number
+  uncommitted: number
 }
 
 const route = useRoute()
@@ -628,12 +703,18 @@ function toAmount(value: number | string | null | undefined): number {
 const paidExpenses = computed(() =>
   expenseList.value.filter((item) => ['paid', 'not_required'].includes(item.reimbursement_status || 'draft')),
 )
+const totalRecordedExpense = computed(() =>
+  expenseList.value.reduce((sum, item) => sum + toAmount(item.amount), 0),
+)
 const totalExpense = computed(() => paidExpenses.value.reduce((sum, item) => sum + toAmount(item.amount), 0))
 const pendingExpenses = computed(() =>
   expenseList.value.filter((item) => ['pending', 'approved'].includes(item.reimbursement_status || 'draft')),
 )
 const totalPending = computed(() => pendingExpenses.value.reduce((sum, item) => sum + toAmount(item.amount), 0))
 const totalCommitted = computed(() => totalExpense.value + totalPending.value)
+const totalUncommitted = computed(() =>
+  Math.max(0, totalRecordedExpense.value - totalCommitted.value),
+)
 const totalIncome = computed(() =>
   budgetList.value.reduce((sum, item) => sum + toAmount(item.bonus_amount) + toAmount(item.other_income), 0),
 )
@@ -646,7 +727,7 @@ const totalAvailable = computed(() =>
 
 const categoryBreakdown = computed(() => {
   const totals = new Map<string, number>()
-  paidExpenses.value.forEach((item) => {
+  expenseList.value.forEach((item) => {
     const key = item.category || 'other'
     totals.set(key, (totals.get(key) || 0) + toAmount(item.amount))
   })
@@ -654,6 +735,66 @@ const categoryBreakdown = computed(() => {
     .map(([key, value]) => ({ key, name: getFinanceCategoryLabel(key), value }))
     .filter((item) => item.value > 0)
     .sort((left, right) => right.value - left.value)
+})
+
+function topSpendingGroups(totals: Map<string, number>, limit = 3): SpendingGroup[] {
+  return Array.from(totals.entries())
+    .map(([name, amount]) => ({ name, amount }))
+    .sort((left, right) => right.amount - left.amount)
+    .slice(0, limit)
+}
+
+const spendingDestinations = computed<SpendingDestinationRow[]>(() => {
+  const rows = new Map<number, {
+    projectName: string
+    total: number
+    count: number
+    people: Map<string, number>
+    purposes: Map<string, number>
+    completed: number
+    pending: number
+    uncommitted: number
+  }>()
+
+  expenseList.value.forEach((item) => {
+    const amount = toAmount(item.amount)
+    const row = rows.get(item.project) || {
+      projectName: item.project_name || `项目 ${item.project}`,
+      total: 0,
+      count: 0,
+      people: new Map<string, number>(),
+      purposes: new Map<string, number>(),
+      completed: 0,
+      pending: 0,
+      uncommitted: 0,
+    }
+    const person = item.spender_name || '未登记经手人'
+    const purpose = item.purpose?.trim() || item.title || '未填写用途'
+    const status = item.reimbursement_status || 'draft'
+
+    row.total += amount
+    row.count += 1
+    row.people.set(person, (row.people.get(person) || 0) + amount)
+    row.purposes.set(purpose, (row.purposes.get(purpose) || 0) + amount)
+    if (['paid', 'not_required'].includes(status)) row.completed += amount
+    else if (['pending', 'approved'].includes(status)) row.pending += amount
+    else row.uncommitted += amount
+    rows.set(item.project, row)
+  })
+
+  return Array.from(rows.entries())
+    .map(([projectId, row]) => ({
+      projectId,
+      projectName: row.projectName,
+      total: row.total,
+      count: row.count,
+      people: topSpendingGroups(row.people),
+      purposes: topSpendingGroups(row.purposes),
+      completed: row.completed,
+      pending: row.pending,
+      uncommitted: row.uncommitted,
+    }))
+    .sort((left, right) => right.total - left.total)
 })
 
 const projectFinance = computed<ProjectFinanceRow[]>(() => {
@@ -665,15 +806,31 @@ const projectFinance = computed<ProjectFinanceRow[]>(() => {
       projectName: item.project_name || `项目 ${item.project}`,
       budget: 0,
       expense: 0,
+      recorded: 0,
+      available: 0,
     }
     current.budget += toAmount(item.budget_basis)
     current.expense += toAmount(item.committed_amount)
+    current.available += toAmount(item.available_amount)
+    rows.set(item.project, current)
+  })
+
+  expenseList.value.forEach((item) => {
+    const current = rows.get(item.project) || {
+      projectId: item.project,
+      projectName: item.project_name || `项目 ${item.project}`,
+      budget: 0,
+      expense: 0,
+      recorded: 0,
+      available: 0,
+    }
+    current.recorded += toAmount(item.amount)
     rows.set(item.project, current)
   })
 
   return Array.from(rows.values())
     .map((item) => {
-      const rate = item.budget > 0 ? Math.round((item.expense / item.budget) * 100) : item.expense > 0 ? 100 : 0
+      const rate = item.budget > 0 ? Math.round((item.recorded / item.budget) * 100) : item.recorded > 0 ? 100 : 0
       const tone: BudgetTone = rate > 100 ? 'danger' : rate >= 80 ? 'warning' : rate > 0 ? 'success' : 'neutral'
       return { ...item, rate, tone }
     })
@@ -1267,6 +1424,14 @@ onUnmounted(() => {
 .metric-item--warning strong { color: var(--color-warning); }
 .metric-item--danger strong { color: var(--color-danger); }
 
+.metric-item--spending {
+  background: var(--color-primary-soft);
+}
+
+.metric-item--spending strong {
+  color: var(--color-primary);
+}
+
 .finance-overview-grid {
   display: grid;
   grid-template-columns: minmax(320px, 0.8fr) minmax(440px, 1.2fr);
@@ -1279,6 +1444,43 @@ onUnmounted(() => {
   background: var(--color-surface);
   border: 1px solid var(--color-border-light);
   border-radius: var(--radius-md);
+}
+
+.destination-table :deep(.el-table__cell) {
+  vertical-align: top;
+}
+
+.destination-amount {
+  display: block;
+  color: var(--color-primary);
+  font-size: 14px;
+}
+
+.destination-table small {
+  display: block;
+  margin-top: 2px;
+  color: var(--color-text-muted);
+  font-size: 11px;
+}
+
+.destination-lines,
+.destination-status {
+  display: grid;
+  gap: 3px;
+  color: var(--color-text-regular);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.destination-lines span,
+.destination-status span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.destination-status span:first-child {
+  color: var(--color-success);
 }
 
 .panel-header,

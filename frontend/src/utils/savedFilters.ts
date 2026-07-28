@@ -6,6 +6,7 @@ import {
 import type { TaskPriority, TaskStatus } from '@/types'
 
 export type AccountScope = 'mine' | 'team'
+export type ProjectViewScope = 'my_teams' | 'managed' | 'participating' | 'visible'
 
 export interface ProjectSavedFilters {
   search?: string
@@ -14,7 +15,8 @@ export interface ProjectSavedFilters {
   start_date?: string
   end_date?: string
   ordering?: string
-  scope?: AccountScope
+  scope?: ProjectViewScope
+  team?: number
 }
 
 export interface TaskSavedFilters {
@@ -61,6 +63,21 @@ function normalizedScope(value: unknown): AccountScope | undefined {
   return value === 'mine' || value === 'team' ? value : undefined
 }
 
+function normalizedProjectScope(value: unknown): ProjectViewScope | undefined {
+  if (
+    value === 'my_teams'
+    || value === 'managed'
+    || value === 'participating'
+    || value === 'visible'
+  ) {
+    return value
+  }
+  // Migrate saved filters from the former two-option project selector.
+  if (value === 'mine') return 'participating'
+  if (value === 'team') return 'visible'
+  return undefined
+}
+
 function normalizedPositiveInteger(value: unknown): number | undefined {
   if (typeof value === 'string' && /^\d+$/.test(value)) {
     value = Number(value)
@@ -105,7 +122,8 @@ export function normalizeProjectSavedFilters(value: unknown): ProjectSavedFilter
   assignIfDefined(normalized, 'start_date', normalizedDate(value.start_date))
   assignIfDefined(normalized, 'end_date', normalizedDate(value.end_date))
   assignIfDefined(normalized, 'ordering', normalizedChoice(value.ordering, PROJECT_ORDERINGS))
-  assignIfDefined(normalized, 'scope', normalizedScope(value.scope))
+  assignIfDefined(normalized, 'scope', normalizedProjectScope(value.scope))
+  assignIfDefined(normalized, 'team', normalizedPositiveInteger(value.team))
   return normalized
 }
 

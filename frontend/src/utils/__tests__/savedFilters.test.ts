@@ -16,6 +16,7 @@ describe('normalizeProjectSavedFilters', () => {
       end_date: '2024-12-31',
       ordering: '-created_at',
       scope: 'team',
+      team: '8',
       page: 9,
       unknown: 'drop-me',
     })).toEqual({
@@ -25,7 +26,8 @@ describe('normalizeProjectSavedFilters', () => {
       start_date: '2024-02-29',
       end_date: '2024-12-31',
       ordering: '-created_at',
-      scope: 'team',
+      scope: 'visible',
+      team: 8,
     })
   })
 
@@ -38,6 +40,7 @@ describe('normalizeProjectSavedFilters', () => {
       end_date: '2024-13-01',
       ordering: 'name',
       scope: 'all',
+      team: -3,
     })).toEqual({})
     expect(normalizeProjectSavedFilters([])).toEqual({})
   })

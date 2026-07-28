@@ -57,10 +57,13 @@ describe('project information closure', () => {
       expect(source).toContain('!isExternalCollaborator')
     }
     expect(listSource).toContain(
-      'v-if="!isExternalCollaborator"\n            label="经费余额"',
+      'v-if="!isExternalCollaborator"\n            label="支出 / 计算可用"',
     )
     expect(listSource).toContain(
-      '<div v-if="!isExternalCollaborator">\n              <dt>经费余额</dt>',
+      '<div v-if="!isExternalCollaborator">\n              <dt>已记录支出</dt>',
+    )
+    expect(listSource).toContain(
+      '<div v-if="!isExternalCollaborator">\n              <dt>计算可用额度</dt>',
     )
     expect(listSource).toContain(
       'v-if="!isExternalCollaborator"\n          :icon="Download"',

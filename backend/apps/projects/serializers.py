@@ -175,6 +175,33 @@ def _project_leader_names(project):
     return names
 
 
+def _project_co_leader_names(project):
+    """Return active project co-leads without mixing in the primary lead."""
+    prefetched_members = getattr(
+        project,
+        '_prefetched_objects_cache',
+        {},
+    ).get('members')
+    if prefetched_members is not None:
+        return [
+            member.user.name
+            for member in prefetched_members
+            if (
+                member.role_in_project == ProjectMember.RoleInProject.LEADER
+                and member.status == ProjectMember.Status.ACTIVE
+                and member.user_id != project.leader_id
+            )
+        ]
+    return list(
+        project.members.filter(
+            role_in_project=ProjectMember.RoleInProject.LEADER,
+            status=ProjectMember.Status.ACTIVE,
+        ).exclude(
+            user_id=project.leader_id,
+        ).values_list('user__name', flat=True)
+    )
+
+
 def _project_team_names(project):
     prefetched_teams = getattr(
         project,
@@ -184,6 +211,221 @@ def _project_team_names(project):
     if prefetched_teams is not None:
         return [team.name for team in prefetched_teams]
     return list(project.teams.values_list('name', flat=True))
+
+
+def _project_team_details(project):
+    """Describe linked squads and their own leads separately from project leads."""
+    prefetched_teams = getattr(
+        project,
+        '_prefetched_objects_cache',
+        {},
+    ).get('teams')
+    teams = prefetched_teams if prefetched_teams is not None else (
+        project.teams.select_related('owner', 'parent').prefetch_related(
+            'teammember_set__user',
+        )
+    )
+    details = []
+    for team in teams:
+        lead_names = [team.owner.name] if team.owner_id else []
+        memberships = getattr(
+            team,
+            'active_lead_memberships',
+            None,
+        )
+        if memberships is None:
+            memberships = team.teammember_set.filter(
+                role=TeamMember.Role.CO_LEAD,
+                status=TeamMember.Status.ACTIVE,
+            ).select_related('user')
+        for membership in memberships:
+            if (
+                membership.role == TeamMember.Role.CO_LEAD
+                and membership.status == TeamMember.Status.ACTIVE
+                and membership.user_id != team.owner_id
+                and membership.user.name not in lead_names
+            ):
+                lead_names.append(membership.user.name)
+        details.append({
+            'id': team.id,
+            'name': team.name,
+            'team_type': team.team_type,
+            'team_type_display': team.get_team_type_display(),
+            'parent_id': team.parent_id,
+            'parent_name': team.parent.name if team.parent_id else '',
+            'leader_names': lead_names,
+        })
+    return details
+
+
+def _project_competition_summaries(project):
+    """Summarize actual competition ownership rather than only counting rows."""
+    prefetched_competitions = getattr(
+        project,
+        '_prefetched_objects_cache',
+        {},
+    ).get('competitions')
+    competitions = (
+        prefetched_competitions
+        if prefetched_competitions is not None
+        else project.competitions.prefetch_related('participants__user')
+    )
+    summaries = []
+    for competition in competitions:
+        prefetched_participants = getattr(
+            competition,
+            '_prefetched_objects_cache',
+            {},
+        ).get('participants')
+        participants = (
+            prefetched_participants
+            if prefetched_participants is not None
+            else competition.participants.select_related('user')
+        )
+        active_participants = [
+            participant
+            for participant in participants
+            if participant.participation_status != 'withdrawn'
+        ]
+        summaries.append({
+            'id': competition.id,
+            'name': competition.name,
+            'status': competition.status,
+            'status_display': competition.get_status_display(),
+            'leader_names': [
+                participant.user.name
+                for participant in active_participants
+                if participant.role == 'leader'
+            ],
+            'participant_count': len(active_participants),
+            'is_awarded': competition.is_awarded,
+            'award_level': competition.award_level,
+        })
+    return summaries
+
+
+def _project_member_work_summary(project, request=None):
+    """Explain what each active project member is actually doing."""
+    prefetched_members = getattr(
+        project,
+        '_prefetched_objects_cache',
+        {},
+    ).get('members')
+    members = (
+        list(prefetched_members)
+        if prefetched_members is not None
+        else list(project.members.select_related('user'))
+    )
+    active_members = [
+        member
+        for member in members
+        if member.status == ProjectMember.Status.ACTIVE
+    ]
+    viewer = getattr(request, 'user', None)
+    if viewer and is_external_collaborator(viewer):
+        active_members = [
+            member for member in active_members if member.user_id == viewer.id
+        ]
+
+    role_order = {
+        ProjectMember.RoleInProject.LEADER: 0,
+        ProjectMember.RoleInProject.CORE: 1,
+        ProjectMember.RoleInProject.PARTICIPANT: 2,
+        ProjectMember.RoleInProject.ADVISOR: 3,
+        ProjectMember.RoleInProject.EXTERNAL: 4,
+    }
+    active_members.sort(key=lambda item: (
+        0 if item.user_id == project.leader_id else 1,
+        role_order.get(item.role_in_project, 9),
+        item.joined_at,
+        item.id,
+    ))
+    summaries = {
+        member.user_id: {
+            'user_id': member.user_id,
+            'name': member.user.name,
+            'project_role': member.role_in_project,
+            'project_role_display': (
+                '项目牵头负责人'
+                if member.user_id == project.leader_id
+                else (
+                    '项目共同负责人'
+                    if member.role_in_project == ProjectMember.RoleInProject.LEADER
+                    else member.get_role_in_project_display()
+                )
+            ),
+            'is_primary_leader': member.user_id == project.leader_id,
+            'assigned_task_count': 0,
+            'collaborating_task_count': 0,
+            'active_task_count': 0,
+            'active_task_titles': [],
+            'competition_names': [],
+            'competition_responsibilities': [],
+        }
+        for member in active_members
+    }
+    if not summaries:
+        return []
+
+    prefetched_tasks = getattr(
+        project,
+        '_prefetched_objects_cache',
+        {},
+    ).get('tasks')
+    tasks = prefetched_tasks if prefetched_tasks is not None else (
+        project.tasks.select_related('assignee').prefetch_related('collaborators')
+    )
+    terminal_statuses = {'done', 'cancelled'}
+    for task in tasks:
+        participant_ids = []
+        if task.assignee_id in summaries:
+            summary = summaries[task.assignee_id]
+            summary['assigned_task_count'] += 1
+            participant_ids.append(task.assignee_id)
+        for collaborator in task.collaborators.all():
+            if collaborator.id not in summaries:
+                continue
+            summaries[collaborator.id]['collaborating_task_count'] += 1
+            participant_ids.append(collaborator.id)
+        if task.status not in terminal_statuses:
+            for user_id in set(participant_ids):
+                summary = summaries[user_id]
+                summary['active_task_count'] += 1
+                if len(summary['active_task_titles']) < 3:
+                    summary['active_task_titles'].append(task.title)
+
+    prefetched_competitions = getattr(
+        project,
+        '_prefetched_objects_cache',
+        {},
+    ).get('competitions')
+    competitions = (
+        prefetched_competitions
+        if prefetched_competitions is not None
+        else project.competitions.prefetch_related('participants__user')
+    )
+    for competition in competitions:
+        participants = getattr(
+            competition,
+            '_prefetched_objects_cache',
+            {},
+        ).get('participants')
+        if participants is None:
+            participants = competition.participants.all()
+        for participant in participants:
+            if (
+                participant.user_id not in summaries
+                or participant.participation_status == 'withdrawn'
+            ):
+                continue
+            summary = summaries[participant.user_id]
+            summary['competition_names'].append(competition.name)
+            if participant.responsibility:
+                summary['competition_responsibilities'].append({
+                    'competition_name': competition.name,
+                    'responsibility': participant.responsibility,
+                })
+    return list(summaries.values())
 
 
 def _has_custom_project_manage_permission(context, user, project_id):
@@ -340,8 +582,14 @@ class ProjectListSerializer(serializers.ModelSerializer):
     task_count = serializers.IntegerField(read_only=True)
     competition_count = serializers.IntegerField(read_only=True)
     finance_balance = serializers.SerializerMethodField()
+    finance_spending = serializers.SerializerMethodField()
+    finance_available = serializers.SerializerMethodField()
     leader_names = serializers.SerializerMethodField()
+    co_leader_names = serializers.SerializerMethodField()
     team_names = serializers.SerializerMethodField()
+    team_details = serializers.SerializerMethodField()
+    competition_summaries = serializers.SerializerMethodField()
+    member_work_summary = serializers.SerializerMethodField()
     visibility_display = serializers.CharField(source='get_visibility_display', read_only=True)
     can_manage = serializers.SerializerMethodField()
 
@@ -349,14 +597,18 @@ class ProjectListSerializer(serializers.ModelSerializer):
         model = Project
         fields = (
             'id', 'name', 'code', 'leader', 'leader_name', 'leader_names',
-            'teams', 'team_names', 'visibility', 'visibility_display',
+            'co_leader_names',
+            'teams', 'team_names', 'team_details',
+            'visibility', 'visibility_display',
             'current_stage', 'current_stage_display',
             'status', 'status_display', 'priority', 'priority_display',
             'start_date', 'planned_end_date', 'actual_end_date',
             'intro',
             'last_leader_update', 'archived_at', 'is_archived',
             'member_count', 'task_count', 'competition_count',
-            'finance_balance', 'created_at',
+            'competition_summaries', 'member_work_summary',
+            'finance_spending', 'finance_available', 'finance_balance',
+            'created_at',
             'can_manage',
         )
         read_only_fields = fields
@@ -370,8 +622,23 @@ class ProjectListSerializer(serializers.ModelSerializer):
     def get_leader_names(self, obj):
         return _project_leader_names(obj)
 
+    def get_co_leader_names(self, obj):
+        return _project_co_leader_names(obj)
+
     def get_team_names(self, obj):
         return _project_team_names(obj)
+
+    def get_team_details(self, obj):
+        return _project_team_details(obj)
+
+    def get_competition_summaries(self, obj):
+        return _project_competition_summaries(obj)
+
+    def get_member_work_summary(self, obj):
+        return _project_member_work_summary(
+            obj,
+            request=self.context.get('request'),
+        )
 
     def get_can_manage(self, obj):
         request = self.context.get('request')
@@ -398,12 +665,46 @@ class ProjectListSerializer(serializers.ModelSerializer):
         )
     )
     def get_finance_balance(self, obj):
-        """返回项目各预算周期的可用余额，列表查询已预取预算避免 N+1。"""
+        """保留旧接口的账面余额口径；新界面使用 finance_available。"""
         request = self.context.get('request')
         if request and is_external_collaborator(request.user):
             return None
         budgets = obj.budgets.all()
         return sum((budget.remaining_amount for budget in budgets), Decimal('0'))
+
+    @extend_schema_field(
+        serializers.DecimalField(
+            max_digits=None,
+            decimal_places=2,
+            allow_null=True,
+            read_only=True,
+        )
+    )
+    def get_finance_spending(self, obj):
+        """返回全部未删除支出记录的金额，供项目清单优先展示实际花销。"""
+        request = self.context.get('request')
+        if request and is_external_collaborator(request.user):
+            return None
+        expenses = getattr(obj, 'recorded_expenses', None)
+        if expenses is None:
+            expenses = obj.expenses.all()
+        return sum((expense.amount for expense in expenses), Decimal('0'))
+
+    @extend_schema_field(
+        serializers.DecimalField(
+            max_digits=None,
+            decimal_places=2,
+            allow_null=True,
+            read_only=True,
+        )
+    )
+    def get_finance_available(self, obj):
+        """返回预算控制基准扣除已完成及流程中支出后的计算可用额度。"""
+        request = self.context.get('request')
+        if request and is_external_collaborator(request.user):
+            return None
+        budgets = obj.budgets.all()
+        return sum((budget.available_amount for budget in budgets), Decimal('0'))
 
 
 class ProjectSerializer(serializers.ModelSerializer):

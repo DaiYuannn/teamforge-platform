@@ -146,7 +146,10 @@
                   @click="handleView(row as CompetitionRow)"
                 >
                   <strong>{{ row.name }}</strong>
-                  <span>{{ row.project_name || row.organizer || '未关联项目' }}</span>
+                  <span>
+                    项目：{{ row.project_name || '未关联项目' }}
+                    · 小团队：{{ row.project_team_names?.join('、') || '未关联' }}
+                  </span>
                 </button>
               </template>
             </el-table-column>
@@ -172,7 +175,7 @@
                 </el-tag>
               </template>
             </el-table-column>
-            <el-table-column label="比赛负责人 / 参赛人数" min-width="160">
+            <el-table-column label="比赛执行负责人 / 参赛人数" min-width="180">
               <template #default="{ row }">
                 <div class="milestone-cell">
                   <span>{{ row.leader_names?.join('、') || '待指定负责人' }}</span>
@@ -276,7 +279,15 @@
                 <dd>{{ displayDate(item.result_date) }}</dd>
               </div>
               <div>
-                <dt>比赛负责人</dt>
+                <dt>所属小团队</dt>
+                <dd>{{ item.project_team_names?.join('、') || '未关联' }}</dd>
+              </div>
+              <div>
+                <dt>项目牵头负责人</dt>
+                <dd>{{ item.project_leader_names?.join('、') || '待补充' }}</dd>
+              </div>
+              <div>
+                <dt>比赛执行负责人</dt>
                 <dd>{{ item.leader_names?.join('、') || '待指定' }}</dd>
               </div>
               <div>

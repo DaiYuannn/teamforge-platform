@@ -11,6 +11,12 @@ import type {
   PaginationParams,
 } from '@/types'
 
+export type ProjectViewScope =
+  | 'my_teams'
+  | 'managed'
+  | 'participating'
+  | 'visible'
+
 /** 项目查询参数 */
 export interface ProjectQueryParams extends PaginationParams {
   status?: string
@@ -19,7 +25,8 @@ export interface ProjectQueryParams extends PaginationParams {
   current_stage?: string
   start_date?: string
   end_date?: string
-  scope?: 'mine' | 'team'
+  scope?: ProjectViewScope | 'mine' | 'team'
+  team?: number
 }
 
 /** 获取项目列表 */

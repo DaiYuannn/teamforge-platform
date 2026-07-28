@@ -32,6 +32,9 @@
       </el-table-column>
       <el-table-column prop="project_name" label="项目" min-width="150" show-overflow-tooltip />
       <el-table-column prop="title" label="支出说明" min-width="170" show-overflow-tooltip />
+      <el-table-column prop="purpose" label="具体用途" min-width="180" show-overflow-tooltip>
+        <template #default="{ row }">{{ row.purpose || '-' }}</template>
+      </el-table-column>
       <el-table-column prop="reimbursement_status" label="报销状态" width="104">
         <template #default="{ row }">
           <el-tag :type="reimbursementTone(row.reimbursement_status)" size="small">

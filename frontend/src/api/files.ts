@@ -147,7 +147,7 @@ export function uploadFile(
   formData.append('project', String(projectId))
   formData.append('level', data.level)
   formData.append('name', file.name)
-  if (data.folder) {
+  if (data.folder != null) {
     formData.append('folder', String(data.folder))
   }
   if (data.description) {

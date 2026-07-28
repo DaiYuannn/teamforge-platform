@@ -29,6 +29,18 @@
       <section class="detail-section">
         <h3>流程概况</h3>
         <el-descriptions :column="descriptionColumns" border>
+          <el-descriptions-item label="所属小团队">
+            {{ projectTeamNames || '未关联小团队' }}
+          </el-descriptions-item>
+          <el-descriptions-item label="项目牵头负责人">
+            {{ projectLeaderNames || '待补充' }}
+          </el-descriptions-item>
+          <el-descriptions-item label="比赛执行负责人">
+            {{ competitionLeaderNames || '待指定' }}
+          </el-descriptions-item>
+          <el-descriptions-item label="实际参赛人数">
+            {{ competition.participant_count || activeParticipants.length }} 人
+          </el-descriptions-item>
           <el-descriptions-item label="比赛类型">
             {{ competition.comp_type || '未填写' }}
           </el-descriptions-item>
@@ -59,7 +71,12 @@
       </section>
 
       <section class="detail-section">
-        <h3>负责人和实际参赛名单</h3>
+        <div class="section-heading">
+          <div>
+            <h3>比赛执行负责人和实际参赛名单</h3>
+            <p>项目牵头负责人负责项目归属，比赛执行负责人负责本场比赛；名单逐人展示实际分工和已登记贡献。</p>
+          </div>
+        </div>
         <div v-if="participants.length" class="participant-list">
           <div
             v-for="participant in participants"
@@ -75,9 +92,89 @@
             <el-tag size="small" effect="plain">
               {{ participant.participation_status_display || '已确认' }}
             </el-tag>
+            <div class="participant-contributions">
+              <span>本比赛贡献</span>
+              <ul v-if="participantContributions(participant.user).length">
+                <li
+                  v-for="contribution in participantContributions(participant.user)"
+                  :key="contribution.id"
+                >
+                  <div>
+                    <strong>{{ contributionCopy(contribution) }}</strong>
+                    <small>
+                      {{ contribution.contribution_type_display || contribution.contribution_type }}
+                      · {{ contribution.status_display || contribution.status }}
+                    </small>
+                  </div>
+                  <el-tag
+                    size="small"
+                    effect="plain"
+                    :type="contribution.reuse_eligible ? 'success' : 'info'"
+                  >
+                    {{ contribution.reuse_eligible ? '可复用' : '待确认' }}
+                  </el-tag>
+                </li>
+              </ul>
+              <p v-else>暂无单独贡献记录；上方分工是当前执行安排，不等同于已审核贡献。</p>
+            </div>
           </div>
         </div>
         <el-empty v-else :image-size="64" description="尚未登记实际参赛成员" />
+      </section>
+
+      <section class="detail-section">
+        <div class="section-heading">
+          <div>
+            <h3>可复用的已审核贡献证据</h3>
+            <p>仅列出当前参赛成员在可见项目内、已经审核通过且来源已核验的记录。</p>
+          </div>
+        </div>
+        <el-alert
+          class="reuse-alert"
+          :title="competition.contribution_reuse_note || defaultReuseNote"
+          type="info"
+          :closable="false"
+          show-icon
+        />
+        <div v-if="reusableContributions.length" class="evidence-list">
+          <article
+            v-for="contribution in reusableContributions"
+            :key="contribution.id"
+            class="evidence-item"
+          >
+            <div class="evidence-item__main">
+              <div>
+                <strong>{{ contributionCopy(contribution) }}</strong>
+                <span>
+                  {{ contribution.user_name || `成员 ${contribution.user}` }}
+                  · {{ contribution.contribution_type_display || contribution.contribution_type }}
+                </span>
+              </div>
+              <el-tag size="small" type="success" effect="plain">
+                {{ contribution.reuse_scope_display }}
+              </el-tag>
+            </div>
+            <dl>
+              <div>
+                <dt>来源项目</dt>
+                <dd>{{ contribution.project_name || `项目 ${contribution.project}` }}</dd>
+              </div>
+              <div>
+                <dt>来源记录</dt>
+                <dd>{{ contributionOrigin(contribution) }}</dd>
+              </div>
+              <div v-if="contribution.proof_file_name">
+                <dt>证明材料</dt>
+                <dd>{{ contribution.proof_file_name }}</dd>
+              </div>
+            </dl>
+          </article>
+        </div>
+        <el-empty
+          v-else
+          :image-size="56"
+          description="暂无符合“已审核且来源已核验”的可复用贡献"
+        />
       </section>
 
       <section v-if="competition.not_promoted_reason" class="detail-section">
@@ -123,7 +220,10 @@ import {
   getCompetitionStatusLabel,
   getCompetitionStatusTagType,
 } from '@/utils/format'
-import type { Competition } from '@/types'
+import type {
+  Competition,
+  CompetitionContributionEvidence,
+} from '@/types'
 
 const props = defineProps<{
   visible: boolean
@@ -161,6 +261,43 @@ const milestones = computed(() => {
 })
 
 const participants = computed(() => props.competition?.participants || [])
+const activeParticipants = computed(() =>
+  participants.value.filter((item) => item.participation_status !== 'withdrawn'),
+)
+const projectLeaderNames = computed(() =>
+  props.competition?.project_leader_names?.join('、') || '',
+)
+const projectTeamNames = computed(() =>
+  props.competition?.project_team_names?.join('、') || '',
+)
+const competitionLeaderNames = computed(() =>
+  props.competition?.leader_names?.join('、') || '',
+)
+const competitionContributions = computed(() =>
+  props.competition?.competition_contributions || [],
+)
+const reusableContributions = computed(() =>
+  props.competition?.reusable_contributions || [],
+)
+const defaultReuseNote = '复用只引用内容和证明材料；原贡献仍归属来源项目，不会自动复制或重复计分。'
+
+function participantContributions(userId: number): CompetitionContributionEvidence[] {
+  return competitionContributions.value.filter((item) => item.user === userId)
+}
+
+function contributionCopy(contribution: CompetitionContributionEvidence): string {
+  return contribution.content
+    || contribution.description
+    || contribution.contribution_type_display
+    || '未填写贡献说明'
+}
+
+function contributionOrigin(contribution: CompetitionContributionEvidence): string {
+  if (contribution.origin_competition_name) {
+    return `比赛：${contribution.origin_competition_name}`
+  }
+  return contribution.source_type_display || contribution.source_type || '手工登记'
+}
 
 function participantRoleLabel(role: string): string {
   return {
@@ -222,11 +359,30 @@ function displayDateTime(value?: string | null): string {
   margin-top: 22px;
 
   > h3,
+  .section-heading h3,
   article > h3 {
     margin-bottom: 10px;
     color: var(--color-text);
     font-size: 14px;
     font-weight: 600;
+  }
+}
+
+.section-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+
+  h3 {
+    margin-bottom: 3px !important;
+  }
+
+  p {
+    margin: 0;
+    color: var(--color-text-muted);
+    font-size: 12px;
+    line-height: 1.6;
   }
 }
 
@@ -297,8 +453,132 @@ function displayDateTime(value?: string | null): string {
   }
 }
 
+.participant-contributions {
+  grid-column: 1 / -1;
+  padding-top: 9px;
+  border-top: 1px solid var(--color-border-light);
+
+  > span {
+    color: var(--color-text-muted);
+    font-size: 11px;
+    font-weight: 600;
+  }
+
+  > p {
+    margin-top: 5px;
+    color: var(--color-text-muted);
+    font-size: 11px;
+  }
+
+  ul {
+    display: grid;
+    gap: 5px;
+    padding: 0;
+    margin: 6px 0 0;
+    list-style: none;
+  }
+
+  li {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 7px 8px;
+    background: var(--color-surface);
+    border-radius: 4px;
+
+    > div {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+    }
+
+    strong {
+      overflow: hidden;
+      font-size: 12px;
+      font-weight: 550;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    small {
+      color: var(--color-text-muted);
+      font-size: 10px;
+    }
+  }
+}
+
 .participant-item.is-withdrawn {
   opacity: 0.68;
+}
+
+.reuse-alert {
+  margin-bottom: 10px;
+}
+
+.evidence-list {
+  display: grid;
+  gap: 8px;
+}
+
+.evidence-item {
+  padding: 12px;
+  background: var(--color-surface-subtle);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-sm);
+}
+
+.evidence-item__main {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+
+  > div {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+
+  strong {
+    color: var(--color-text);
+    font-size: 13px;
+    overflow-wrap: anywhere;
+  }
+
+  span {
+    margin-top: 2px;
+    color: var(--color-text-muted);
+    font-size: 11px;
+  }
+}
+
+.evidence-item dl {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+  margin: 9px 0 0;
+
+  div {
+    display: flex;
+    gap: 5px;
+    min-width: 0;
+  }
+
+  dt,
+  dd {
+    margin: 0;
+    font-size: 11px;
+  }
+
+  dt {
+    color: var(--color-text-muted);
+  }
+
+  dd {
+    color: var(--color-text-regular);
+    overflow-wrap: anywhere;
+  }
 }
 
 .narrative-grid {

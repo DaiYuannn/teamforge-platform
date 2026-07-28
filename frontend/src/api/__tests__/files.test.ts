@@ -27,6 +27,7 @@ import {
   permanentlyDeleteFile,
   replaceFileTags,
   revokeFileShareLink,
+  uploadFile,
 } from '@/api/files'
 
 beforeEach(() => {
@@ -66,6 +67,25 @@ describe('file management closure API', () => {
       parent: null,
     })
     expect(postMock).toHaveBeenNthCalledWith(2, '/files/11/move/', { folder: 3 })
+  })
+
+  it('keeps the selected folder in the upload form data', async () => {
+    uploadMock.mockResolvedValue({ id: 12, folder: 3 })
+    const file = new File(['folder-linked'], '计划书.txt', { type: 'text/plain' })
+
+    await uploadFile(8, file, {
+      project: 8,
+      folder: 3,
+      level: 'internal',
+      description: '上传到当前目录',
+    })
+
+    expect(uploadMock).toHaveBeenCalledWith('/files/', expect.any(FormData))
+    const formData = uploadMock.mock.calls[0]?.[1] as FormData
+    expect(formData.get('project')).toBe('8')
+    expect(formData.get('folder')).toBe('3')
+    expect(formData.get('level')).toBe('internal')
+    expect(formData.get('file')).toBe(file)
   })
 
   it('synchronizes only changed tag relations', async () => {

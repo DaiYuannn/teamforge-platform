@@ -56,7 +56,11 @@ class CompetitionViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSe
     def get_queryset(self):
         queryset = super().get_queryset().select_related(
             'project', 'project__leader',
-        ).prefetch_related('participants__user')
+        ).prefetch_related(
+            'participants__user',
+            'project__members__user',
+            'project__teams',
+        )
         return scope_project_queryset(
             queryset,
             self.request.user,

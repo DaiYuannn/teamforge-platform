@@ -219,7 +219,20 @@
               inactive-text="停用"
             />
           </el-form-item>
-          <el-form-item label="邮件接收人" class="span-2">
+          <el-form-item class="span-2">
+            <template #label>
+              <div class="recipient-label">
+                <span>邮件接收人</span>
+                <el-button
+                  link
+                  type="primary"
+                  :disabled="!members.length"
+                  @click="toggleAllRecipients"
+                >
+                  {{ allRecipientsSelected ? '取消全选' : `选择当前团队全员（${members.length}）` }}
+                </el-button>
+              </div>
+            </template>
             <el-select
               v-model="form.recipientIds"
               multiple
@@ -235,6 +248,9 @@
                 :value="member.id"
               />
             </el-select>
+            <div class="recipient-help">
+              不是系统默认群发：负责人可以选择个人，也可以一键选择当前可见团队全员；接收人必须有权查看报表涉及的全部项目。
+            </div>
           </el-form-item>
           <el-form-item label="说明" class="span-2">
             <el-input
@@ -326,6 +342,10 @@ const successCount = computed(() =>
   schedules.value.filter((item) => item.last_status === 'success' || item.last_status === 'partial').length,
 )
 const failedCount = computed(() => schedules.value.filter((item) => item.last_status === 'failed').length)
+const allRecipientsSelected = computed(() =>
+  Boolean(members.value.length)
+  && members.value.every((member) => form.recipientIds.includes(member.id)),
+)
 const groupOptions = computed(() => {
   if (form.dataSource === 'finance') return [
     { label: '按类别', value: 'category' },
@@ -409,6 +429,14 @@ function openEditDialog(schedule: ScheduledReport): void {
 
 function handleDataSourceChange(): void {
   form.groupBy = groupOptions.value[0].value
+}
+
+function toggleAllRecipients(): void {
+  if (allRecipientsSelected.value) {
+    form.recipientIds = []
+    return
+  }
+  form.recipientIds = members.value.map((member) => member.id)
 }
 
 async function saveSchedule(): Promise<void> {
@@ -557,6 +585,21 @@ onMounted(loadData)
 
 .report-tabs :deep(.el-tabs__header) {
   margin-bottom: var(--space-4);
+}
+
+.recipient-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  gap: 12px;
+}
+
+.recipient-help {
+  margin-top: 6px;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  line-height: 1.55;
 }
 
 .table-panel {

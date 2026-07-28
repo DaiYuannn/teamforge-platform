@@ -141,6 +141,12 @@ class Announcement(models.Model):
         PUBLISHED = 'published', '已发布'
         ARCHIVED = 'archived', '已归档'
 
+    class Audience(models.TextChoices):
+        ORGANIZATION = 'organization', '全实践团队'
+        TEAMS = 'teams', '指定小团队'
+        PROJECTS = 'projects', '指定项目'
+        PUBLIC = 'public', '互联网公开'
+
     title = models.CharField('标题', max_length=200)
     content = models.TextField('内容')
     resource_links = models.JSONField(
@@ -155,8 +161,37 @@ class Announcement(models.Model):
     status = models.CharField(
         '状态', max_length=20, choices=Status.choices, default=Status.DRAFT
     )
+    audience = models.CharField(
+        '发布范围',
+        max_length=20,
+        choices=Audience.choices,
+        default=Audience.ORGANIZATION,
+        db_index=True,
+    )
+    organization = models.ForeignKey(
+        'common.Team',
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='organization_announcements',
+        verbose_name='所属实践团队',
+        help_text='公告所属的根团队，用于不同实践团队之间的数据隔离',
+    )
+    target_teams = models.ManyToManyField(
+        'common.Team',
+        blank=True,
+        related_name='targeted_announcements',
+        verbose_name='目标小团队',
+    )
+    target_projects = models.ManyToManyField(
+        'projects.Project',
+        blank=True,
+        related_name='targeted_announcements',
+        verbose_name='目标项目',
+    )
     is_pinned = models.BooleanField('置顶', default=False)
-    is_public = models.BooleanField('是否公开', default=False)  # 公开可见（无需登录）
+    # 兼容旧接口和既有公开门户；新代码以 audience=public 为准。
+    is_public = models.BooleanField('是否公开', default=False)
     author = models.ForeignKey(
         'users.User', on_delete=models.SET_NULL, null=True,
         related_name='announcements', verbose_name='发布人',
@@ -173,3 +208,12 @@ class Announcement(models.Model):
 
     def __str__(self):
         return f'{self.title}({self.get_status_display()})'
+
+    def save(self, *args, **kwargs):
+        # 直接通过 ORM 创建的旧代码仍可能只传 is_public。序列化器在范围
+        # 切换时会同时写入两个字段，这里的双向同步负责兼容旧调用。
+        if self.audience == self.Audience.PUBLIC:
+            self.is_public = True
+        elif self.is_public:
+            self.audience = self.Audience.PUBLIC
+        super().save(*args, **kwargs)

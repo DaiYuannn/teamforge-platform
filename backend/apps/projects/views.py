@@ -28,7 +28,146 @@ from .serializers import (
 )
 from .permissions import IsProjectLeaderOrTeacherOrAdmin, IsProjectLeader
 from .services import project_service
+from apps.common.team_models import Team, TeamMember
+from apps.competitions.models import Competition, CompetitionParticipant
+from apps.finance.models import FinanceExpense
+from apps.tasks.models import Task
 from apps.users.models import User
+
+
+PROJECT_VIEW_MANAGEMENT_ROLES = {
+    TeamMember.Role.OWNER,
+    TeamMember.Role.CO_LEAD,
+    TeamMember.Role.ADMIN,
+}
+PROJECT_VIEW_OVERSIGHT_ROLES = PROJECT_VIEW_MANAGEMENT_ROLES | {
+    TeamMember.Role.TEACHER,
+}
+
+
+def _user_project_team_ids(user):
+    """Return the squads that belong in the user's focused team view."""
+    if not user or not user.is_authenticated:
+        return set()
+    visible_statuses = [
+        TeamMember.Status.ACTIVE,
+        TeamMember.Status.ON_LEAVE,
+    ]
+    direct_memberships = list(
+        TeamMember.objects.filter(
+            user=user,
+            status__in=visible_statuses,
+            team__is_active=True,
+        ).values_list('team_id', 'team__parent_id', 'role', 'status')
+    )
+    direct_ids = {team_id for team_id, _, _, _ in direct_memberships}
+    direct_ids.update(
+        Team.objects.filter(owner=user, is_active=True).values_list(
+            'id',
+            flat=True,
+        )
+    )
+
+    overseen_root_ids = {
+        team_id
+        for team_id, parent_id, role, membership_status in direct_memberships
+        if (
+            parent_id is None
+            and (
+                role in PROJECT_VIEW_OVERSIGHT_ROLES
+                or getattr(user, 'global_role', '') == User.GlobalRole.TEACHER
+            )
+            and membership_status == TeamMember.Status.ACTIVE
+        )
+    }
+    overseen_root_ids.update(
+        Team.objects.filter(
+            owner=user,
+            parent__isnull=True,
+            is_active=True,
+        ).values_list('id', flat=True)
+    )
+    if overseen_root_ids:
+        direct_ids.update(
+            Team.objects.filter(
+                parent_id__in=overseen_root_ids,
+                is_active=True,
+            ).values_list('id', flat=True)
+        )
+    return direct_ids
+
+
+def _apply_project_view_scope(queryset, user, scope):
+    """Apply a navigation perspective without weakening the visibility boundary."""
+    if scope in {'mine', 'participating'}:
+        return queryset.filter(
+            Q(leader=user)
+            | Q(
+                members__user=user,
+                members__status=ProjectMember.Status.ACTIVE,
+            )
+        )
+    if scope == 'my_teams':
+        team_ids = _user_project_team_ids(user)
+        if team_ids:
+            return queryset.filter(teams__id__in=team_ids)
+        related_projects = queryset.filter(
+            Q(leader=user)
+            | Q(
+                members__user=user,
+                members__status=ProjectMember.Status.ACTIVE,
+            )
+        )
+        if (
+            getattr(user, 'global_role', '') == User.GlobalRole.TEACHER
+            and not related_projects.exists()
+        ):
+            # Older teacher accounts may predate Team memberships. Returning
+            # their permission-scoped overview is safer than a misleading
+            # blank page; the client labels this compatibility fallback.
+            return queryset
+        return related_projects
+    if scope == 'managed':
+        if getattr(user, 'global_role', '') == User.GlobalRole.SYS_ADMIN:
+            return queryset
+        globally_granted = False
+        granted_project_ids = set()
+        for assignment in user.role_assignments.select_related('role').only(
+            'project_id',
+            'role__permissions',
+        ):
+            if 'project.manage' not in (assignment.role.permissions or []):
+                continue
+            if assignment.project_id is None:
+                globally_granted = True
+            else:
+                granted_project_ids.add(assignment.project_id)
+        if globally_granted:
+            return queryset
+        return queryset.filter(
+            Q(leader=user)
+            | Q(
+                members__user=user,
+                members__role_in_project=ProjectMember.RoleInProject.LEADER,
+                members__status=ProjectMember.Status.ACTIVE,
+            )
+            | Q(teams__owner=user)
+            | Q(
+                teams__teammember__user=user,
+                teams__teammember__role__in=PROJECT_VIEW_MANAGEMENT_ROLES,
+                teams__teammember__status=TeamMember.Status.ACTIVE,
+            )
+            | Q(teams__parent__owner=user)
+            | Q(
+                teams__parent__teammember__user=user,
+                teams__parent__teammember__role__in=PROJECT_VIEW_MANAGEMENT_ROLES,
+                teams__parent__teammember__status=TeamMember.Status.ACTIVE,
+            )
+            | Q(pk__in=granted_project_ids)
+        )
+    # ``visible`` and the legacy ``team`` alias intentionally retain the
+    # already permission-scoped queryset.
+    return queryset
 
 
 class ProjectViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet):
@@ -77,10 +216,38 @@ class ProjectViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet):
             .get_queryset()
             .select_related('leader')
             .prefetch_related(
-                'teams',
+                Prefetch(
+                    'teams',
+                    queryset=Team.objects.select_related('owner', 'parent'),
+                ),
+                Prefetch(
+                    'teams__teammember_set',
+                    queryset=TeamMember.objects.filter(
+                        role=TeamMember.Role.CO_LEAD,
+                        status=TeamMember.Status.ACTIVE,
+                    ).select_related('user'),
+                    to_attr='active_lead_memberships',
+                ),
                 Prefetch(
                     'members',
                     queryset=ProjectMember.objects.select_related('user'),
+                ),
+                Prefetch(
+                    'tasks',
+                    queryset=Task.objects.select_related(
+                        'assignee',
+                    ).prefetch_related('collaborators'),
+                ),
+                Prefetch(
+                    'competitions',
+                    queryset=Competition.objects.prefetch_related(
+                        Prefetch(
+                            'participants',
+                            queryset=CompetitionParticipant.objects.select_related(
+                                'user',
+                            ),
+                        ),
+                    ),
                 ),
             )
             .annotate(
@@ -100,14 +267,28 @@ class ProjectViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet):
             project_lookup='',
         )
         if getattr(user, 'membership_status', '') != User.MembershipStatus.EXTERNAL:
-            queryset = queryset.prefetch_related('budgets')
-        if self.request.query_params.get('scope') == 'mine':
+            queryset = queryset.prefetch_related(
+                'budgets',
+                Prefetch(
+                    'expenses',
+                    queryset=FinanceExpense.objects.only('project_id', 'amount'),
+                    to_attr='recorded_expenses',
+                ),
+            )
+        queryset = _apply_project_view_scope(
+            queryset,
+            user,
+            self.request.query_params.get('scope', ''),
+        )
+        team_id = self.request.query_params.get('team')
+        if team_id:
+            try:
+                team_id = int(team_id)
+            except (TypeError, ValueError):
+                return queryset.none()
             queryset = queryset.filter(
-                Q(leader=user)
-                | Q(
-                    members__user=user,
-                    members__status=ProjectMember.Status.ACTIVE,
-                )
+                Q(teams__id=team_id)
+                | Q(teams__parent_id=team_id)
             )
         return queryset.distinct()
 

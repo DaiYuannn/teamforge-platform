@@ -22,6 +22,7 @@ def test_project_list_includes_operational_summary(
     make_project,
     make_task,
     make_user,
+    make_finance,
 ):
     project = make_project()
     extra_member = make_user(email='project-summary-member@test.com')
@@ -41,12 +42,19 @@ def test_project_list_includes_operational_summary(
         bonus_amount=Decimal('1000.00'),
         other_income=Decimal('250.00'),
         used_amount=Decimal('400.00'),
+        pending_reimbursement=Decimal('100.00'),
     )
     FinanceBudget.objects.create(
         project=project,
         bonus_amount=Decimal('500.00'),
         used_amount=Decimal('125.00'),
         period='2026-08',
+    )
+    make_finance(
+        project=project,
+        title='项目清单支出',
+        amount=Decimal('175.50'),
+        reimbursement_status='approved',
     )
 
     response = member_client.get('/api/v1/projects/')
@@ -56,7 +64,9 @@ def test_project_list_includes_operational_summary(
     assert row['member_count'] == 2
     assert row['task_count'] == 2
     assert row['competition_count'] == 2
-    assert Decimal(row['finance_balance']) == Decimal('1225.00')
+    assert Decimal(row['finance_spending']) == Decimal('175.50')
+    assert Decimal(row['finance_available']) == Decimal('1074.50')
+    assert Decimal(row['finance_balance']) == Decimal('1350.00')
     assert row['created_at']
 
 
@@ -84,9 +94,9 @@ def test_project_list_summary_uses_fixed_query_count(
 
     assert response.status_code == 200
     assert len(extract_results(response)) >= 6
-    # 两级团队可见范围解析会增加固定的团队成员、团队负责人和根团队查询；
+    # 两级团队、项目成员任务分工和比赛负责人均通过固定批次预取；
     # 这里仍约束项目数量增长时不得出现逐项目查询。
-    assert len(captured) <= 9
+    assert len(captured) <= 14
 
 
 @pytest.mark.api
@@ -151,9 +161,14 @@ def test_external_project_summary_never_exposes_finance(
     assert response.status_code == 200
     rows = extract_results(response)
     assert [row['id'] for row in rows] == [assigned_project.id]
+    assert rows[0]['finance_spending'] is None
+    assert rows[0]['finance_available'] is None
     assert rows[0]['finance_balance'] is None
     assert not any(
-        'finance_budgets' in query['sql'].lower()
+        (
+            'finance_budgets' in query['sql'].lower()
+            or 'finance_expenses' in query['sql'].lower()
+        )
         for query in captured.captured_queries
     )
 

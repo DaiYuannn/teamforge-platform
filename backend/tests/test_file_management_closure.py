@@ -57,6 +57,26 @@ class TestFileFolderClosure:
         child = extract_data(child_response)
         assert child['path'] == '交付材料 / 终稿'
 
+        upload_response = teacher_client.post(
+            '/api/v1/files/',
+            {
+                'project': project.id,
+                'folder': child['id'],
+                'level': 'internal',
+                'file': SimpleUploadedFile(
+                    '目录关联.txt',
+                    b'folder-linked-content',
+                    content_type='text/plain',
+                ),
+            },
+            format='multipart',
+        )
+        assert upload_response.status_code == 201, upload_response.json()
+        uploaded = extract_data(upload_response)
+        assert uploaded['folder'] == child['id']
+        assert uploaded['folder_name'] == '终稿'
+        assert FileAsset.objects.get(pk=uploaded['id']).folder_id == child['id']
+
         cross_project = teacher_client.post(
             '/api/v1/files/folders/',
             {
@@ -81,7 +101,9 @@ class TestFileFolderClosure:
             f'/api/v1/files/?project={project.id}&folder={child["id"]}',
         )
         assert filtered.status_code == 200
-        assert [item['id'] for item in extract_results(filtered)] == [file_asset.id]
+        assert {
+            item['id'] for item in extract_results(filtered)
+        } == {uploaded['id'], file_asset.id}
 
         moved_to_root = teacher_client.post(
             f'/api/v1/files/{file_asset.id}/move/',

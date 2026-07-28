@@ -26,7 +26,9 @@
               :icon="FolderAdd"
               aria-label="新建文件夹"
               @click="openFolderDialog()"
-            />
+            >
+              新建文件夹
+            </el-button>
           </el-tooltip>
           <el-button
             v-if="canUpload"
@@ -34,7 +36,7 @@
             :icon="Upload"
             @click="openUploadDialog"
           >
-            上传
+            {{ uploadActionLabel }}
           </el-button>
         </template>
       </template>
@@ -174,6 +176,76 @@
           </aside>
 
           <div class="file-results">
+            <section v-if="selectedProject" class="directory-context" aria-label="当前文件目录">
+              <el-breadcrumb separator="/">
+                <el-breadcrumb-item>
+                  <button type="button" class="breadcrumb-button" @click="selectFolder(undefined)">
+                    {{ selectedProject.name }}
+                  </button>
+                </el-breadcrumb-item>
+                <el-breadcrumb-item v-if="queryParams.folder !== undefined">
+                  <button
+                    type="button"
+                    class="breadcrumb-button"
+                    :class="{ current: queryParams.folder === 'root' }"
+                    @click="selectFolder('root')"
+                  >
+                    根目录
+                  </button>
+                </el-breadcrumb-item>
+                <el-breadcrumb-item v-for="folder in currentFolderTrail" :key="folder.id">
+                  <button
+                    type="button"
+                    class="breadcrumb-button"
+                    :class="{ current: folder.id === queryParams.folder }"
+                    @click="selectFolder(folder.id)"
+                  >
+                    {{ folder.name }}
+                  </button>
+                </el-breadcrumb-item>
+                <el-breadcrumb-item v-if="queryParams.folder === undefined">全部目录汇总</el-breadcrumb-item>
+              </el-breadcrumb>
+
+              <div class="directory-current-row">
+                <div class="directory-current-copy">
+                  <span>{{ queryParams.folder === undefined ? '当前视图' : '当前目录' }}</span>
+                  <strong>{{ currentFolderLabel }}</strong>
+                  <p>{{ currentFolderHelp }}</p>
+                </div>
+                <div v-if="canManageSelectedProject" class="directory-actions">
+                  <el-button :icon="FolderAdd" @click="openFolderDialog()">
+                    {{ newFolderActionLabel }}
+                  </el-button>
+                  <el-button type="primary" :icon="Upload" @click="openUploadDialog">
+                    上传到{{ operationDirectoryLabel }}
+                  </el-button>
+                </div>
+              </div>
+            </section>
+
+            <section v-if="selectedProject && childFolders.length" class="child-folder-section">
+              <div class="child-folder-heading">
+                <strong>{{ queryParams.folder === undefined ? '可进入的根目录' : '下级目录' }}</strong>
+                <span>点击文件夹进入，不会上传文件</span>
+              </div>
+              <div class="child-folder-grid">
+                <button
+                  v-for="folder in childFolders"
+                  :key="folder.id"
+                  type="button"
+                  class="child-folder-card"
+                  @click="selectFolder(folder.id)"
+                >
+                  <el-icon><Folder /></el-icon>
+                  <span>
+                    <strong>{{ folder.name }}</strong>
+                    <small>{{ folder.file_count }} 个直接文件</small>
+                  </span>
+                  <em>进入</em>
+                </button>
+              </div>
+            </section>
+
             <div class="list-heading">
               <div>
                 <h2>{{ currentFolderLabel }}</h2>
@@ -415,7 +487,7 @@
 
     <el-dialog
       v-model="uploadVisible"
-      title="上传文件"
+      :title="`上传文件到：${uploadTargetLabel}`"
       width="min(520px, calc(100vw - 32px))"
       :close-on-click-modal="!uploading"
     >
@@ -425,10 +497,11 @@
             <el-option v-for="project in manageableProjects" :key="project.id" :label="project.name" :value="project.id" />
           </el-select>
         </el-form-item>
-        <el-form-item label="文件夹">
+        <el-form-item label="上传位置" required>
           <el-select v-model="uploadForm.folder" clearable placeholder="项目根目录">
             <el-option v-for="folder in uploadFolders" :key="folder.id" :label="folder.path" :value="folder.id" />
           </el-select>
+          <p class="form-help">清空选择表示上传到项目根目录；选择文件夹后，文件会实际关联到该目录。</p>
         </el-form-item>
         <el-form-item label="访问级别" required>
           <el-radio-group v-model="uploadForm.level">
@@ -456,20 +529,29 @@
       </el-form>
       <template #footer>
         <el-button :disabled="uploading" @click="uploadVisible = false">取消</el-button>
-        <el-button type="primary" :loading="uploading" @click="handleUploadSubmit">上传</el-button>
+        <el-button type="primary" :loading="uploading" @click="handleUploadSubmit">
+          上传到所选目录
+        </el-button>
       </template>
     </el-dialog>
 
     <el-dialog
       v-model="folderDialogVisible"
-      :title="editingFolder ? '编辑文件夹' : '新建文件夹'"
+      :title="folderDialogTitle"
       width="min(460px, calc(100vw - 32px))"
     >
       <el-form label-position="top">
-        <el-form-item label="名称" required>
+        <el-alert
+          v-if="!editingFolder"
+          :title="`将在「${folderParentLabel}」下新建文件夹，不会上传文件。`"
+          type="info"
+          :closable="false"
+          show-icon
+        />
+        <el-form-item label="文件夹名称" required>
           <el-input v-model="folderForm.name" maxlength="100" show-word-limit @keyup.enter="handleFolderSubmit" />
         </el-form-item>
-        <el-form-item label="上级文件夹">
+        <el-form-item label="所在目录">
           <el-select v-model="folderForm.parent" clearable placeholder="项目根目录">
             <el-option
               v-for="folder in folderParentOptions"
@@ -482,7 +564,9 @@
       </el-form>
       <template #footer>
         <el-button @click="folderDialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="folderSaving" @click="handleFolderSubmit">保存</el-button>
+        <el-button type="primary" :loading="folderSaving" @click="handleFolderSubmit">
+          {{ editingFolder ? '保存修改' : '新建到此目录' }}
+        </el-button>
       </template>
     </el-dialog>
 
@@ -822,12 +906,45 @@ const availableTags = computed(() => tags.value.filter((tag) =>
   tag.project == null || tag.project === queryParams.project,
 ))
 const projectTags = computed(() => tags.value.filter((tag) => tag.project === queryParams.project))
+const currentFolder = computed(() => (
+  typeof queryParams.folder === 'number'
+    ? folders.value.find((folder) => folder.id === queryParams.folder)
+    : undefined
+))
 const currentFolderLabel = computed(() => {
   if (queryParams.folder === 'root') return '项目根目录'
-  if (typeof queryParams.folder === 'number') {
-    return folders.value.find((folder) => folder.id === queryParams.folder)?.name || '文件清单'
+  if (currentFolder.value) return currentFolder.value.path
+  return selectedProject.value ? '全部目录汇总' : '全部项目文件'
+})
+const currentFolderTrail = computed<FileFolder[]>(() => {
+  if (!currentFolder.value) return []
+  const trail: FileFolder[] = []
+  const byId = new Map(folders.value.map((folder) => [folder.id, folder]))
+  let cursor: FileFolder | undefined = currentFolder.value
+  while (cursor && trail.length < 8) {
+    trail.unshift(cursor)
+    cursor = cursor.parent ? byId.get(cursor.parent) : undefined
   }
-  return '文件清单'
+  return trail
+})
+const childFolders = computed(() => {
+  const parentId = typeof queryParams.folder === 'number' ? queryParams.folder : null
+  return folders.value.filter((folder) => (folder.parent ?? null) === parentId)
+})
+const operationDirectoryLabel = computed(() =>
+  currentFolder.value?.name || '项目根目录',
+)
+const uploadActionLabel = computed(() =>
+  selectedProject.value ? `上传到${operationDirectoryLabel.value}` : '上传文件',
+)
+const newFolderActionLabel = computed(() =>
+  currentFolder.value ? '新建子文件夹' : '新建文件夹',
+)
+const currentFolderHelp = computed(() => {
+  if (queryParams.folder === undefined) {
+    return '这是跨目录汇总视图；上传或新建默认放到项目根目录。先点击文件夹可进入指定目录。'
+  }
+  return `这里仅显示${operationDirectoryLabel.value}中的直接文件；上传和新建会默认使用当前目录。`
 })
 const folderTree = computed<FolderTreeNode[]>(() => {
   const nodes = new Map<number, FolderTreeNode>()
@@ -948,6 +1065,12 @@ const uploadForm = reactive<{ project?: number; folder?: number; level: FileLeve
   folder: undefined,
   level: 'internal',
 })
+const uploadTargetLabel = computed(() => {
+  const project = projectOptions.value.find((item) => item.id === uploadForm.project)
+  const folder = uploadFolders.value.find((item) => item.id === uploadForm.folder)
+  if (!project) return '请先选择项目'
+  return `${project.name} / ${folder?.path || '根目录'}`
+})
 
 async function openUploadDialog(): Promise<void> {
   uploadForm.project = queryParams.project
@@ -986,7 +1109,9 @@ async function handleUploadSubmit(): Promise<void> {
     })
     uploadVisible.value = false
     ElMessage.success('文件上传成功')
-    if (queryParams.project === uploadForm.project) await loadData()
+    if (queryParams.project === uploadForm.project) {
+      await Promise.all([loadData(), loadFolders()])
+    }
   } finally {
     uploading.value = false
   }
@@ -996,6 +1121,15 @@ const folderDialogVisible = ref(false)
 const folderSaving = ref(false)
 const editingFolder = ref<FileFolder | null>(null)
 const folderForm = reactive<{ name: string; parent?: number }>({ name: '', parent: undefined })
+const folderParentLabel = computed(() => {
+  const projectName = selectedProject.value?.name || '当前项目'
+  const parent = folders.value.find((folder) => folder.id === folderForm.parent)
+  return `${projectName} / ${parent?.path || '根目录'}`
+})
+const folderDialogTitle = computed(() => {
+  if (editingFolder.value) return '编辑文件夹'
+  return `新建文件夹到：${folderParentLabel.value}`
+})
 const folderParentOptions = computed(() => folders.value.filter((folder) => {
   if (!editingFolder.value) return true
   if (folder.id === editingFolder.value.id) return false
@@ -1006,7 +1140,9 @@ const folderParentOptions = computed(() => folders.value.filter((folder) => {
 function openFolderDialog(folder?: FileFolder, parent?: number): void {
   editingFolder.value = folder || null
   folderForm.name = folder?.name || ''
-  folderForm.parent = parent ?? folder?.parent ?? undefined
+  folderForm.parent = folder
+    ? folder.parent ?? undefined
+    : parent ?? (typeof queryParams.folder === 'number' ? queryParams.folder : undefined)
   folderDialogVisible.value = true
 }
 
@@ -1398,6 +1534,10 @@ onUnmounted(releasePreviewUrl)
   line-height: 1.5;
 }
 
+.el-form > :deep(.el-alert) {
+  margin-bottom: 16px;
+}
+
 .file-list-page {
   padding-bottom: 32px;
 }
@@ -1537,6 +1677,154 @@ onUnmounted(releasePreviewUrl)
 .folder-node-actions :deep(.el-button) { width: 24px; height: 24px; padding: 0; }
 
 .file-results { min-width: 0; }
+
+.directory-context {
+  display: grid;
+  gap: 12px;
+  padding: 14px 18px;
+  background: var(--color-surface-subtle);
+  border-bottom: 1px solid var(--color-border-light);
+}
+
+.breadcrumb-button {
+  padding: 0;
+  color: var(--color-text-muted);
+  font: inherit;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.breadcrumb-button:hover,
+.breadcrumb-button.current {
+  color: var(--color-primary);
+}
+
+.directory-current-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.directory-current-copy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.directory-current-copy > span {
+  color: var(--color-text-muted);
+  font-size: 11px;
+}
+
+.directory-current-copy > strong {
+  overflow: hidden;
+  color: var(--color-text);
+  font-size: 15px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.directory-current-copy > p {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.directory-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 8px;
+}
+
+.directory-actions :deep(.el-button + .el-button) {
+  margin-left: 0;
+}
+
+.child-folder-section {
+  padding: 12px 18px 14px;
+  border-bottom: 1px solid var(--color-border-light);
+}
+
+.child-folder-heading {
+  display: flex;
+  margin-bottom: 9px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--color-text);
+  font-size: 12px;
+}
+
+.child-folder-heading > span {
+  color: var(--color-text-muted);
+  font-size: 11px;
+}
+
+.child-folder-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 8px;
+}
+
+.child-folder-card {
+  display: flex;
+  min-width: 0;
+  padding: 10px 11px;
+  align-items: center;
+  gap: 9px;
+  color: var(--color-text-regular);
+  font: inherit;
+  text-align: left;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.child-folder-card:hover {
+  color: var(--color-primary);
+  border-color: var(--color-primary);
+}
+
+.child-folder-card > .el-icon {
+  flex: 0 0 auto;
+  color: var(--color-primary);
+  font-size: 20px;
+}
+
+.child-folder-card > span {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  gap: 2px;
+}
+
+.child-folder-card strong,
+.child-folder-card small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.child-folder-card strong {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.child-folder-card small {
+  color: var(--color-text-muted);
+  font-size: 10px;
+}
+
+.child-folder-card em {
+  flex: 0 0 auto;
+  color: var(--color-primary);
+  font-size: 11px;
+  font-style: normal;
+}
 
 .list-heading {
   display: flex;
@@ -1821,6 +2109,13 @@ onUnmounted(releasePreviewUrl)
   .filter-toolbar :deep(.el-form-item__label) { display: block; width: 100%; height: auto; margin-bottom: 5px; line-height: 1.4; }
   .project-filter, .folder-filter, .tag-filter, .level-filter, .search-filter { width: 100%; }
   .workspace-body { display: block; }
+  .directory-context { padding: 12px 14px; }
+  .directory-current-row { align-items: stretch; flex-direction: column; gap: 10px; }
+  .directory-actions { display: grid; grid-template-columns: 1fr 1fr; }
+  .directory-actions :deep(.el-button) { width: 100%; }
+  .child-folder-section { padding: 11px 14px 13px; }
+  .child-folder-heading { align-items: flex-start; flex-direction: column; gap: 2px; }
+  .child-folder-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .list-heading { padding-right: 14px; padding-left: 14px; }
   .pagination-wrapper { justify-content: center; padding-right: 8px; padding-left: 8px; }
   .preview-container, .preview-loading { min-height: 300px; }
@@ -1835,6 +2130,8 @@ onUnmounted(releasePreviewUrl)
 @media screen and (max-width: 430px) {
   .filter-toolbar :deep(.el-form) { grid-template-columns: 1fr; }
   .filter-toolbar :deep(.el-form-item:last-child) { grid-column: auto; }
+  .directory-actions,
+  .child-folder-grid { grid-template-columns: 1fr; }
   .tag-editor { grid-template-columns: minmax(0, 1fr) 44px; }
   .tag-editor > .el-button { grid-column: 1 / -1; }
   .share-row { align-items: flex-start; flex-direction: column; }

@@ -75,6 +75,7 @@ class FinanceExpenseListSerializer(serializers.ModelSerializer):
         fields = (
             'id', 'project', 'project_name', 'title', 'amount',
             'spender', 'spender_name', 'expense_date', 'category', 'category_display',
+            'purpose',
             'reimbursement_status', 'reimbursement_status_display',
             'applied_by', 'applied_by_name', 'applied_at',
             'reviewer', 'reviewer_name', 'reviewed_at', 'review_opinion',

@@ -17,6 +17,18 @@
       @close="clearProjectFilter"
     />
 
+    <section class="review-policy" aria-label="贡献审核规则">
+      <div>
+        <strong>当前审核方式：一条贡献只交给一名明确审核人</strong>
+        <span>不是所有负责人和老师逐级审核；各项目可以单独配置审核人池，团队讨论后只需调整配置。</span>
+      </div>
+      <dl>
+        <div><dt>普通成员</dt><dd>按审核池优先级分派</dd></div>
+        <div><dt>负责人自报</dt><dd>必须交独立审核人</dd></div>
+        <div><dt>利益回避</dt><dd>贡献人和代填人不能自审</dd></div>
+      </dl>
+    </section>
+
     <section class="review-summary" aria-label="待审核贡献摘要">
       <div>
         <span>待处理</span>
@@ -365,6 +377,39 @@ onMounted(loadData)
   }
 }
 
+.review-policy {
+  display: grid;
+  grid-template-columns: minmax(260px, 1.25fr) minmax(360px, 1fr);
+  gap: 20px;
+  padding: 14px 18px;
+  background: var(--color-primary-light-9);
+  border: 1px solid var(--el-color-primary-light-7);
+  border-radius: var(--radius-md);
+
+  > div {
+    display: grid;
+    align-content: center;
+    gap: 4px;
+
+    strong { color: var(--color-text); font-size: 13px; }
+    span { color: var(--color-text-muted); font-size: 12px; line-height: 1.55; }
+  }
+
+  dl {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    margin: 0;
+
+    div {
+      padding: 0 12px;
+      border-left: 1px solid var(--el-color-primary-light-7);
+    }
+
+    dt { color: var(--color-text-muted); font-size: 11px; }
+    dd { margin: 3px 0 0; color: var(--color-text); font-size: 12px; font-weight: 600; }
+  }
+}
+
 .review-summary {
   display: flex;
   align-items: stretch;
@@ -541,6 +586,20 @@ onMounted(loadData)
 }
 
 @media screen and (max-width: 768px) {
+  .review-policy {
+    grid-template-columns: 1fr;
+
+    dl {
+      grid-template-columns: 1fr;
+      gap: 8px;
+
+      div {
+        padding: 0;
+        border-left: 0;
+      }
+    }
+  }
+
   .reviewer-config-form {
     grid-template-columns: minmax(0, 1fr);
   }

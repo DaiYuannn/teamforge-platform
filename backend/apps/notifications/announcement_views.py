@@ -7,6 +7,7 @@
 - public 接口无需登录，返回公开（is_public=True）的已发布公告
 """
 from django.utils import timezone
+from django.db.models import Q
 from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated, AllowAny
@@ -15,33 +16,13 @@ from rest_framework.viewsets import ModelViewSet
 
 from common.response import success_response
 from common.mixins import MultiSerializerMixin, MultiPermissionMixin
-from common.permissions import user_has_custom_permission
-from apps.common.team_models import TeamMember
 from .models import Announcement
 from .serializers import AnnouncementSerializer
-
-
-def can_manage_announcements(user):
-    if (
-        not user
-        or not user.is_authenticated
-        or not user.is_active
-        or getattr(user, 'membership_status', '') not in {'active', 'on_leave'}
-    ):
-        return False
-    if user.global_role in {'teacher', 'sys_admin'}:
-        return True
-    if user_has_custom_permission(user, 'announcement.manage'):
-        return True
-    return TeamMember.objects.filter(
-        user=user,
-        role__in=[
-            TeamMember.Role.OWNER,
-            TeamMember.Role.CO_LEAD,
-            TeamMember.Role.ADMIN,
-        ],
-        status=TeamMember.Status.ACTIVE,
-    ).exists()
+from .announcement_access import (
+    can_manage_announcement,
+    can_manage_announcements,
+    scope_announcements_for_user,
+)
 
 
 class IsAnnouncementManager(BasePermission):
@@ -49,7 +30,7 @@ class IsAnnouncementManager(BasePermission):
         return can_manage_announcements(getattr(request, 'user', None))
 
     def has_object_permission(self, request, view, obj):
-        return self.has_permission(request, view)
+        return can_manage_announcement(request.user, obj)
 
 
 class AnnouncementViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet):
@@ -60,7 +41,12 @@ class AnnouncementViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewS
     - pin: POST 置顶/取消置顶（老师/管理员）
     - public: GET 公开公告列表（无需登录）
     """
-    queryset = Announcement.objects.select_related('author').all()
+    queryset = (
+        Announcement.objects
+        .select_related('author', 'organization')
+        .prefetch_related('target_teams', 'target_projects')
+        .all()
+    )
 
     serializer_classes_by_action = {
         'list': AnnouncementSerializer,
@@ -83,7 +69,10 @@ class AnnouncementViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewS
         'public': [AllowAny],
     }
 
-    filterset_fields = ['category', 'status', 'is_pinned', 'is_public', 'author']
+    filterset_fields = [
+        'category', 'status', 'audience', 'organization',
+        'target_teams', 'target_projects', 'is_pinned', 'is_public', 'author',
+    ]
     search_fields = ['title', 'content', 'author__name']
     ordering_fields = ['created_at', 'published_at', 'updated_at']
 
@@ -98,13 +87,14 @@ class AnnouncementViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewS
         if self.action == 'public':
             return queryset.filter(
                 status=Announcement.Status.PUBLISHED,
-                is_public=True,
+            ).filter(
+                Q(audience=Announcement.Audience.PUBLIC) | Q(is_public=True)
             )
-        # 老师/管理员可见全部
-        if can_manage_announcements(user):
-            return queryset
-        # 普通成员仅可见已发布
-        return queryset.filter(status=Announcement.Status.PUBLISHED)
+        return scope_announcements_for_user(
+            queryset,
+            user,
+            include_manageable=can_manage_announcements(user),
+        )
 
     def list(self, request, *args, **kwargs):
         """公告列表"""
@@ -128,7 +118,7 @@ class AnnouncementViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewS
         serializer.is_valid(raise_exception=True)
         self.perform_create(serializer)
         return success_response(
-            AnnouncementSerializer(serializer.instance).data,
+            self.get_serializer(serializer.instance).data,
             message='公告创建成功',
             http_status=status.HTTP_201_CREATED,
         )
@@ -149,7 +139,7 @@ class AnnouncementViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewS
         serializer.is_valid(raise_exception=True)
         self.perform_update(serializer)
         return success_response(
-            AnnouncementSerializer(serializer.instance).data,
+            self.get_serializer(serializer.instance).data,
             message='公告更新成功',
         )
 
@@ -180,7 +170,7 @@ class AnnouncementViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewS
         announcement.save(update_fields=['is_pinned', 'updated_at'])
         message = '已置顶' if announcement.is_pinned else '已取消置顶'
         return success_response(
-            AnnouncementSerializer(announcement).data,
+            self.get_serializer(announcement).data,
             message=message,
         )
 
