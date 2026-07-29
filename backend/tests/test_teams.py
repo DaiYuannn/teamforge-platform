@@ -15,6 +15,13 @@ def extract_data(response):
     return data
 
 
+def extract_rows(response):
+    data = extract_data(response)
+    if isinstance(data, dict):
+        return data.get('results', data)
+    return data
+
+
 @pytest.mark.api
 @pytest.mark.django_db
 class TestTeam:
@@ -99,6 +106,277 @@ class TestTeam:
         assert resp.status_code == 200
         data = extract_data(resp)
         assert any(m['user'] == u.id for m in data)
+
+    def test_member_lists_use_same_role_priority_order_for_child_team(
+        self, member_client, make_user
+    ):
+        """老师最前、负责人角色居中、普通成员按姓名稳定排序。"""
+        root = Team.objects.create(
+            name='排序总团队',
+            owner=member_client.user,
+        )
+        child_owner = make_user(
+            email='ordered-owner@test.com',
+            name='小组主负责人',
+        )
+        child = Team.objects.create(
+            name='排序小团队',
+            owner=child_owner,
+            parent=root,
+            team_type=Team.TeamType.SQUAD,
+        )
+        member_specs = (
+            ('teacher', 'ordered-teacher@test.com', '指导教师'),
+            ('owner', 'ordered-owner@test.com', '小组主负责人'),
+            ('co_lead', 'ordered-co-lead@test.com', '共同负责人'),
+            ('admin', 'ordered-admin@test.com', '团队管理员'),
+            ('advisor', 'ordered-advisor@test.com', '项目顾问'),
+            ('member', 'ordered-member-b@test.com', 'B成员'),
+            ('member', 'ordered-member-a@test.com', 'A成员'),
+            ('external', 'ordered-external@test.com', '外部成员'),
+        )
+        expected_ids = []
+        created_by_email = {child_owner.email: child_owner}
+        for role, email, name in member_specs:
+            user = created_by_email.get(email) or make_user(
+                email=email,
+                name=name,
+            )
+            membership = TeamMember.objects.create(
+                team=child,
+                user=user,
+                role=role,
+            )
+            created_by_email[email] = user
+            if role != TeamMember.Role.MEMBER:
+                expected_ids.append(membership.user_id)
+        member_ids = sorted(
+            (
+                membership.user.name,
+                membership.user_id,
+            )
+            for membership in TeamMember.objects.filter(
+                team=child,
+                role=TeamMember.Role.MEMBER,
+            ).select_related('user')
+        )
+        expected_ids[5:5] = [user_id for _, user_id in member_ids]
+
+        nested = member_client.get(
+            f'/api/v1/teams/{child.id}/members/'
+        )
+        standalone = member_client.get(
+            '/api/v1/team-members/',
+            {'team': child.id},
+        )
+
+        assert nested.status_code == 200
+        assert standalone.status_code == 200
+        assert [row['user'] for row in extract_rows(nested)] == expected_ids
+        assert [row['user'] for row in extract_rows(standalone)] == expected_ids
+
+    def test_member_lists_share_role_school_and_status_filters(
+        self, member_client, make_user, api_client
+    ):
+        root = Team.objects.create(
+            name='筛选总团队',
+            owner=member_client.user,
+        )
+        child_owner = make_user(email='filter-child-owner@test.com')
+        child = Team.objects.create(
+            name='筛选小团队',
+            owner=child_owner,
+            parent=root,
+            team_type=Team.TeamType.SQUAD,
+        )
+        teacher = make_user(
+            email='filter-teacher@test.com',
+            name='筛选教师',
+            school='示范大学',
+        )
+        account_on_leave = make_user(
+            email='filter-account-leave@test.com',
+            name='账号暂离成员',
+            school='示范大学',
+            membership_status='on_leave',
+        )
+        team_on_leave = make_user(
+            email='filter-team-leave@test.com',
+            name='小组暂离管理员',
+            school='其他大学',
+        )
+        external = make_user(
+            email='filter-external@test.com',
+            name='外部成员',
+            school='示范大学',
+            membership_status='external',
+        )
+        memberships = {
+            'teacher': TeamMember.objects.create(
+                team=child,
+                user=teacher,
+                role=TeamMember.Role.TEACHER,
+            ),
+            'account_on_leave': TeamMember.objects.create(
+                team=child,
+                user=account_on_leave,
+                role=TeamMember.Role.MEMBER,
+            ),
+            'team_on_leave': TeamMember.objects.create(
+                team=child,
+                user=team_on_leave,
+                role=TeamMember.Role.ADMIN,
+                status=TeamMember.Status.ON_LEAVE,
+            ),
+            'external': TeamMember.objects.create(
+                team=child,
+                user=external,
+                role=TeamMember.Role.EXTERNAL,
+            ),
+        }
+        cases = (
+            ({'role': TeamMember.Role.TEACHER}, {memberships['teacher'].id}),
+            (
+                {'school': '示范'},
+                {
+                    memberships['teacher'].id,
+                    memberships['account_on_leave'].id,
+                    memberships['external'].id,
+                },
+            ),
+            (
+                {'status': TeamMember.Status.ON_LEAVE},
+                {memberships['team_on_leave'].id},
+            ),
+            (
+                {'membership_status': 'on_leave'},
+                {memberships['account_on_leave'].id},
+            ),
+        )
+        for params, expected_ids in cases:
+            nested = member_client.get(
+                f'/api/v1/teams/{child.id}/members/',
+                params,
+            )
+            standalone = member_client.get(
+                '/api/v1/team-members/',
+                {'team': child.id, **params},
+            )
+            assert nested.status_code == 200
+            assert standalone.status_code == 200
+            assert {
+                row['id'] for row in extract_rows(nested)
+            } == expected_ids
+            assert {
+                row['id'] for row in extract_rows(standalone)
+            } == expected_ids
+
+        outsider = make_user(email='member-filter-outsider@test.com')
+        Team.objects.create(name='另一个总团队', owner=outsider)
+        api_client.force_authenticate(user=outsider)
+        assert api_client.get(
+            f'/api/v1/teams/{child.id}/members/'
+        ).status_code == 404
+        isolated_rows = extract_rows(api_client.get(
+            '/api/v1/team-members/',
+            {'team': child.id},
+        ))
+        assert isolated_rows == []
+
+    def test_active_root_teacher_can_view_child_but_cannot_manage(
+        self, member_client, make_user, api_client
+    ):
+        root = Team.objects.create(
+            name='Root team for teacher visibility',
+            owner=member_client.user,
+        )
+        teacher = make_user(
+            email='root-team-teacher@test.com',
+            global_role='teacher',
+        )
+        TeamMember.objects.create(
+            team=root,
+            user=teacher,
+            role=TeamMember.Role.TEACHER,
+            status=TeamMember.Status.ACTIVE,
+        )
+        child_owner = make_user(email='teacher-visible-child-owner@test.com')
+        child = Team.objects.create(
+            name='Teacher visible child team',
+            owner=child_owner,
+            parent=root,
+            team_type=Team.TeamType.SQUAD,
+        )
+        child_member = make_user(email='teacher-visible-child-member@test.com')
+        child_membership = TeamMember.objects.create(
+            team=child,
+            user=child_member,
+            role=TeamMember.Role.MEMBER,
+        )
+        candidate = make_user(email='teacher-forbidden-candidate@test.com')
+        api_client.force_authenticate(user=teacher)
+
+        team_list = api_client.get('/api/v1/teams/')
+        child_members = api_client.get(
+            f'/api/v1/teams/{child.id}/members/'
+        )
+        update = api_client.patch(
+            f'/api/v1/teams/{child.id}/',
+            {'description': 'Teacher must not be able to update this team.'},
+            format='json',
+        )
+        add_member = api_client.post(
+            f'/api/v1/teams/{child.id}/members/',
+            {'user': candidate.id, 'role': TeamMember.Role.MEMBER},
+            format='json',
+        )
+
+        assert team_list.status_code == 200
+        assert {row['id'] for row in extract_rows(team_list)} >= {
+            root.id,
+            child.id,
+        }
+        assert child_members.status_code == 200
+        assert child_membership.id in {
+            row['id'] for row in extract_rows(child_members)
+        }
+        assert update.status_code == 403
+        assert add_member.status_code == 403
+        assert not TeamMember.objects.filter(
+            team=child,
+            user=candidate,
+        ).exists()
+
+    def test_invalid_role_and_status_filters_are_consistent(
+        self, member_client
+    ):
+        team = Team.objects.create(
+            name='Invalid member filter team',
+            owner=member_client.user,
+        )
+        TeamMember.objects.create(
+            team=team,
+            user=member_client.user,
+            role=TeamMember.Role.OWNER,
+        )
+
+        for params in (
+            {'role': 'not-a-role'},
+            {'status': 'not-a-status'},
+        ):
+            nested = member_client.get(
+                f'/api/v1/teams/{team.id}/members/',
+                params,
+            )
+            standalone = member_client.get(
+                '/api/v1/team-members/',
+                {'team': team.id, **params},
+            )
+
+            assert nested.status_code == 200
+            assert standalone.status_code == 200
+            assert extract_rows(nested) == []
+            assert extract_rows(standalone) == []
 
     def test_remove_member(self, member_client, make_user):
         """成员离队保留关系和历史"""

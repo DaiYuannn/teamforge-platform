@@ -30,6 +30,16 @@
             <el-option v-for="team in teamOptions" :key="team.id" :label="team.name" :value="team.id" />
           </el-select>
         </el-form-item>
+        <el-form-item label="团队身份">
+          <el-select v-model="queryParams.team_role" placeholder="全部身份" clearable>
+            <el-option
+              v-for="option in TEAM_ROLE_OPTIONS"
+              :key="option.value"
+              :label="option.label"
+              :value="option.value"
+            />
+          </el-select>
+        </el-form-item>
         <el-form-item label="专业">
           <el-input v-model="queryParams.major" placeholder="全部专业" clearable />
         </el-form-item>
@@ -67,7 +77,7 @@
       <header class="surface-heading">
         <div>
           <h2>团队成员</h2>
-          <p>共 {{ total }} 人</p>
+          <p>共 {{ total }} 人 · {{ teamRoleScopeText }} · 按团队身份重要性排序</p>
         </div>
       </header>
 
@@ -86,11 +96,14 @@
             <AvatarWithName :name="memberName(row as Member)" :avatar-url="row.avatar" :size="34" />
           </template>
         </el-table-column>
-        <el-table-column label="角色" width="106">
+        <el-table-column label="团队身份" width="148">
           <template #default="{ row }">
-            <el-tag :type="roleTagType(row.global_role) as any" size="small">
-              {{ row.global_role_display || '-' }}
-            </el-tag>
+            <div class="role-cell">
+              <el-tag :type="teamRoleTagType(row.team_role) as any" size="small">
+                {{ teamRoleText(row as Member) }}
+              </el-tag>
+              <span>平台：{{ row.global_role_display || row.global_role || '-' }}</span>
+            </div>
           </template>
         </el-table-column>
         <el-table-column label="成员状态" width="104">
@@ -146,8 +159,8 @@
         >
           <header class="member-card__header">
             <AvatarWithName :name="memberName(member)" :avatar-url="member.avatar" :size="40" />
-            <el-tag :type="roleTagType(member.global_role) as any" size="small">
-              {{ member.global_role_display || '-' }}
+            <el-tag :type="teamRoleTagType(member.team_role) as any" size="small">
+              {{ teamRoleText(member) }}
             </el-tag>
             <el-tag :type="membershipStatusType(member.membership_status)" size="small" effect="plain">
               {{ membershipStatusLabel(member.membership_status) }}
@@ -169,6 +182,10 @@
             <div>
               <dt>所属小组</dt>
               <dd>{{ teamMembershipText(member) }}</dd>
+            </div>
+            <div>
+              <dt>平台角色</dt>
+              <dd>{{ member.global_role_display || member.global_role || '-' }}</dd>
             </div>
             <div>
               <dt>电话</dt>
@@ -216,6 +233,11 @@ import AvatarWithName from '@/components/AvatarWithName.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { useAppStore } from '@/stores/app'
+import {
+  TEAM_ROLE_OPTIONS,
+  teamRoleTagType,
+  teamRoleText,
+} from './memberTeamRole'
 
 const appStore = useAppStore()
 
@@ -235,17 +257,21 @@ const queryParams = reactive<MemberQueryParams>({
   major: '',
   school: '',
   team: undefined,
+  team_role: undefined,
   membership_status: '',
 })
 
 const hasActiveFilters = computed(
   () => Boolean(
     queryParams.search || queryParams.school || queryParams.grade || queryParams.major
-      || queryParams.team || queryParams.membership_status
+      || queryParams.team || queryParams.team_role || queryParams.membership_status
   ),
 )
 const paginationLayout = computed(() =>
   isMobile.value ? 'prev, pager, next' : 'total, sizes, prev, pager, next',
+)
+const teamRoleScopeText = computed(() =>
+  queryParams.team ? '身份为所选小组内身份' : '身份为当前组织最高身份',
 )
 
 function memberName(member: Member): string {
@@ -257,12 +283,6 @@ function teamMembershipText(member: Member): string {
   return memberships.length
     ? memberships.map((item) => `${item.team_name}（${item.role_display}）`).join('、')
     : '未分组'
-}
-
-function roleTagType(role?: string): string {
-  if (role === 'sys_admin') return 'danger'
-  if (role === 'teacher') return 'warning'
-  return 'info'
 }
 
 function membershipStatusLabel(value?: string): string {
@@ -306,6 +326,7 @@ function handleReset(): void {
   queryParams.major = ''
   queryParams.school = ''
   queryParams.team = undefined
+  queryParams.team_role = undefined
   queryParams.membership_status = ''
   queryParams.page = 1
   loadData()
@@ -321,7 +342,7 @@ function handleRowClick(member: Member): void {
 
 async function loadTeamOptions(): Promise<void> {
   try {
-    teamOptions.value = (await getTeams()).results
+    teamOptions.value = (await getTeams({ page: 1, page_size: 100 })).results
   } catch {
     teamOptions.value = []
   }
@@ -431,6 +452,17 @@ onMounted(() => {
     font-size: 12px;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+}
+
+.role-cell {
+  display: grid;
+  justify-items: start;
+  gap: 3px;
+
+  span {
+    color: var(--color-text-muted);
+    font-size: 11px;
   }
 }
 

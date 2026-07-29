@@ -729,6 +729,15 @@ export interface ImportPreviewResult {
 // 人员
 // ============================================
 
+export type TeamRole =
+  | 'teacher'
+  | 'owner'
+  | 'co_lead'
+  | 'admin'
+  | 'advisor'
+  | 'member'
+  | 'external'
+
 // 成员信息
 export interface Member {
   id: number
@@ -741,6 +750,8 @@ export interface Member {
   avatar?: string
   global_role?: string
   global_role_display?: string
+  team_role?: TeamRole
+  team_role_display?: string
   membership_status?: 'active' | 'on_leave' | 'exited' | 'external'
   team_joined_at?: string | null
   team_left_at?: string | null
@@ -766,7 +777,7 @@ export interface Member {
     team_name: string
     parent_id?: number | null
     parent_name?: string
-    role: string
+    role: TeamRole
     role_display: string
     status: string
   }[]

@@ -1,5 +1,11 @@
 import { get, post, patch, del } from './request'
-import type { Member, MemberUpdateParams, PaginatedResponse, PaginationParams } from '@/types'
+import type {
+  Member,
+  MemberUpdateParams,
+  PaginatedResponse,
+  PaginationParams,
+  TeamRole,
+} from '@/types'
 
 /** 成员查询参数 */
 export interface MemberQueryParams extends PaginationParams {
@@ -7,6 +13,7 @@ export interface MemberQueryParams extends PaginationParams {
   major?: string
   school?: string
   team?: number
+  team_role?: TeamRole
   project?: number
   membership_status?: string
   is_active?: boolean

@@ -8,13 +8,69 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import Case, IntegerField, Q, Value, When
 from django.utils import timezone
 
 from common.response import success_response, error_response
 from common.mixins import MultiSerializerMixin
 from common.project_access import active_user_root_team_ids
 from .team_models import Team, TeamMember, TeamMembershipEvent
+
+
+TEAM_MEMBER_ROLE_PRIORITY = (
+    TeamMember.Role.TEACHER,
+    TeamMember.Role.OWNER,
+    TeamMember.Role.CO_LEAD,
+    TeamMember.Role.ADMIN,
+    TeamMember.Role.ADVISOR,
+    TeamMember.Role.MEMBER,
+    TeamMember.Role.EXTERNAL,
+)
+
+
+def _filter_and_order_team_members(queryset, query_params):
+    """Apply one member-list contract to nested and standalone endpoints."""
+    role_value = (
+        query_params.get('role')
+        or query_params.get('team_role')
+        or ''
+    ).strip()
+    school_value = (query_params.get('school') or '').strip()
+    team_status_value = (
+        query_params.get('status')
+        or query_params.get('team_status')
+        or ''
+    ).strip()
+    membership_status_value = (
+        query_params.get('membership_status')
+        or ''
+    ).strip()
+
+    if role_value:
+        queryset = queryset.filter(role=role_value)
+    if school_value:
+        queryset = queryset.filter(user__school__icontains=school_value)
+    if team_status_value:
+        queryset = queryset.filter(status=team_status_value)
+    if membership_status_value:
+        queryset = queryset.filter(
+            user__membership_status=membership_status_value
+        )
+
+    role_order = Case(
+        *[
+            When(role=role, then=Value(priority))
+            for priority, role in enumerate(TEAM_MEMBER_ROLE_PRIORITY)
+        ],
+        default=Value(len(TEAM_MEMBER_ROLE_PRIORITY)),
+        output_field=IntegerField(),
+    )
+    return (
+        queryset
+        .select_related('team', 'user', 'handover_to__user')
+        .annotate(_role_priority=role_order)
+        .order_by('_role_priority', 'user__name', 'joined_at', 'id')
+    )
 
 
 def _visible_teams_for(user):
@@ -43,6 +99,7 @@ def _visible_teams_for(user):
                 TeamMember.Role.OWNER,
                 TeamMember.Role.CO_LEAD,
                 TeamMember.Role.ADMIN,
+                TeamMember.Role.TEACHER,
             ],
             parent__teammember__status=TeamMember.Status.ACTIVE,
         )
@@ -342,10 +399,10 @@ class TeamViewSet(MultiSerializerMixin, ModelViewSet):
         """
         team = self.get_object()
         if request.method == 'GET':
-            members = team.teammember_set.all().order_by('-joined_at')
-            status_value = request.query_params.get('status')
-            if status_value:
-                members = members.filter(status=status_value)
+            members = _filter_and_order_team_members(
+                team.teammember_set.all(),
+                request.query_params,
+            )
             return success_response(TeamMemberSerializer(members, many=True).data)
 
         # 添加成员
@@ -668,20 +725,26 @@ class TeamViewSet(MultiSerializerMixin, ModelViewSet):
 
 class TeamMemberViewSet(ModelViewSet):
     """团队成员 CRUD（独立路由）"""
-    queryset = TeamMember.objects.all().order_by('-joined_at')
+    queryset = TeamMember.objects.all()
     serializer_class = TeamMemberSerializer
     permission_classes = [IsAuthenticated]
-    filterset_fields = ['team', 'user', 'role']
+    # role/status 统一由 _filter_and_order_team_members 处理，确保该入口与
+    # /teams/{id}/members/ 对合法及非法参数保持一致。
+    filterset_fields = ['team', 'user']
 
     def get_queryset(self):
         if getattr(self, 'swagger_fake_view', False):
             return self.queryset.none()
         user = self.request.user
-        if user.global_role == 'sys_admin':
-            return self.queryset
-        return self.queryset.filter(
-            team__in=_visible_teams_for(user),
-        ).distinct()
+        queryset = self.queryset
+        if user.global_role != 'sys_admin':
+            queryset = queryset.filter(
+                team__in=_visible_teams_for(user),
+            ).distinct()
+        return _filter_and_order_team_members(
+            queryset,
+            self.request.query_params,
+        )
 
     def create(self, request, *args, **kwargs):
         team = Team.objects.filter(pk=request.data.get('team')).first()

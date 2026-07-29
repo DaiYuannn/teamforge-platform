@@ -8,7 +8,18 @@
 """
 
 from django.utils import timezone
-from django.db.models import Prefetch
+from django.db.models import (
+    Case,
+    Exists,
+    F,
+    IntegerField,
+    Min,
+    OuterRef,
+    Prefetch,
+    Q,
+    Value,
+    When,
+)
 from drf_spectacular.utils import OpenApiParameter, extend_schema, inline_serializer
 from rest_framework import serializers
 from rest_framework import status
@@ -21,6 +32,7 @@ from common.response import success_response, error_response
 from common.mixins import MultiSerializerMixin, MultiPermissionMixin
 from common.permissions import IsSysAdmin
 from common.project_access import (
+    active_user_root_team_ids,
     is_external_collaborator,
     scope_organization_users,
 )
@@ -37,6 +49,8 @@ from .serializers import (
     MemberSerializer,
     MemberListSerializer,
     MemberDetailSerializer,
+    CURRENT_TEAM_MEMBERSHIP_STATUSES,
+    TEAM_MEMBER_ROLE_PRIORITY,
 )
 
 
@@ -63,33 +77,165 @@ class MemberViewSet(MultiSerializerMixin, ReadOnlyModelViewSet):
     ordering_fields = ['date_joined', 'name']
 
     def get_queryset(self):
-        from apps.common.team_models import TeamMember
+        from apps.common.team_models import Team, TeamMember
 
-        queryset = super().get_queryset().prefetch_related(
-            Prefetch(
-                'teammember_set',
-                queryset=TeamMember.objects.filter(
-                    status=TeamMember.Status.ACTIVE,
-                ).select_related('team', 'team__parent'),
-                to_attr='prefetched_active_team_memberships',
-            )
-        )
+        queryset = super().get_queryset()
         if is_external_collaborator(self.request.user):
             return queryset.filter(pk=self.request.user.pk)
+
+        root_ids = active_user_root_team_ids(self.request.user)
         queryset = scope_organization_users(queryset, self.request.user)
-        team_id = self.request.query_params.get('team')
-        if team_id:
+        current_statuses = list(CURRENT_TEAM_MEMBERSHIP_STATUSES)
+
+        # Global roles historically received a broad member directory. Once
+        # they are attached to a root organization, this endpoint follows that
+        # tenant context so identities from another root cannot affect either
+        # visibility or importance.
+        if root_ids:
             queryset = queryset.filter(
-                teammember__team_id=team_id,
-                teammember__status=TeamMember.Status.ACTIVE,
+                Q(
+                    teammember__team_id__in=root_ids,
+                    teammember__status__in=current_statuses,
+                )
+                | Q(
+                    teammember__team__parent_id__in=root_ids,
+                    teammember__status__in=current_statuses,
+                )
+                | Q(owned_teams__id__in=root_ids)
+                | Q(owned_teams__parent_id__in=root_ids)
             ).distinct()
-        return queryset
+
+        raw_team_id = self.request.query_params.get('team')
+        team_id = None
+        if raw_team_id not in (None, ''):
+            try:
+                team_id = int(raw_team_id)
+            except (TypeError, ValueError):
+                return queryset.none()
+            team = Team.objects.filter(pk=team_id, is_active=True).only(
+                'id',
+                'parent_id',
+            ).first()
+            if team is None:
+                return queryset.none()
+            target_root_id = team.parent_id or team.id
+            if root_ids and target_root_id not in root_ids:
+                return queryset.none()
+
+        membership_scope = Q(
+            teammember__status__in=current_statuses,
+        )
+        owner_scope = Team.objects.filter(
+            owner_id=OuterRef('pk'),
+            is_active=True,
+        )
+        if team_id is not None:
+            membership_scope &= Q(teammember__team_id=team_id)
+            owner_scope = owner_scope.filter(pk=team_id)
+        elif root_ids:
+            membership_scope &= (
+                Q(teammember__team_id__in=root_ids)
+                | Q(teammember__team__parent_id__in=root_ids)
+            )
+            owner_scope = owner_scope.filter(
+                Q(id__in=root_ids) | Q(parent_id__in=root_ids)
+            )
+
+        queryset = queryset.annotate(
+            _owns_context_team=Exists(owner_scope),
+        )
+        if team_id is not None:
+            queryset = queryset.filter(
+                membership_scope | Q(_owns_context_team=True)
+            ).distinct()
+
+        role_value = (
+            self.request.query_params.get('team_role')
+            or self.request.query_params.get('role')
+            or ''
+        ).strip()
+        if role_value:
+            if role_value not in TEAM_MEMBER_ROLE_PRIORITY:
+                return queryset.none()
+
+        role_case = Case(
+            *[
+                When(
+                    membership_scope
+                    & Q(teammember__role=role),
+                    then=Value(priority),
+                )
+                for priority, role in enumerate(TEAM_MEMBER_ROLE_PRIORITY)
+            ],
+            default=Value(len(TEAM_MEMBER_ROLE_PRIORITY)),
+            output_field=IntegerField(),
+        )
+        queryset = queryset.annotate(
+            _membership_role_priority=Min(role_case),
+        ).annotate(
+            _team_role_priority=Case(
+                When(_membership_role_priority=0, then=Value(0)),
+                When(_owns_context_team=True, then=Value(1)),
+                default=F('_membership_role_priority'),
+                output_field=IntegerField(),
+            ),
+        ).order_by(
+            '_team_role_priority',
+            'name',
+            'email',
+            'id',
+        )
+        if role_value:
+            queryset = queryset.filter(
+                _team_role_priority=TEAM_MEMBER_ROLE_PRIORITY.index(
+                    role_value,
+                )
+            )
+
+        membership_prefetch = TeamMember.objects.filter(
+            status__in=current_statuses,
+        ).select_related('team', 'team__parent')
+        if root_ids:
+            membership_prefetch = membership_prefetch.filter(
+                Q(team_id__in=root_ids)
+                | Q(team__parent_id__in=root_ids)
+            )
+        return queryset.prefetch_related(
+            Prefetch(
+                'teammember_set',
+                queryset=membership_prefetch,
+                to_attr='prefetched_current_team_memberships',
+            )
+        )
 
     def get_serializer_class(self):
         if is_external_collaborator(self.request.user):
             return ExternalCollaboratorUserSerializer
         return super().get_serializer_class()
 
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name='team_role',
+                type=str,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                enum=list(TEAM_MEMBER_ROLE_PRIORITY),
+                description=(
+                    '按当前查询上下文中的最高团队身份筛选；'
+                    '指定 team 时仅计算该团队身份。'
+                ),
+            ),
+            OpenApiParameter(
+                name='role',
+                type=str,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                enum=list(TEAM_MEMBER_ROLE_PRIORITY),
+                description='team_role 的兼容别名。',
+            ),
+        ],
+    )
     def list(self, request, *args, **kwargs):
         """成员列表"""
         queryset = self.filter_queryset(self.get_queryset())

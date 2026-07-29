@@ -48,8 +48,58 @@
             class="join-message"
           />
 
-          <el-table :data="members" table-layout="fixed">
-            <template #empty><EmptyState text="暂无成员" compact /></template>
+          <section class="member-filter-bar" aria-label="成员筛选">
+            <div class="member-filters">
+              <el-select
+                v-model="memberFilters.role"
+                placeholder="全部身份"
+                clearable
+                aria-label="按团队身份筛选"
+                @change="handleMemberFilterChange"
+              >
+                <el-option
+                  v-for="option in roleOptions"
+                  :key="option.value"
+                  :label="option.label"
+                  :value="option.value"
+                />
+              </el-select>
+              <el-select
+                v-model="memberFilters.school"
+                placeholder="全部学校"
+                clearable
+                filterable
+                aria-label="按学校筛选"
+                @change="handleMemberFilterChange"
+              >
+                <el-option v-for="school in schoolOptions" :key="school" :label="school" :value="school" />
+              </el-select>
+              <el-select
+                v-model="memberFilters.status"
+                placeholder="全部状态"
+                clearable
+                aria-label="按团队状态筛选"
+                @change="handleMemberFilterChange"
+              >
+                <el-option label="在队" value="active" />
+                <el-option label="暂离" value="on_leave" />
+                <el-option label="已离队" value="exited" />
+              </el-select>
+              <el-button :disabled="!hasActiveMemberFilters" @click="clearMemberFilters">
+                清空筛选
+              </el-button>
+            </div>
+            <span>显示 {{ members.length }} / {{ allMembers.length }} 人 · 保持团队重要性顺序</span>
+          </section>
+
+          <el-table v-loading="memberLoading" :data="members" table-layout="fixed">
+            <template #empty>
+              <EmptyState
+                :text="hasActiveMemberFilters ? '没有符合筛选条件的成员' : '暂无成员'"
+                :description="hasActiveMemberFilters ? '可清空筛选查看完整团队名单' : ''"
+                compact
+              />
+            </template>
             <el-table-column label="成员" min-width="190">
               <template #default="{ row }">
                 <div class="member-cell">
@@ -227,19 +277,44 @@ import {
   type Team,
   type TeamCandidate,
   type TeamMember,
+  type TeamMemberFilters,
+  type TeamMemberRole,
 } from '@/api/teams'
+import {
+  filterTeamMembers,
+  hasTeamMemberFilters,
+  toTeamMemberQueryParams,
+} from './teamMemberFilters'
 
 const loading = ref(false)
+const memberLoading = ref(false)
 const router = useRouter()
 const saving = ref(false)
 const teams = ref<Team[]>([])
 const selectedTeam = ref<Team | null>(null)
 const members = ref<TeamMember[]>([])
+const allMembers = ref<TeamMember[]>([])
 const candidates = ref<TeamCandidate[]>([])
 const teamDialogVisible = ref(false)
 const memberDialogVisible = ref(false)
 const editingTeamId = ref<number | null>(null)
 const editingMember = ref<TeamMember | null>(null)
+let memberRequestId = 0
+
+const memberFilters = reactive<TeamMemberFilters>({
+  role: undefined,
+  school: '',
+  status: undefined,
+})
+const roleOptions: Array<{ label: string; value: TeamMemberRole }> = [
+  { label: '指导老师', value: 'teacher' },
+  { label: '主负责人', value: 'owner' },
+  { label: '共同负责人', value: 'co_lead' },
+  { label: '团队管理员', value: 'admin' },
+  { label: '顾问', value: 'advisor' },
+  { label: '团队成员', value: 'member' },
+  { label: '外部协作者', value: 'external' },
+]
 
 const teamForm = reactive({
   name: '',
@@ -252,17 +327,25 @@ const teamForm = reactive({
 })
 const memberForm = reactive({
   user: undefined as number | undefined,
-  role: 'member',
-  status: 'active',
+  role: 'member' as TeamMemberRole,
+  status: 'active' as TeamMember['status'],
   reason: '',
   handover_to: undefined as number | undefined,
   handover_notes: '',
 })
 const activeHandoverMembers = computed(() =>
-  members.value.filter((item) =>
+  allMembers.value.filter((item) =>
     item.id !== editingMember.value?.id && item.status === 'active'
   )
 )
+const schoolOptions = computed(() =>
+  Array.from(new Set(
+    allMembers.value
+      .map((item) => item.user_school?.trim())
+      .filter((school): school is string => Boolean(school)),
+  )).sort((left, right) => left.localeCompare(right, 'zh-CN')),
+)
+const hasActiveMemberFilters = computed(() => hasTeamMemberFilters(memberFilters))
 const displayTeams = computed(() => {
   const roots = teams.value.filter((team) => !team.parent)
   const visibleIds = new Set<number>()
@@ -311,7 +394,7 @@ function statusType(value: string): 'success' | 'warning' | 'info' {
 async function loadTeams(): Promise<void> {
   loading.value = true
   try {
-    const response = await getTeams()
+    const response = await getTeams({ page_size: 100 })
     teams.value = response.results
     const current = teams.value.find((item) => item.id === selectedTeam.value?.id) || teams.value[0]
     if (current) await selectTeam(current)
@@ -322,7 +405,59 @@ async function loadTeams(): Promise<void> {
 
 async function selectTeam(team: Team): Promise<void> {
   selectedTeam.value = team
-  members.value = await getTeamMembers(team.id)
+  allMembers.value = []
+  members.value = []
+  await loadSelectedTeamMembers(true)
+}
+
+async function loadSelectedTeamMembers(refreshFullList = false): Promise<void> {
+  const teamId = selectedTeam.value?.id
+  if (!teamId) return
+
+  const requestId = ++memberRequestId
+  memberLoading.value = true
+  try {
+    const params = toTeamMemberQueryParams(memberFilters)
+    const filteredRequest = getTeamMembers(
+      teamId,
+      hasActiveMemberFilters.value ? params : undefined,
+    )
+    const fullRequest = refreshFullList && hasActiveMemberFilters.value
+      ? getTeamMembers(teamId)
+      : null
+    const [filtered, full] = await Promise.all([
+      filteredRequest,
+      fullRequest || Promise.resolve(null),
+    ])
+    if (requestId !== memberRequestId || selectedTeam.value?.id !== teamId) return
+
+    if (full) allMembers.value = full
+    else if (!hasActiveMemberFilters.value) allMembers.value = filtered
+
+    // 后端优先筛选；本地再做一次兜底，兼容只支持 status 的旧部署。
+    members.value = filterTeamMembers(filtered, memberFilters)
+  } finally {
+    if (requestId === memberRequestId) memberLoading.value = false
+  }
+}
+
+async function handleMemberFilterChange(): Promise<void> {
+  await loadSelectedTeamMembers(false)
+}
+
+async function clearMemberFilters(): Promise<void> {
+  memberRequestId += 1
+  memberLoading.value = false
+  memberFilters.role = undefined
+  memberFilters.school = ''
+  memberFilters.status = undefined
+  if (allMembers.value.length > 0) {
+    // 初次进入团队时已经保留完整名单，清空后立即恢复后端原始顺序。
+    members.value = [...allMembers.value]
+    return
+  }
+  // 若在完整名单尚未返回时清空筛选，重新请求一次，避免旧请求被取消后留下空表。
+  await loadSelectedTeamMembers(true)
 }
 
 function openTeamDialog(team?: Team): void {
@@ -368,7 +503,7 @@ async function openMemberDialog(member?: TeamMember): Promise<void> {
   })
   if (!member && selectedTeam.value) {
     candidates.value = await getTeamCandidates(selectedTeam.value.id)
-    const existing = new Set(members.value.filter((item) => item.status !== 'exited').map((item) => item.user))
+    const existing = new Set(allMembers.value.filter((item) => item.status !== 'exited').map((item) => item.user))
     candidates.value = candidates.value.filter((item) => !existing.has(item.id))
   }
   memberDialogVisible.value = true
@@ -505,6 +640,35 @@ onMounted(loadTeams)
   margin: 12px 18px 0;
 }
 
+.member-filter-bar {
+  display: flex;
+  min-width: 0;
+  padding: 12px 18px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: var(--color-surface-subtle);
+  border-bottom: 1px solid var(--color-border-light);
+}
+
+.member-filters {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.member-filters :deep(.el-select) {
+  width: 150px;
+}
+
+.member-filter-bar > span {
+  flex: 0 0 auto;
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
 .dialog-alert {
   margin-bottom: 18px;
 }
@@ -525,6 +689,28 @@ onMounted(loadTeams)
 
   .team-heading {
     flex-direction: column;
+  }
+
+  .member-filter-bar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .member-filters {
+    display: grid;
+    width: 100%;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .member-filters :deep(.el-select),
+  .member-filters :deep(.el-button) {
+    width: 100%;
+  }
+}
+
+@media screen and (max-width: 480px) {
+  .member-filters {
+    grid-template-columns: 1fr;
   }
 }
 </style>

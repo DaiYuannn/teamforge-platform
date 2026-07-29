@@ -13,21 +13,73 @@ from apps.projects.serializers import ProjectListSerializer
 from .models import SkillTag, MemberSkill, FlexibleWorkSchedule
 
 
+TEAM_MEMBER_ROLE_PRIORITY = (
+    'teacher',
+    'owner',
+    'co_lead',
+    'admin',
+    'advisor',
+    'member',
+    'external',
+)
+TEAM_MEMBER_ROLE_PRIORITY_MAP = {
+    role: priority
+    for priority, role in enumerate(TEAM_MEMBER_ROLE_PRIORITY)
+}
+CURRENT_TEAM_MEMBERSHIP_STATUSES = ('active', 'on_leave')
+
+
 def _viewer(serializer):
     request = serializer.context.get('request')
     return getattr(request, 'user', None)
 
 
-def _get_active_team_memberships(user):
-    """返回成员当前所在小组；一个成员可同时属于多个团队。"""
+def _get_active_team_memberships(user, viewer=None):
+    """返回并稳定排列成员当前有效的团队关系。
+
+    ``on_leave`` 仍是当前关系，只代表暂时无法投入，不应让成员从团队
+    目录和详情中消失。已离队关系继续保留在历史记录中，不出现在这里。
+    """
     from apps.common.team_models import TeamMember
 
-    memberships = getattr(user, 'prefetched_active_team_memberships', None)
+    memberships = getattr(user, 'prefetched_current_team_memberships', None)
+    if memberships is None:
+        # 兼容仍使用旧预取属性的调用方。
+        memberships = getattr(user, 'prefetched_active_team_memberships', None)
     if memberships is None:
         memberships = TeamMember.objects.filter(
             user=user,
-            status=TeamMember.Status.ACTIVE,
+            status__in=CURRENT_TEAM_MEMBERSHIP_STATUSES,
         ).select_related('team', 'team__parent')
+    viewer_root_ids = set()
+    if viewer and getattr(viewer, 'is_authenticated', False):
+        from common.project_access import active_user_root_team_ids
+
+        viewer_root_ids = active_user_root_team_ids(viewer)
+    if viewer_root_ids:
+        memberships = [
+            membership
+            for membership in memberships
+            if (
+                membership.team_id in viewer_root_ids
+                or membership.team.parent_id in viewer_root_ids
+            )
+        ]
+    memberships = sorted(
+        memberships,
+        key=lambda membership: (
+            0 if membership.team.parent_id is None else 1,
+            TEAM_MEMBER_ROLE_PRIORITY_MAP.get(
+                membership.role,
+                len(TEAM_MEMBER_ROLE_PRIORITY),
+            ),
+            0 if membership.status == TeamMember.Status.ACTIVE else 1,
+            (membership.team.parent.name if membership.team.parent else ''),
+            membership.team.name,
+            membership.team_id,
+            membership.id,
+        ),
+    )
     return [
         {
             'team_id': membership.team_id,
@@ -213,6 +265,8 @@ class MemberListSerializer(serializers.ModelSerializer):
     """成员列表精简序列化器（返回用户基本信息+联系方式）"""
     global_role_display = serializers.CharField(source='get_global_role_display', read_only=True)
     team_memberships = serializers.SerializerMethodField()
+    team_role = serializers.SerializerMethodField()
+    team_role_display = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -220,12 +274,29 @@ class MemberListSerializer(serializers.ModelSerializer):
             'id', 'username', 'name', 'email', 'phone', 'avatar',
             'global_role', 'global_role_display', 'is_student', 'school', 'grade', 'major',
             'membership_status', 'team_joined_at', 'team_left_at', 'is_active',
-            'team_memberships',
+            'team_memberships', 'team_role', 'team_role_display',
         )
         read_only_fields = fields
 
     def get_team_memberships(self, obj):
-        return _get_active_team_memberships(obj)
+        return _get_active_team_memberships(obj, _viewer(self))
+
+    def get_team_role(self, obj):
+        priority = getattr(obj, '_team_role_priority', None)
+        if (
+            isinstance(priority, int)
+            and 0 <= priority < len(TEAM_MEMBER_ROLE_PRIORITY)
+        ):
+            return TEAM_MEMBER_ROLE_PRIORITY[priority]
+        return ''
+
+    def get_team_role_display(self, obj):
+        role = self.get_team_role(obj)
+        if not role:
+            return ''
+        from apps.common.team_models import TeamMember
+
+        return TeamMember.Role(role).label
 
 
 class MemberSerializer(serializers.ModelSerializer):
@@ -299,7 +370,7 @@ class MemberSerializer(serializers.ModelSerializer):
         return memberships.count()
 
     def get_team_memberships(self, obj):
-        return _get_active_team_memberships(obj)
+        return _get_active_team_memberships(obj, _viewer(self))
 
 
 class MemberDetailSerializer(serializers.ModelSerializer):
@@ -451,4 +522,4 @@ class MemberDetailSerializer(serializers.ModelSerializer):
         return tasks.count()
 
     def get_team_memberships(self, obj):
-        return _get_active_team_memberships(obj)
+        return _get_active_team_memberships(obj, _viewer(self))

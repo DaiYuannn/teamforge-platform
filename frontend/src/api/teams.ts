@@ -1,6 +1,29 @@
 import { get, post, patch, del } from './request'
 import type { PaginatedResponse, PaginationParams } from '@/types'
 
+export type TeamMemberRole =
+  | 'owner'
+  | 'co_lead'
+  | 'admin'
+  | 'teacher'
+  | 'member'
+  | 'advisor'
+  | 'external'
+
+export type TeamMemberStatus = 'active' | 'on_leave' | 'exited'
+
+export interface TeamMemberFilters {
+  role?: TeamMemberRole
+  school: string
+  status?: TeamMemberStatus
+}
+
+export interface TeamMemberQueryParams {
+  role?: TeamMemberRole
+  school?: string
+  status?: TeamMemberStatus
+}
+
 export interface Team {
   id: number
   name: string
@@ -32,9 +55,9 @@ export interface TeamMember {
   user_school?: string
   user_grade?: string
   user_major?: string
-  role: string
+  role: TeamMemberRole
   role_display?: string
-  status: string
+  status: TeamMemberStatus
   status_display?: string
   joined_at: string
   left_at?: string | null
@@ -63,8 +86,11 @@ export function updateTeam(id: number, data: Partial<Team>): Promise<Team> {
   return patch<Team>(`/teams/${id}/`, data)
 }
 
-export function getTeamMembers(id: number): Promise<TeamMember[]> {
-  return get<TeamMember[]>(`/teams/${id}/members/`)
+export function getTeamMembers(
+  id: number,
+  params?: TeamMemberQueryParams,
+): Promise<TeamMember[]> {
+  return get<TeamMember[]>(`/teams/${id}/members/`, params)
 }
 
 export function addTeamMember(id: number, user: number, role: string): Promise<TeamMember> {
