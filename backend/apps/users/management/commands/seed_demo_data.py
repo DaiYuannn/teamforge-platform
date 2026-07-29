@@ -8,6 +8,7 @@
 
 数据概览:
     - 账号: 8 个固定账号 + 52 个普通成员
+    - 团队: 1 个总团队 + 3 个二级小团队
     - 项目: 24 个（覆盖 2022 年至今，并包含已结项、暂停、进行中）
     - 比赛: 5 个
     - 任务: 120 个（覆盖完整状态分布）
@@ -89,6 +90,11 @@ DEMO_IP_PREFIX = 'IP-TEAM-DEMO-'
 DEMO_MARKER = '【团队演示】'
 DEMO_IMPORT_DIRNAME = 'seed_demo_data'
 DEMO_TEAM_CODE = 'TEAM-DEMO-ORG'
+DEMO_SQUAD_CODES = (
+    'TEAM-DEMO-SQUAD-PRODUCT',
+    'TEAM-DEMO-SQUAD-DATA',
+    'TEAM-DEMO-SQUAD-OPERATIONS',
+)
 DEMO_ACCOUNT_EMAILS = (
     'admin@demo.com',
     'teacher1@demo.com',
@@ -407,6 +413,8 @@ class Command(BaseCommand):
                 self.leaders = []
                 self.teachers = []
                 self.projects = []
+                self.squads = []
+                self.project_squad_by_leader_id = {}
                 self.project_members = {}  # project -> [users]
                 self.tasks_by_project = {}
                 self.files_by_project = {}
@@ -833,8 +841,112 @@ class Command(BaseCommand):
                     pk=handover_event.pk
                 ).update(created_at=change_at + timedelta(minutes=5))
 
+        # 二级小团队只增加额外归属关系，不改变根团队的 60 名成员及
+        # 72 条根级事件。这样演示账号既能保留完整团队历史，也能真实
+        # 展示“小团队负责人—共同负责人—执行成员”的日常协作结构。
+        squad_specs = (
+            {
+                'code': DEMO_SQUAD_CODES[0],
+                'name': '智能产品与软件组',
+                'description': '负责产品设计、前后端开发、移动端与系统集成。',
+                'owner_key': 'leader2',
+                'co_lead_keys': ('leader1',),
+                'teacher_keys': ('teacher1',),
+                'member_keys': tuple(
+                    f'member{number}' for number in range(1, 15)
+                ),
+            },
+            {
+                'code': DEMO_SQUAD_CODES[1],
+                'name': '数据智能与视觉组',
+                'description': '负责数据治理、算法模型、视觉分析与实验评估。',
+                'owner_key': 'leader3',
+                'co_lead_keys': ('member15',),
+                'teacher_keys': ('teacher2',),
+                'member_keys': tuple(
+                    f'member{number}' for number in range(16, 29)
+                ),
+            },
+            {
+                'code': DEMO_SQUAD_CODES[2],
+                'name': '赛事材料与运营组',
+                'description': '负责比赛统筹、材料编制、答辩演练与成果运营。',
+                'owner_key': 'leader4',
+                'co_lead_keys': ('member29',),
+                'teacher_keys': ('teacher1',),
+                'member_keys': tuple(
+                    f'member{number}' for number in range(30, 41)
+                ),
+            },
+        )
+        for squad_index, spec in enumerate(squad_specs):
+            owner = self.users[spec['owner_key']]
+            squad = Team.objects.create(
+                code=spec['code'],
+                name=spec['name'],
+                description=spec['description'],
+                contact_email=owner.email,
+                join_message='由总团队统筹，根据项目和比赛需要开展跨组协作。',
+                is_active=True,
+                owner=owner,
+                parent=self.team,
+                team_type=Team.TeamType.SQUAD,
+            )
+            squad_created_at = team_created_at + timedelta(
+                days=90 + squad_index * 30
+            )
+            Team.objects.filter(pk=squad.pk).update(
+                created_at=squad_created_at
+            )
+            self.squads.append(squad)
+
+            role_keys = (
+                ((spec['owner_key'],), TeamMember.Role.OWNER),
+                (spec['co_lead_keys'], TeamMember.Role.CO_LEAD),
+                (spec['teacher_keys'], TeamMember.Role.TEACHER),
+                (spec['member_keys'], TeamMember.Role.MEMBER),
+            )
+            membership_index = 0
+            for user_keys, role in role_keys:
+                for user_key in user_keys:
+                    user = self.users[user_key]
+                    joined_at = squad_created_at + timedelta(
+                        days=membership_index * 3
+                    )
+                    squad_membership = TeamMember.objects.create(
+                        team=squad,
+                        user=user,
+                        role=role,
+                        status=TeamMember.Status.ACTIVE,
+                    )
+                    TeamMember.objects.filter(
+                        pk=squad_membership.pk
+                    ).update(joined_at=joined_at)
+                    joined_event = TeamMembershipEvent.objects.create(
+                        membership=squad_membership,
+                        event_type='joined',
+                        to_role=role,
+                        to_status=TeamMember.Status.ACTIVE,
+                        reason=f'{DEMO_MARKER}加入{spec["name"]}',
+                        operator=owner,
+                    )
+                    TeamMembershipEvent.objects.filter(
+                        pk=joined_event.pk
+                    ).update(created_at=joined_at)
+                    membership_index += 1
+
+        self.project_squad_by_leader_id = {
+            self.users['leader1'].id: self.squads[0],
+            self.users['leader2'].id: self.squads[0],
+            self.users['leader3'].id: self.squads[1],
+            self.users['leader4'].id: self.squads[2],
+        }
+
         self.stdout.write(self.style.SUCCESS(
             '   团队创建完成：成员 60 人，成员关系事件 72 条'
+        ))
+        self.stdout.write(self.style.SUCCESS(
+            '   二级小团队创建完成：3 个，均已配置负责人、共同负责人和执行成员'
         ))
 
     # ------------------------------------------------------------------
@@ -925,6 +1037,15 @@ class Command(BaseCommand):
                 )
             Project.all_objects.filter(pk=project.pk).update(**update_fields)
             self.projects.append(project)
+
+            primary_squad = self.project_squad_by_leader_id[leader.id]
+            linked_squads = [primary_squad]
+            if idx % 5 == 0:
+                primary_index = self.squads.index(primary_squad)
+                linked_squads.append(
+                    self.squads[(primary_index + 1) % len(self.squads)]
+                )
+            project.teams.set(linked_squads)
 
             # 每个项目 6~9 人，既有固定核心成员，也有跨项目协作者。
             member_count = 5 + idx % 4
@@ -2973,6 +3094,9 @@ class Command(BaseCommand):
             count, _ = queryset.delete()
             total += count
 
+        # 二级团队的 parent 使用 PROTECT，需先按本命令专属编号精确删除；
+        # 随后再清除根团队及其根级成员历史。
+        delete_queryset(Team.objects.filter(code__in=DEMO_SQUAD_CODES))
         # 团队编号是本命令的唯一所有权边界；只清除该团队及其级联成员历史。
         delete_queryset(Team.objects.filter(code=DEMO_TEAM_CODE))
 

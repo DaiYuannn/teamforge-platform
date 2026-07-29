@@ -48,6 +48,7 @@ from apps.users.management.commands.seed_demo_data import (
     DEMO_IP_PREFIX,
     DEMO_MARKER,
     DEMO_PROJECT_PREFIX,
+    DEMO_SQUAD_CODES,
     DEMO_TEAM_CODE,
     LEGACY_COMPETITION_ACCOUNT_EMAILS,
     LEGACY_COMPETITION_REPORT_NAMES,
@@ -279,6 +280,70 @@ def test_seed_demo_data_scale_lifecycle_assets_and_safe_clean(settings, tmp_path
         'handover': 4,
     }
     assert demo_team_events.filter(reason__startswith=DEMO_MARKER).count() == 72
+    demo_squads = Team.objects.filter(parent=demo_team).order_by('code')
+    assert demo_squads.count() == 3
+    assert set(demo_squads.values_list('code', flat=True)) == set(
+        DEMO_SQUAD_CODES
+    )
+    assert set(demo_squads.values_list('team_type', flat=True)) == {
+        Team.TeamType.SQUAD
+    }
+    assert {
+        squad.code: squad.owner.email
+        for squad in demo_squads.select_related('owner')
+    } == {
+        DEMO_SQUAD_CODES[0]: 'leader2@demo.com',
+        DEMO_SQUAD_CODES[1]: 'leader3@demo.com',
+        DEMO_SQUAD_CODES[2]: 'leader4@demo.com',
+    }
+    expected_squad_roles = {
+        DEMO_SQUAD_CODES[0]: {
+            TeamMember.Role.OWNER: 1,
+            TeamMember.Role.CO_LEAD: 1,
+            TeamMember.Role.TEACHER: 1,
+            TeamMember.Role.MEMBER: 14,
+        },
+        DEMO_SQUAD_CODES[1]: {
+            TeamMember.Role.OWNER: 1,
+            TeamMember.Role.CO_LEAD: 1,
+            TeamMember.Role.TEACHER: 1,
+            TeamMember.Role.MEMBER: 13,
+        },
+        DEMO_SQUAD_CODES[2]: {
+            TeamMember.Role.OWNER: 1,
+            TeamMember.Role.CO_LEAD: 1,
+            TeamMember.Role.TEACHER: 1,
+            TeamMember.Role.MEMBER: 11,
+        },
+    }
+    expected_co_leads = {
+        DEMO_SQUAD_CODES[0]: {'leader1@demo.com'},
+        DEMO_SQUAD_CODES[1]: {'member15@demo.com'},
+        DEMO_SQUAD_CODES[2]: {'member29@demo.com'},
+    }
+    for squad in demo_squads:
+        squad_memberships = TeamMember.objects.filter(team=squad)
+        assert Counter(
+            squad_memberships.values_list('role', flat=True)
+        ) == expected_squad_roles[squad.code]
+        assert set(
+            squad_memberships.values_list('status', flat=True)
+        ) == {TeamMember.Status.ACTIVE}
+        assert set(
+            squad_memberships.filter(
+                role=TeamMember.Role.CO_LEAD
+            ).values_list('user__email', flat=True)
+        ) == expected_co_leads[squad.code]
+        squad_events = TeamMembershipEvent.objects.filter(
+            membership__team=squad
+        )
+        assert squad_events.count() == squad_memberships.count()
+        assert set(
+            squad_events.values_list('event_type', flat=True)
+        ) == {'joined'}
+        assert squad_events.filter(
+            reason__startswith=DEMO_MARKER
+        ).count() == squad_memberships.count()
     assert Team.objects.filter(pk=real_team.pk).exists()
 
     preferences = UserPreference.objects.filter(user__email__in=owned_emails)
@@ -328,6 +393,25 @@ def test_seed_demo_data_scale_lifecycle_assets_and_safe_clean(settings, tmp_path
     assert external_preference.favorite_routes == ['/tasks', '/files']
 
     assert demo_projects.count() == 24
+    squad_project_counts = []
+    linked_squad_codes = set()
+    for project in demo_projects.prefetch_related('teams', 'teams__teammember_set'):
+        linked_squads = [
+            team for team in project.teams.all()
+            if team.parent_id == demo_team.id
+        ]
+        squad_project_counts.append(len(linked_squads))
+        linked_squad_codes.update(team.code for team in linked_squads)
+        assert (
+            any(team.owner_id == project.leader_id for team in linked_squads)
+            or TeamMember.objects.filter(
+                team__in=linked_squads,
+                user=project.leader,
+                status=TeamMember.Status.ACTIVE,
+            ).exists()
+        )
+    assert Counter(squad_project_counts) == {1: 19, 2: 5}
+    assert linked_squad_codes == set(DEMO_SQUAD_CODES)
     project_years = set(
         demo_projects.values_list('start_date__year', flat=True)
     )
@@ -703,6 +787,17 @@ def test_seed_demo_data_scale_lifecycle_assets_and_safe_clean(settings, tmp_path
     assert TeamMembershipEvent.objects.filter(
         membership__team=regenerated_team
     ).count() == 72
+    regenerated_squads = Team.objects.filter(parent=regenerated_team)
+    assert regenerated_squads.count() == 3
+    assert set(
+        regenerated_squads.values_list('code', flat=True)
+    ) == set(DEMO_SQUAD_CODES)
+    assert all(
+        project.teams.filter(parent=regenerated_team).exists()
+        for project in Project.all_objects.filter(
+            code__startswith=DEMO_PROJECT_PREFIX
+        )
+    )
     assert FinanceReceipt.objects.filter(
         expense__project__code__startswith=DEMO_PROJECT_PREFIX
     ).count() == 99
