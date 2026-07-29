@@ -7,16 +7,27 @@
 - SensitiveAccessRequestCreateSerializer: 创建用
 - SensitiveAccessRequestReviewSerializer: 审核用
 """
+from django.db import transaction
 from rest_framework import serializers
 
-from .models import SensitiveData, SensitiveAccessRequest
+from .models import (
+    SensitiveAccessRequest,
+    SensitiveData,
+    SensitiveDataGrant,
+    SensitiveGrantAccessLog,
+)
 from .services import SensitiveDataService
 from apps.projects.models import Project
 from apps.files.models import FileAsset
 from apps.users.models import User
 from apps.common.team_models import Team, TeamMember
 from common.project_access import project_can_manage
-from .permissions import can_review_sensitive_data, user_can_view_sensitive_metadata
+from .permissions import (
+    can_manage_sensitive_grants,
+    can_review_sensitive_data,
+    get_active_sensitive_grant,
+    user_can_view_sensitive_metadata,
+)
 
 
 class SensitiveDataSerializer(serializers.ModelSerializer):
@@ -33,6 +44,8 @@ class SensitiveDataSerializer(serializers.ModelSerializer):
     file_attachment_name = serializers.CharField(
         source='file_attachment.name', read_only=True, default=''
     )
+    can_manage_grants = serializers.SerializerMethodField()
+    active_direct_grant = serializers.SerializerMethodField()
 
     class Meta:
         model = SensitiveData
@@ -41,6 +54,7 @@ class SensitiveDataSerializer(serializers.ModelSerializer):
             'owner_name', 'subject_user', 'subject_name', 'team', 'team_name',
             'project', 'project_name',
             'masked_value', 'has_file', 'file_attachment_name',
+            'can_manage_grants', 'active_direct_grant',
             'key_version', 'is_encrypted', 'created_at', 'updated_at',
         )
         read_only_fields = (
@@ -62,6 +76,29 @@ class SensitiveDataSerializer(serializers.ModelSerializer):
     def get_has_file(self, obj) -> bool:
         """是否有附件"""
         return obj.file_attachment_id is not None
+
+    def get_can_manage_grants(self, obj) -> bool:
+        request = self.context.get('request')
+        return bool(
+            request
+            and request.user.is_authenticated
+            and can_manage_sensitive_grants(request.user, obj)
+        )
+
+    def get_active_direct_grant(self, obj):
+        request = self.context.get('request')
+        if not request or not request.user.is_authenticated:
+            return None
+        grant = get_active_sensitive_grant(request.user, obj)
+        if not grant:
+            return None
+        return {
+            'id': grant.id,
+            'can_view': grant.can_view,
+            'can_download': grant.can_download,
+            'purpose': grant.purpose,
+            'expires_at': grant.expires_at,
+        }
 
 
 class SensitiveDataDetailSerializer(serializers.ModelSerializer):
@@ -93,7 +130,10 @@ class SensitiveDataCreateSerializer(serializers.Serializer):
     data_type = serializers.ChoiceField(choices=SensitiveData.DataType.choices)
     title = serializers.CharField(max_length=200)
     display_name = serializers.CharField(max_length=100, required=False, allow_blank=True, default='')
-    plaintext = serializers.CharField(write_only=True)
+    plaintext = serializers.CharField(
+        write_only=True, required=False, allow_blank=True, default=''
+    )
+    attachment_upload = serializers.FileField(write_only=True, required=False)
     project = serializers.PrimaryKeyRelatedField(
         queryset=Project.objects.all(), required=False, allow_null=True
     )
@@ -115,6 +155,17 @@ class SensitiveDataCreateSerializer(serializers.Serializer):
         subject_user = attrs.get('subject_user')
         project = attrs.get('project')
         file_attachment = attrs.get('file_attachment')
+        attachment_upload = attrs.get('attachment_upload')
+        if file_attachment and attachment_upload:
+            raise serializers.ValidationError({
+                'attachment_upload': '直接上传附件与选择现有文件只能使用一种方式'
+            })
+        if not attrs.get('plaintext') and not file_attachment and not attachment_upload:
+            raise serializers.ValidationError('资料明文或附件至少填写一项')
+        if attachment_upload:
+            from apps.files.upload_security import validate_uploaded_material
+
+            validate_uploaded_material(attachment_upload)
         personal_types = {
             SensitiveData.DataType.ID_CARD,
             SensitiveData.DataType.BANK_ACCOUNT,
@@ -144,7 +195,11 @@ class SensitiveDataCreateSerializer(serializers.Serializer):
                 user=user,
                 status=TeamMember.Status.ACTIVE,
             ).first()
-            if membership is None and team.owner_id != user.id:
+            reviewer = can_review_sensitive_data(
+                user,
+                SensitiveData(team=team),
+            )
+            if membership is None and team.owner_id != user.id and not reviewer:
                 raise serializers.ValidationError({
                     'team': '只能向自己所在的活动团队提交敏感资料'
                 })
@@ -156,13 +211,18 @@ class SensitiveDataCreateSerializer(serializers.Serializer):
                 raise serializers.ValidationError({
                     'subject_user': '资料所属成员必须是该团队的活动成员'
                 })
-            reviewer = can_review_sensitive_data(
-                user,
-                SensitiveData(team=team),
-            )
             if subject_user and subject_user.id != user.id and not reviewer:
                 raise serializers.ValidationError({
                     'subject_user': '只有本团队负责人或明确审批人可以代成员录入资料'
+                })
+        if project and team:
+            from common.project_access import project_root_team_ids
+
+            project_roots = project_root_team_ids(project)
+            team_root_id = team.parent_id or team.id
+            if project_roots and team_root_id not in project_roots:
+                raise serializers.ValidationError({
+                    'project': '所选项目与敏感资料所属团队不在同一组织'
                 })
         if file_attachment:
             # 绑定敏感资料会立刻把 FileAsset 提升为 sensitive 并撤销其分享链接，
@@ -170,6 +230,7 @@ class SensitiveDataCreateSerializer(serializers.Serializer):
             # 这一不可逆的权限提升，避免通过猜测文件 ID 劫持其他项目文件。
             can_reclassify = (
                 file_attachment.uploader_id == getattr(user, 'id', None)
+                or getattr(user, 'global_role', '') in {'sys_admin', 'teacher'}
                 or (
                     file_attachment.project_id
                     and project_can_manage(user, file_attachment.project)
@@ -183,6 +244,10 @@ class SensitiveDataCreateSerializer(serializers.Serializer):
                 raise serializers.ValidationError({
                     'file_attachment': '附件必须属于所选项目'
                 })
+            if team and file_attachment.team_id and file_attachment.team_id != team.id:
+                raise serializers.ValidationError({
+                    'file_attachment': '附件的指定团队与敏感资料所属团队不一致'
+                })
             if SensitiveData.objects.filter(
                 file_attachment=file_attachment,
             ).exists():
@@ -191,15 +256,29 @@ class SensitiveDataCreateSerializer(serializers.Serializer):
                 })
         return attrs
 
+    @transaction.atomic
     def create(self, validated_data):
         """创建敏感资料（加密存储）"""
         from common.encryption import get_field_cipher
         cipher = get_field_cipher()
         plaintext = validated_data.pop('plaintext', '')
+        attachment_upload = validated_data.pop('attachment_upload', None)
         encrypted = cipher.encrypt(plaintext) if plaintext else ''
 
         request = self.context.get('request')
         uploader = request.user if request and request.user.is_authenticated else None
+        if attachment_upload is not None:
+            file_attachment = FileAsset.objects.create(
+                project=validated_data.get('project'),
+                team=validated_data.get('team'),
+                name=attachment_upload.name,
+                file=attachment_upload,
+                level=FileAsset.Level.SENSITIVE,
+                size=attachment_upload.size,
+                content_type=getattr(attachment_upload, 'content_type', '') or '',
+                uploader=uploader,
+            )
+            validated_data['file_attachment'] = file_attachment
 
         sensitive = SensitiveData.objects.create(
             data_type=validated_data.get('data_type'),
@@ -215,6 +294,90 @@ class SensitiveDataCreateSerializer(serializers.Serializer):
             uploader=uploader,
         )
         return sensitive
+
+
+class SensitiveDataGrantSerializer(serializers.ModelSerializer):
+    sensitive_data_title = serializers.CharField(
+        source='sensitive_data.title', read_only=True, default=''
+    )
+    granted_to_name = serializers.CharField(
+        source='granted_to.name', read_only=True, default=''
+    )
+    granted_to_email = serializers.CharField(
+        source='granted_to.email', read_only=True, default=''
+    )
+    granted_by_name = serializers.CharField(
+        source='granted_by.name', read_only=True, default=''
+    )
+    revoked_by_name = serializers.CharField(
+        source='revoked_by.name', read_only=True, default=''
+    )
+    is_active = serializers.BooleanField(read_only=True)
+
+    class Meta:
+        model = SensitiveDataGrant
+        fields = (
+            'id', 'sensitive_data', 'sensitive_data_title',
+            'granted_to', 'granted_to_name', 'granted_to_email',
+            'can_view', 'can_download', 'purpose', 'expires_at',
+            'granted_by', 'granted_by_name', 'revoked_at',
+            'revoked_by', 'revoked_by_name', 'is_active',
+            'created_at', 'updated_at',
+        )
+        read_only_fields = (
+            'id', 'sensitive_data', 'granted_by', 'revoked_at', 'revoked_by',
+            'created_at', 'updated_at',
+        )
+        validators = []
+
+    def validate(self, attrs):
+        from django.utils import timezone
+
+        sensitive_data = self.context.get('sensitive_data')
+        request = self.context.get('request')
+        granted_to = attrs.get('granted_to')
+        can_view = attrs.get('can_view', True)
+        can_download = attrs.get('can_download', False)
+        expires_at = attrs.get('expires_at')
+        if not sensitive_data or not request:
+            raise serializers.ValidationError('缺少授权上下文')
+        if not can_manage_sensitive_grants(request.user, sensitive_data):
+            raise serializers.ValidationError('无权授权该敏感资料')
+        if not can_view and not can_download:
+            raise serializers.ValidationError('查看和下载权限至少选择一项')
+        if can_download and not sensitive_data.file_attachment_id:
+            raise serializers.ValidationError({'can_download': '该资料没有可下载附件'})
+        if expires_at is None or expires_at <= timezone.now():
+            raise serializers.ValidationError({'expires_at': '授权到期时间必须晚于当前时间'})
+        if granted_to == request.user:
+            raise serializers.ValidationError({'granted_to': '不能给自己创建直接授权'})
+        if (
+            not granted_to
+            or not granted_to.is_active
+            or granted_to.membership_status not in {'active', 'on_leave'}
+        ):
+            raise serializers.ValidationError({'granted_to': '被授权人必须是活动内部成员'})
+        if sensitive_data.team_id and not TeamMember.objects.filter(
+            team_id=sensitive_data.team_id,
+            user=granted_to,
+            status=TeamMember.Status.ACTIVE,
+        ).exists():
+            raise serializers.ValidationError({'granted_to': '只能授权给该资料所属团队的活动成员'})
+        return attrs
+
+
+class SensitiveGrantAccessLogSerializer(serializers.ModelSerializer):
+    accessor_name = serializers.CharField(source='accessor.name', read_only=True, default='')
+    action_display = serializers.CharField(source='get_action_display', read_only=True)
+
+    class Meta:
+        model = SensitiveGrantAccessLog
+        fields = (
+            'id', 'grant', 'sensitive_data', 'accessor', 'accessor_name',
+            'action', 'action_display', 'purpose_snapshot', 'is_success',
+            'detail', 'request_method', 'request_path', 'request_ip', 'accessed_at',
+        )
+        read_only_fields = fields
 
 
 class SensitiveAccessRequestSerializer(serializers.ModelSerializer):

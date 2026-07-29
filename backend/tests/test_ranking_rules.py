@@ -2,14 +2,166 @@
 from decimal import Decimal
 
 import pytest
+from rest_framework.test import APIClient
 
 from apps.contributions.models import Contribution, MemberRanking, RankingObjection
 from apps.contributions.services import RANKING_RULE_VERSION, RankingService
 from apps.projects.models import ProjectMember
 
 
+def client_for(user):
+    client = APIClient()
+    client.force_authenticate(user=user)
+    return client
+
+
 @pytest.mark.django_db
 class TestRankingRules:
+    def test_operating_teacher_can_review_assigned_contribution_without_self_review(
+        self, make_project, make_user
+    ):
+        project = make_project()
+        member = make_user(email='teacher-review-member@test.com')
+        assigned_reviewer = make_user(
+            email='teacher-review-assigned@test.com',
+        )
+        operating_teacher = make_user(
+            email='teacher-review-operator@test.com',
+            global_role='teacher',
+        )
+        ProjectMember.objects.create(project=project, user=member)
+        contribution = Contribution.objects.create(
+            project=project,
+            user=member,
+            filled_by=project.leader,
+            reviewer=assigned_reviewer,
+            contribution_type=Contribution.ContributionType.STAGE_TASK,
+            content='已交付比赛材料',
+            weight=Decimal('10'),
+        )
+
+        response = client_for(operating_teacher).patch(
+            (
+                '/api/v1/contributions/contributions/'
+                f'{contribution.id}/review/'
+            ),
+            {
+                'status': Contribution.Status.APPROVED,
+                'review_opinion': '操作老师兜底核验通过',
+                'weight': '12.00',
+            },
+            format='json',
+        )
+
+        assert response.status_code == 200, response.json()
+        contribution.refresh_from_db()
+        assert contribution.reviewer_id == operating_teacher.id
+        assert contribution.status == Contribution.Status.APPROVED
+
+    def test_project_leader_confirms_ranking_but_member_cannot(
+        self, make_project, make_user
+    ):
+        project = make_project()
+        member = make_user(email='ranking-confirm-member@test.com')
+        ProjectMember.objects.create(project=project, user=member)
+        ranking = MemberRanking.objects.create(
+            project=project,
+            user=member,
+            period='2026-08',
+            rank=1,
+            total_score=Decimal('20'),
+        )
+
+        denied = client_for(member).post(
+            '/api/v1/contributions/rankings/confirm/',
+            {'ids': [ranking.id]},
+            format='json',
+        )
+        confirmed = client_for(project.leader).post(
+            '/api/v1/contributions/rankings/confirm/',
+            {'ids': [ranking.id]},
+            format='json',
+        )
+
+        assert denied.status_code == 403, denied.json()
+        assert confirmed.status_code == 200, confirmed.json()
+        ranking.refresh_from_db()
+        assert ranking.status == MemberRanking.Status.CONFIRMED
+        assert ranking.is_public is True
+        assert ranking.confirmed_by_id == project.leader_id
+
+    def test_ranking_objection_requires_two_independent_reviewers(
+        self, make_project, make_user
+    ):
+        project = make_project()
+        co_lead = make_user(email='ranking-independent-co-lead@test.com')
+        objector = make_user(email='ranking-independent-objector@test.com')
+        ProjectMember.objects.create(
+            project=project,
+            user=co_lead,
+            role_in_project=ProjectMember.RoleInProject.LEADER,
+        )
+        ProjectMember.objects.create(project=project, user=objector)
+        ranking = MemberRanking.objects.create(
+            project=project,
+            user=objector,
+            period='2026-08',
+            rank=1,
+            total_score=Decimal('20'),
+            status=MemberRanking.Status.CONFIRMED,
+            is_public=True,
+            is_published=True,
+        )
+        objection = RankingObjection.objects.create(
+            ranking=ranking,
+            objector=objector,
+            content='贡献证据需要重新核对',
+        )
+        initial_url = (
+            f'/api/v1/contributions/objections/{objection.id}/leader_review/'
+        )
+        final_url = (
+            f'/api/v1/contributions/objections/{objection.id}/teacher_confirm/'
+        )
+
+        self_review = client_for(objector).patch(
+            initial_url,
+            {'action': 'leader_review', 'leader_opinion': '我确认自己的异议'},
+            format='json',
+        )
+        initial_review = client_for(co_lead).patch(
+            initial_url,
+            {'action': 'leader_review', 'leader_opinion': '证据需要复核'},
+            format='json',
+        )
+        duplicate_review = client_for(co_lead).patch(
+            final_url,
+            {
+                'action': 'teacher_confirm',
+                'final_status': 'rejected',
+                'teacher_opinion': '同一人再次审核',
+            },
+            format='json',
+        )
+        final_review = client_for(project.leader).patch(
+            final_url,
+            {
+                'action': 'teacher_confirm',
+                'final_status': 'rejected',
+                'teacher_opinion': '第二位负责人独立复核',
+            },
+            format='json',
+        )
+
+        assert self_review.status_code == 403, self_review.json()
+        assert initial_review.status_code == 200, initial_review.json()
+        assert duplicate_review.status_code == 403, duplicate_review.json()
+        assert final_review.status_code == 200, final_review.json()
+        objection.refresh_from_db()
+        assert objection.status == RankingObjection.Status.REJECTED
+        assert objection.leader_reviewer_id == co_lead.id
+        assert objection.teacher_confirmer_id == project.leader_id
+
     def test_category_priority_precedes_total_score(
         self, make_project, make_user
     ):

@@ -2,7 +2,11 @@ import pytest
 from rest_framework.test import APIClient
 
 from apps.common.team_models import Team, TeamMember
-from apps.competitions.models import Competition, CompetitionParticipant
+from apps.competitions.models import (
+    Competition,
+    CompetitionEvent,
+    CompetitionParticipant,
+)
 from apps.projects.models import ProjectMember
 from apps.tasks.models import Task
 
@@ -213,9 +217,15 @@ def test_project_list_explains_team_project_and_competition_responsibility(
         assignee=worker,
         status=Task.Status.DOING,
     )
+    event = CompetitionEvent.objects.create(
+        name='安全创新比赛',
+        edition='2026',
+    )
     competition = Competition.objects.create(
         project=project,
         name='安全创新比赛',
+        event=event,
+        entry_name='星火参赛队',
     )
     CompetitionParticipant.objects.create(
         competition=competition,
@@ -243,14 +253,23 @@ def test_project_list_explains_team_project_and_competition_responsibility(
         '共同负责人',
     ]
     assert row['competition_summaries'][0]['leader_names'] == ['共同负责人']
+    assert row['competition_summaries'][0]['event_name'] == '安全创新比赛'
+    assert row['competition_summaries'][0]['event_edition'] == '2026'
+    assert row['competition_summaries'][0]['entry_name'] == '星火参赛队'
+    assert (
+        row['competition_summaries'][0]['display_name']
+        == '安全创新比赛（2026） / 星火参赛队'
+    )
     worker_summary = next(
         item
         for item in row['member_work_summary']
         if item['user_id'] == worker.id
     )
     assert worker_summary['active_task_titles'] == ['完成安全赛计划书']
-    assert worker_summary['competition_names'] == ['安全创新比赛']
+    assert worker_summary['competition_names'] == [
+        '安全创新比赛（2026） / 星火参赛队',
+    ]
     assert worker_summary['competition_responsibilities'] == [{
-        'competition_name': '安全创新比赛',
+        'competition_name': '安全创新比赛（2026） / 星火参赛队',
         'responsibility': '负责计划书与演示',
     }]

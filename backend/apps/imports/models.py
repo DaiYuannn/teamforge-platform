@@ -21,6 +21,7 @@ class ImportTask(models.Model):
         TASKS = 'tasks', '任务'
         FINANCE = 'finance', '经费'
         IP_APPLICATIONS = 'ip_applications', '知识产权'
+        MATERIALS = 'materials', '资料包'
 
     class Status(models.TextChoices):
         """导入状态"""

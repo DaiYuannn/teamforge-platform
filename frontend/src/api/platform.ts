@@ -46,6 +46,7 @@ export interface RoleAssignmentPayload {
 export interface ApprovalStep {
   name: string
   reviewer_role?: string
+  reviewer_roles?: string[]
   reviewer_ids?: number[]
 }
 
@@ -73,14 +74,42 @@ export interface ApprovalRequest {
   applicant_name: string
   flow: number
   flow_name: string
+  flow_type: string
   status: ApprovalStatus
   status_display: string
   title: string
   content: string
   current_step: number
+  current_step_name: string
+  reviewer_ids: number[]
+  reviewer_roles: string[]
+  reviewer_names: string[]
+  can_review: boolean
+  review_history: ApprovalReviewHistory[]
   metadata: Record<string, unknown>
   created_at: string
   updated_at: string
+}
+
+export interface ApprovalReviewHistory {
+  action: 'approve' | 'reject' | 'cancel' | string
+  opinion: string
+  by: number
+  by_name?: string
+  step: number
+  step_name: string
+  at?: string
+}
+
+export type TeamMembershipAction = 'join' | 'transfer' | 'role_change'
+
+export interface TeamMembershipApprovalMetadata {
+  [key: string]: string | number | undefined
+  action: TeamMembershipAction
+  target_team_id: number
+  membership_id?: number
+  requested_role: string
+  reason: string
 }
 
 export interface ApprovalRequestPayload {

@@ -14,6 +14,10 @@ from django.utils import timezone
 from common.response import success_response, error_response
 from common.mixins import MultiSerializerMixin
 from common.project_access import active_user_root_team_ids
+from apps.competitions.member_search import (
+    member_matches_search,
+    normalize_search_text,
+)
 from .team_models import Team, TeamMember, TeamMembershipEvent
 
 
@@ -26,6 +30,9 @@ TEAM_MEMBER_ROLE_PRIORITY = (
     TeamMember.Role.MEMBER,
     TeamMember.Role.EXTERNAL,
 )
+
+
+GLOBAL_TEAM_MANAGER_ROLES = {'sys_admin', 'teacher'}
 
 
 def _filter_and_order_team_members(queryset, query_params):
@@ -73,6 +80,18 @@ def _filter_and_order_team_members(queryset, query_params):
     )
 
 
+def _deduplicate_members_by_user(members):
+    """Keep the highest-priority visible team relation for each user."""
+    unique = []
+    seen_user_ids = set()
+    for member in members:
+        if member.user_id in seen_user_ids:
+            continue
+        seen_user_ids.add(member.user_id)
+        unique.append(member)
+    return unique
+
+
 def _visible_teams_for(user):
     """仅让仍在队/暂离的内部成员看到自己的组织及相邻两级上下文。"""
     if (
@@ -82,7 +101,7 @@ def _visible_teams_for(user):
         or getattr(user, 'membership_status', '') not in {'active', 'on_leave'}
     ):
         return Team.objects.none()
-    if user.global_role == 'sys_admin':
+    if user.global_role in GLOBAL_TEAM_MANAGER_ROLES:
         return Team.objects.all()
 
     visible_statuses = [TeamMember.Status.ACTIVE, TeamMember.Status.ON_LEAVE]
@@ -113,7 +132,7 @@ def _visible_teams_for(user):
 
 def _is_team_manager(team, user):
     manages_team = (
-        user.global_role == 'sys_admin'
+        user.global_role in GLOBAL_TEAM_MANAGER_ROLES
         or team.owner_id == user.id
         or TeamMember.objects.filter(
             team=team,
@@ -145,7 +164,7 @@ def _is_team_manager(team, user):
 
 def _can_assign_team_leadership(team, user):
     """共同负责人属于提权操作，只允许主负责人或上级总团队负责人授予。"""
-    if user.global_role == 'sys_admin' or team.owner_id == user.id:
+    if user.global_role in GLOBAL_TEAM_MANAGER_ROLES or team.owner_id == user.id:
         return True
     parent = getattr(team, 'parent', None)
     if not parent:
@@ -162,7 +181,7 @@ def _can_assign_team_leadership(team, user):
 
 def _user_can_join_team_organization(team, user, role, actor):
     """限制普通成员只能加入同一根团队，保留单根部署的待分组成员兼容。"""
-    if actor.global_role == 'sys_admin':
+    if actor.global_role in GLOBAL_TEAM_MANAGER_ROLES:
         return bool(user and user.is_active)
     if not user or not user.is_active:
         return False
@@ -253,7 +272,14 @@ class TeamSerializer(serializers.ModelSerializer):
         read_only_fields = ('id', 'owner', 'created_at')
 
     def get_member_count(self, obj) -> int:
-        return obj.teammember_set.filter(status=TeamMember.Status.ACTIVE).count()
+        queryset = TeamMember.objects.filter(
+            status=TeamMember.Status.ACTIVE,
+        )
+        if obj.parent_id:
+            return queryset.filter(team=obj).count()
+        return queryset.filter(
+            Q(team=obj) | Q(team__parent=obj),
+        ).values('user_id').distinct().count()
 
     def get_child_count(self, obj) -> int:
         return obj.child_teams.filter(is_active=True).count()
@@ -382,7 +408,10 @@ class TeamViewSet(MultiSerializerMixin, ModelViewSet):
 
     def destroy(self, request, *args, **kwargs):
         team = self.get_object()
-        if request.user.global_role != 'sys_admin' and team.owner_id != request.user.id:
+        if (
+            request.user.global_role not in GLOBAL_TEAM_MANAGER_ROLES
+            and team.owner_id != request.user.id
+        ):
             return error_response(
                 message='只有团队负责人可以删除团队',
                 code=1003,
@@ -399,10 +428,19 @@ class TeamViewSet(MultiSerializerMixin, ModelViewSet):
         """
         team = self.get_object()
         if request.method == 'GET':
+            member_queryset = TeamMember.objects.filter(team=team)
+            if not team.parent_id:
+                # 总团队人员库聚合直属成员和全部小团队成员；同一用户只展示
+                # 最高优先级的一条关系，避免加入多个参赛协作组后重复出现。
+                member_queryset = TeamMember.objects.filter(
+                    Q(team=team) | Q(team__parent=team),
+                )
             members = _filter_and_order_team_members(
-                team.teammember_set.all(),
+                member_queryset,
                 request.query_params,
             )
+            if not team.parent_id:
+                members = _deduplicate_members_by_user(members)
             return success_response(TeamMemberSerializer(members, many=True).data)
 
         # 添加成员
@@ -563,8 +601,20 @@ class TeamViewSet(MultiSerializerMixin, ModelViewSet):
 
     @action(detail=True, methods=['get'])
     def candidates(self, request, pk=None):
-        """团队管理员选择新增成员或交接人时使用的最小化成员目录。"""
-        team = self.get_object()
+        """团队管理员选择新增成员时使用的可组合搜索目录。"""
+        # ``search`` is also a DRF SearchFilter parameter.  Calling
+        # ``self.get_object()`` here would apply it to the Team itself and turn
+        # a perfectly valid candidate query into a misleading 404 whenever the
+        # member keyword did not match the team name.
+        team = _visible_teams_for(request.user).select_related(
+            'owner', 'parent',
+        ).filter(pk=pk).first()
+        if team is None:
+            return error_response(
+                message='团队不存在或不可见',
+                code=1004,
+                http_status=status.HTTP_404_NOT_FOUND,
+            )
         if not _is_team_manager(team, request.user):
             return error_response(
                 message='只有团队负责人或管理员可以查看候选成员',
@@ -575,9 +625,15 @@ class TeamViewSet(MultiSerializerMixin, ModelViewSet):
 
         users = User.objects.exclude(
             membership_status=User.MembershipStatus.EXITED
-        ).filter(is_active=True)
-        if request.user.global_role != 'sys_admin':
-            root_id = team.parent_id or team.id
+        ).filter(is_active=True).exclude(
+            teammember__team=team,
+            teammember__status__in=[
+                TeamMember.Status.ACTIVE,
+                TeamMember.Status.ON_LEAVE,
+            ],
+        )
+        root_id = team.parent_id or team.id
+        if request.user.global_role not in GLOBAL_TEAM_MANAGER_ROLES:
             visible_statuses = [
                 TeamMember.Status.ACTIVE,
                 TeamMember.Status.ON_LEAVE,
@@ -612,29 +668,105 @@ class TeamViewSet(MultiSerializerMixin, ModelViewSet):
                 )
                 allowed_ids.update(unassigned_ids)
             users = users.filter(id__in=allowed_ids)
-        users = users.order_by('name')
-        search = request.query_params.get('search', '').strip()
-        if search:
-            users = users.filter(
-                Q(name__icontains=search)
-                | Q(email__icontains=search)
-                | Q(username__icontains=search)
+        users = users.order_by('name', 'id')
+
+        role_order = Case(
+            *[
+                When(role=role, then=Value(priority))
+                for priority, role in enumerate(TEAM_MEMBER_ROLE_PRIORITY)
+            ],
+            default=Value(len(TEAM_MEMBER_ROLE_PRIORITY)),
+            output_field=IntegerField(),
+        )
+        memberships = (
+            TeamMember.objects
+            .filter(
+                Q(team_id=root_id) | Q(team__parent_id=root_id),
+                user_id__in=users.values('id'),
+                status__in=[TeamMember.Status.ACTIVE, TeamMember.Status.ON_LEAVE],
             )
-        return success_response([
-            {
+            .select_related('user', 'team')
+            .annotate(_role_order=role_order)
+            .order_by('_role_order', 'team__parent_id', 'team_id', 'id')
+        )
+        membership_by_user = {}
+        for membership in memberships:
+            membership_by_user.setdefault(membership.user_id, membership)
+
+        search = request.query_params.get('search', '')
+        school = normalize_search_text(request.query_params.get('school', ''))
+        team_role = (
+            request.query_params.get('team_role')
+            or request.query_params.get('role')
+            or ''
+        ).strip()
+        membership_status = (
+            request.query_params.get('membership_status') or ''
+        ).strip()
+
+        candidates = []
+        for user in users.iterator():
+            membership = membership_by_user.get(user.id)
+            if school and school not in normalize_search_text(user.school):
+                continue
+            if team_role and getattr(membership, 'role', '') != team_role:
+                continue
+            if membership_status and user.membership_status != membership_status:
+                continue
+            if not member_matches_search(
+                query=search,
+                name=user.name,
+                values=[
+                    user.name,
+                    user.username,
+                    user.email,
+                    user.phone,
+                    user.school,
+                    user.grade,
+                    user.major,
+                    user.get_global_role_display(),
+                    user.get_membership_status_display(),
+                    membership.get_role_display() if membership else '',
+                    membership.get_status_display() if membership else '',
+                ],
+            ):
+                continue
+            candidates.append({
                 'id': user.id,
                 'name': user.name,
                 'email': user.email,
+                'school': user.school,
+                'grade': user.grade,
+                'major': user.major,
+                'global_role': user.global_role,
+                'global_role_display': user.get_global_role_display(),
+                'team_role': membership.role if membership else None,
+                'team_role_display': membership.get_role_display() if membership else '',
+                'team_status': membership.status if membership else None,
+                'team_status_display': membership.get_status_display() if membership else '',
                 'membership_status': user.membership_status,
-            }
-            for user in users[:200]
-        ])
+                'membership_status_display': user.get_membership_status_display(),
+                'is_active': user.is_active,
+            })
+            if len(candidates) >= 200:
+                break
+        candidates.sort(key=lambda item: (
+            TEAM_MEMBER_ROLE_PRIORITY.index(item['team_role'])
+            if item['team_role'] in TEAM_MEMBER_ROLE_PRIORITY
+            else len(TEAM_MEMBER_ROLE_PRIORITY),
+            item['name'] or item['email'],
+            item['id'],
+        ))
+        return success_response(candidates)
 
     @action(detail=True, methods=['post'], url_path='transfer-owner')
     @transaction.atomic
     def transfer_owner(self, request, pk=None):
         team = self.get_object()
-        if request.user.global_role != 'sys_admin' and team.owner_id != request.user.id:
+        if (
+            request.user.global_role not in GLOBAL_TEAM_MANAGER_ROLES
+            and team.owner_id != request.user.id
+        ):
             return error_response(
                 message='只有当前团队负责人可以转让负责人',
                 code=1003,
@@ -737,7 +869,7 @@ class TeamMemberViewSet(ModelViewSet):
             return self.queryset.none()
         user = self.request.user
         queryset = self.queryset
-        if user.global_role != 'sys_admin':
+        if user.global_role not in GLOBAL_TEAM_MANAGER_ROLES:
             queryset = queryset.filter(
                 team__in=_visible_teams_for(user),
             ).distinct()

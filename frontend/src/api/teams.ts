@@ -71,7 +71,25 @@ export interface TeamCandidate {
   id: number
   name: string
   email: string
+  school?: string
+  grade?: string
+  major?: string
+  global_role?: string
+  global_role_display?: string
+  team_role?: TeamMemberRole
+  team_role_display?: string
+  team_status?: TeamMemberStatus
+  team_status_display?: string
   membership_status: string
+  membership_status_display?: string
+  is_active?: boolean
+}
+
+export interface TeamCandidateQueryParams {
+  search?: string
+  school?: string
+  team_role?: TeamMemberRole
+  membership_status?: string
 }
 
 export function getTeams(params?: PaginationParams): Promise<PaginatedResponse<Team>> {
@@ -115,8 +133,11 @@ export function removeTeamMember(teamId: number, memberId: number): Promise<void
   return del<void>(`/teams/${teamId}/members/${memberId}/`)
 }
 
-export function getTeamCandidates(id: number, search?: string): Promise<TeamCandidate[]> {
-  return get<TeamCandidate[]>(`/teams/${id}/candidates/`, search ? { search } : undefined)
+export function getTeamCandidates(
+  id: number,
+  params?: TeamCandidateQueryParams,
+): Promise<TeamCandidate[]> {
+  return get<TeamCandidate[]>(`/teams/${id}/candidates/`, params)
 }
 
 export function transferTeamOwner(

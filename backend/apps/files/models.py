@@ -7,12 +7,19 @@
 """
 import hashlib
 
+import django
 from django.db import models
 from django.conf import settings
 from django.core.exceptions import ValidationError
 
 from apps.projects.models import Project
 from apps.common.soft_delete import SoftDeleteMixin, SoftDeleteManager
+
+
+def _check_constraint(*, condition, name):
+    """Keep model importable on the project's Django 5.0 and host Django 6.x."""
+    argument = 'condition' if django.VERSION >= (5, 1) else 'check'
+    return models.CheckConstraint(**{argument: condition}, name=name)
 
 
 class FileFolder(models.Model):
@@ -109,6 +116,22 @@ class FileAsset(SoftDeleteMixin, models.Model):
         verbose_name='所属项目',
         null=True, blank=True,
     )
+    team = models.ForeignKey(
+        'common.Team',
+        on_delete=models.PROTECT,
+        related_name='scoped_files',
+        verbose_name='指定可见团队',
+        null=True,
+        blank=True,
+    )
+    competition_entry = models.ForeignKey(
+        'competitions.Competition',
+        on_delete=models.PROTECT,
+        related_name='scoped_files',
+        verbose_name='指定可见参赛条目',
+        null=True,
+        blank=True,
+    )
     folder = models.ForeignKey(
         FileFolder,
         on_delete=models.SET_NULL,
@@ -156,9 +179,28 @@ class FileAsset(SoftDeleteMixin, models.Model):
         verbose_name = '文件资源'
         verbose_name_plural = verbose_name
         ordering = ['-created_at']
+        constraints = [
+            _check_constraint(
+                condition=(
+                    models.Q(team__isnull=True)
+                    | models.Q(competition_entry__isnull=True)
+                ),
+                name='file_scope_team_or_competition',
+            ),
+        ]
 
     def __str__(self):
         return self.name
+
+    def clean(self):
+        if self.team_id and self.competition_entry_id:
+            raise ValidationError('指定小团队与指定比赛参赛条目不能同时设置')
+        if self.competition_entry_id:
+            competition_project_id = self.competition_entry.project_id
+            if self.project_id and self.project_id != competition_project_id:
+                raise ValidationError({'competition_entry': '参赛条目必须属于文件所在项目'})
+        if self.folder_id and self.project_id != self.folder.project_id:
+            raise ValidationError({'folder': '文件夹必须属于文件所在项目'})
 
     def save(self, *args, **kwargs):
         """

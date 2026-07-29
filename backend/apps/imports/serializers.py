@@ -86,3 +86,19 @@ class ImportPreviewSerializer(serializers.Serializer):
 class ImportConfirmSerializer(serializers.Serializer):
     """导入确认请求序列化器"""
     field_mapping = serializers.JSONField(required=False, default=dict)
+
+
+class MaterialArchivePreviewSerializer(serializers.Serializer):
+    """ZIP material package containing a root manifest.json."""
+
+    file = serializers.FileField(required=True)
+    team = serializers.IntegerField(required=True)
+
+    def validate_file(self, value):
+        if os.path.splitext(value.name)[1].lower() != '.zip':
+            raise serializers.ValidationError('资料包必须是 .zip 文件')
+        if value.size <= 0:
+            raise serializers.ValidationError('资料包不能为空')
+        if value.size > 50 * 1024 * 1024:
+            raise serializers.ValidationError('资料包压缩文件不能超过 50 MB')
+        return value

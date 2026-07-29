@@ -168,6 +168,11 @@ export interface ProjectTeamSummary {
 export interface ProjectCompetitionSummary {
   id: number
   name: string
+  event?: number | null
+  event_name: string
+  event_edition: string
+  entry_name: string
+  display_name: string
   status: string
   status_display: string
   leader_names: string[]
@@ -318,6 +323,10 @@ export type CompetitionStatus = 'preparing' | 'ongoing' | 'completed'
 // 比赛
 export interface Competition {
   id: number
+  event?: number | null
+  event_name?: string
+  event_edition?: string
+  entry_name?: string
   project: number
   project_name?: string
   name: string
@@ -371,6 +380,34 @@ export interface CompetitionParticipant {
   updated_at?: string
 }
 
+export interface CompetitionAwardRecipient {
+  id: number
+  name: string
+  email: string
+}
+
+export interface CompetitionAward {
+  id: number
+  competition: number
+  competition_name?: string
+  award_name: string
+  award_level: string
+  award_date?: string | null
+  recipients: number[]
+  recipient_details: CompetitionAwardRecipient[]
+  notes: string
+  created_at: string
+  updated_at: string
+}
+
+export interface CompetitionAwardFormData {
+  award_name: string
+  award_level?: string
+  award_date?: string | null
+  recipients?: number[]
+  notes?: string
+}
+
 export interface CompetitionContributionEvidence {
   id: number
   project: number
@@ -400,6 +437,8 @@ export interface CompetitionContributionEvidence {
 
 // 比赛创建/更新参数
 export interface CompetitionFormData {
+  event?: number | null
+  entry_name?: string
   project: number
   name: string
   comp_type: string
@@ -618,6 +657,11 @@ export interface FileAsset {
   id: number
   project: number
   project_name?: string
+  team?: number | null
+  team_name?: string
+  competition_entry?: number | null
+  competition_entry_name?: string
+  can_manage?: boolean
   name: string
   file?: string
   file_url?: string
@@ -647,12 +691,16 @@ export interface FileVersion {
 export interface FileUploadParams {
   project: number
   level: FileLevel
+  team?: number | null
+  competition_entry?: number | null
   description?: string
 }
 
 // 文件查询参数
 export interface FileQueryParams extends PaginationParams {
   project?: number
+  team?: number
+  competition_entry?: number
   level?: FileLevel
 }
 
@@ -669,6 +717,7 @@ export type ImportModule =
   | 'competitions'
   | 'finance'
   | 'ip_applications'
+  | 'materials'
 
 // 导入任务状态
 export type ImportTaskStatus =
@@ -769,6 +818,7 @@ export interface Member {
   project_count?: number
   task_count?: number
   projects?: { project_id: number; project_name: string; project_code: string; role_in_project: string; role_in_project_display: string; membership_status?: string; membership_status_display?: string; exited_at?: string | null; exit_reason?: string; project_status: string }[]
+  competition_participations?: MemberCompetitionParticipation[]
   tasks?: any[]
   skills?: any[]
   latest_work_schedule?: any
@@ -783,6 +833,26 @@ export interface Member {
   }[]
   date_joined?: string
   joined_projects?: { id: number; name: string; role_in_project: string }[]
+}
+
+export interface MemberCompetitionParticipation {
+  participant_id: number
+  competition_id: number
+  competition_name: string
+  event_id?: number | null
+  event_name: string
+  event_edition: string
+  event_organizer: string
+  project_id: number
+  project_name: string
+  project_code: string
+  entry_name: string
+  role: 'advisor' | 'leader' | 'member'
+  role_display: string
+  participation_status: 'planned' | 'confirmed' | 'withdrawn'
+  participation_status_display: string
+  responsibility: string
+  joined_at: string
 }
 
 // 成员更新参数
@@ -1092,6 +1162,14 @@ export interface SensitiveData {
   project_name?: string
   has_file?: boolean
   file_attachment_name?: string
+  can_manage_grants?: boolean
+  active_direct_grant?: {
+    id: number
+    can_view: boolean
+    can_download: boolean
+    purpose: string
+    expires_at: string
+  } | null
   key_version?: number
   is_encrypted?: boolean
   created_at?: string
@@ -1150,11 +1228,50 @@ export interface SensitiveDataCreateParams {
   data_type: string
   title: string
   display_name?: string
-  plaintext: string
+  plaintext?: string
   subject_user?: number | null
   team?: number | null
   project?: number | null
   file_attachment?: number | null
+  attachment_upload?: File | null
+}
+
+export interface SensitiveDataGrant {
+  id: number
+  sensitive_data: number
+  sensitive_data_title?: string
+  granted_to: number
+  granted_to_name: string
+  granted_to_email?: string
+  can_view: boolean
+  can_download: boolean
+  purpose: string
+  expires_at: string
+  granted_by: number
+  granted_by_name?: string
+  revoked_at?: string | null
+  revoked_by?: number | null
+  revoked_by_name?: string
+  is_active: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface SensitiveGrantAccessLog {
+  id: number
+  grant: number
+  sensitive_data: number
+  accessor: number
+  accessor_name: string
+  action: 'view' | 'download'
+  action_display: string
+  purpose_snapshot: string
+  is_success: boolean
+  detail?: string
+  request_method?: string
+  request_path?: string
+  request_ip?: string | null
+  accessed_at: string
 }
 
 export interface SensitiveAccessRequestCreateParams {

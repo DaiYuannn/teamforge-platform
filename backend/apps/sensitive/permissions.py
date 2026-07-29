@@ -8,6 +8,10 @@
 """
 from rest_framework.permissions import BasePermission, SAFE_METHODS
 from django.db.models import Q
+from django.utils import timezone
+
+
+GLOBAL_SENSITIVE_MANAGER_ROLES = {'sys_admin', 'teacher'}
 
 
 def _active_team_ids(user):
@@ -34,6 +38,8 @@ def sensitive_review_team_ids(user):
         or getattr(user, 'membership_status', '') not in {'active', 'on_leave'}
     ):
         return set()
+    if user.global_role in GLOBAL_SENSITIVE_MANAGER_ROLES:
+        return set(Team.objects.values_list('id', flat=True))
     team_ids = set(
         Team.objects.filter(owner=user).values_list('id', flat=True)
     )
@@ -52,6 +58,13 @@ def sensitive_review_team_ids(user):
 
 
 def can_review_sensitive_data(user, sensitive_data):
+    if (
+        user
+        and user.is_authenticated
+        and user.is_active
+        and user.global_role in GLOBAL_SENSITIVE_MANAGER_ROLES
+    ):
+        return True
     if not sensitive_data.team_id:
         # 历史资料在完成团队归属补录前，仅保留给明确的敏感审批人。
         return bool(
@@ -72,6 +85,8 @@ def user_can_view_sensitive_metadata(user, sensitive_data):
         return False
     if sensitive_data.uploader_id == user.id or sensitive_data.subject_user_id == user.id:
         return True
+    if can_use_sensitive_grant(user, sensitive_data):
+        return True
     if not sensitive_data.team_id:
         return False
     if sensitive_data.data_type == 'id_card':
@@ -90,10 +105,62 @@ def scope_sensitive_data_queryset(queryset, user):
         | Q(subject_user=user)
         | Q(team_id__in=active_team_ids) & ~Q(data_type='id_card')
         | Q(team_id__in=review_team_ids, data_type='id_card')
+        | (
+            Q(
+                direct_grants__granted_to=user,
+                direct_grants__revoked_at__isnull=True,
+                direct_grants__expires_at__gt=timezone.now(),
+            )
+            & (
+                Q(direct_grants__can_view=True)
+                | Q(direct_grants__can_download=True)
+            )
+        )
     )
+    if user.global_role in GLOBAL_SENSITIVE_MANAGER_ROLES:
+        return queryset.distinct()
     if user.global_role == 'sens_approver':
         visibility |= Q(team__isnull=True)
     return queryset.filter(visibility).distinct()
+
+
+def get_active_sensitive_grant(user, sensitive_data, *, require_download=None):
+    """Return the active grant for this exact record and user, if any."""
+    if not is_internal_sensitive_member(user):
+        return None
+    from .models import SensitiveDataGrant
+
+    queryset = SensitiveDataGrant.objects.filter(
+        sensitive_data=sensitive_data,
+        granted_to=user,
+        revoked_at__isnull=True,
+        expires_at__gt=timezone.now(),
+    )
+    if require_download is True:
+        queryset = queryset.filter(can_download=True)
+    elif require_download is False:
+        queryset = queryset.filter(can_view=True)
+    else:
+        queryset = queryset.filter(Q(can_view=True) | Q(can_download=True))
+    return queryset.select_related('sensitive_data', 'granted_to', 'granted_by').first()
+
+
+def can_use_sensitive_grant(user, sensitive_data, *, require_download=None):
+    return get_active_sensitive_grant(
+        user,
+        sensitive_data,
+        require_download=require_download,
+    ) is not None
+
+
+def can_manage_sensitive_grants(user, sensitive_data):
+    """Team reviewers and the data subject may delegate one exact record."""
+    if not is_internal_sensitive_member(user):
+        return False
+    return bool(
+        sensitive_data.subject_user_id == user.id
+        or can_review_sensitive_data(user, sensitive_data)
+    )
 
 
 def is_internal_sensitive_member(user):

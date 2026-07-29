@@ -3,10 +3,11 @@ from types import SimpleNamespace
 
 import pytest
 from django.apps import apps as django_apps
+from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework.test import APIClient
 
 from apps.common.team_models import Team, TeamMember
-from apps.notifications.models import Announcement
+from apps.notifications.models import Announcement, AnnouncementAttachment
 from apps.notifications.announcement_access import announcement_management_scope
 from apps.notifications.serializers import AnnouncementSerializer
 from apps.projects.models import ProjectMember
@@ -365,6 +366,7 @@ def test_list_can_manage_serialization_has_no_per_row_queries(
         ).prefetch_related(
             'target_teams',
             'target_projects',
+            'attachments__uploaded_by',
         )
     )
     scope = announcement_management_scope(owner)
@@ -379,3 +381,100 @@ def test_list_can_manage_serialization_has_no_per_row_queries(
     with django_assert_num_queries(0):
         data = serializer.data
     assert all(item['can_manage'] for item in data)
+
+
+@pytest.mark.django_db
+def test_manager_can_upload_and_member_can_download_announcement_attachment(
+    make_user,
+    settings,
+    tmp_path,
+):
+    settings.MEDIA_ROOT = tmp_path
+    root, owner = _make_root(make_user, 'ATTACH')
+    member = make_user(email='announcement-attachment-member@test.com')
+    outsider = make_user(email='announcement-attachment-outsider@test.com')
+    TeamMember.objects.create(team=root, user=member)
+    announcement = Announcement.objects.create(
+        title='带附件公告',
+        content='附件内容',
+        status=Announcement.Status.PUBLISHED,
+        audience=Announcement.Audience.ORGANIZATION,
+        organization=root,
+        author=owner,
+    )
+
+    upload_response = _client(owner).post(
+        f'/api/v1/notifications/announcements/{announcement.id}/attachments/',
+        {
+            'file': SimpleUploadedFile(
+                '会议纪要.pdf',
+                b'%PDF-1.4 attachment',
+                content_type='application/pdf',
+            ),
+        },
+        format='multipart',
+    )
+    assert upload_response.status_code == 201, upload_response.json()
+    attachment = AnnouncementAttachment.objects.get(announcement=announcement)
+
+    detail = _client(member).get(
+        f'/api/v1/notifications/announcements/{announcement.id}/'
+    )
+    assert detail.status_code == 200
+    assert detail.json()['data']['attachment_count'] == 1
+    assert detail.json()['data']['attachments'][0]['name'] == '会议纪要.pdf'
+
+    download = _client(member).get(
+        f'/api/v1/notifications/announcements/{announcement.id}'
+        f'/attachments/{attachment.id}/download/'
+    )
+    assert download.status_code == 200
+    assert download['Cache-Control'] == 'private, no-store'
+
+    denied = _client(outsider).get(
+        f'/api/v1/notifications/announcements/{announcement.id}'
+        f'/attachments/{attachment.id}/download/'
+    )
+    assert denied.status_code == 404
+
+
+@pytest.mark.django_db
+def test_announcement_attachment_rejects_executable_and_deletes_storage(
+    make_user,
+    settings,
+    tmp_path,
+):
+    settings.MEDIA_ROOT = tmp_path
+    root, owner = _make_root(make_user, 'ATTACHDEL')
+    announcement = Announcement.objects.create(
+        title='附件安全',
+        content='附件',
+        status=Announcement.Status.DRAFT,
+        audience=Announcement.Audience.ORGANIZATION,
+        organization=root,
+        author=owner,
+    )
+    blocked = _client(owner).post(
+        f'/api/v1/notifications/announcements/{announcement.id}/attachments/',
+        {'file': SimpleUploadedFile('danger.ps1', b'Write-Host bad')},
+        format='multipart',
+    )
+    assert blocked.status_code == 400
+
+    created = _client(owner).post(
+        f'/api/v1/notifications/announcements/{announcement.id}/attachments/',
+        {'file': SimpleUploadedFile('资料.txt', b'hello')},
+        format='multipart',
+    )
+    assert created.status_code == 201
+    attachment = AnnouncementAttachment.objects.get(announcement=announcement)
+    stored_path = tmp_path / attachment.file.name
+    assert stored_path.exists()
+
+    deleted = _client(owner).delete(
+        f'/api/v1/notifications/announcements/{announcement.id}'
+        f'/attachments/{attachment.id}/'
+    )
+    assert deleted.status_code == 200
+    assert not AnnouncementAttachment.objects.filter(pk=attachment.id).exists()
+    assert not stored_path.exists()

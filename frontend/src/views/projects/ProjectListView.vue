@@ -289,7 +289,7 @@
                       class="competition-summary-card"
                     >
                       <div>
-                        <strong>{{ competition.name }}</strong>
+                        <strong>{{ competition.display_name || competition.name }}</strong>
                         <span>{{ competition.status_display }} · {{ competition.participant_count }} 人参赛</span>
                       </div>
                       <p>
@@ -371,7 +371,7 @@
                   v-for="competition in row.competition_summaries.slice(0, 2)"
                   :key="competition.id"
                 >
-                  <strong>{{ competition.name }}</strong>
+                  <strong>{{ competition.display_name || competition.name }}</strong>
                   <span>负责人：{{ competition.leader_names.join('、') || '未指定' }}</span>
                 </div>
                 <small v-if="row.competition_summaries.length > 2">
@@ -576,7 +576,7 @@
             <p v-else>尚未登记成员任务分工。</p>
             <div v-if="item.competition_summaries?.length" class="mobile-competition-work">
               <article v-for="competition in item.competition_summaries" :key="competition.id">
-                <strong>{{ competition.name }}</strong>
+                <strong>{{ competition.display_name || competition.name }}</strong>
                 <span>比赛负责人：{{ competition.leader_names.join('、') || '尚未指定' }}</span>
               </article>
             </div>
@@ -811,7 +811,7 @@ function projectTeamLeaderNames(project: Project): string {
 function projectCompetitionLeaderNames(project: Project): string {
   const labels = project.competition_summaries?.map((competition) => {
     const leaders = competition.leader_names.join('、') || '未指定'
-    return `${competition.name}：${leaders}`
+    return `${competition.display_name || competition.name}：${leaders}`
   }) || []
   return labels.join('；') || '未关联比赛'
 }

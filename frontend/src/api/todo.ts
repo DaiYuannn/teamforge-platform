@@ -2,7 +2,7 @@ import { get } from './request'
 
 export interface UnifiedTodoItem {
   id: number | string
-  type: 'task' | 'overdue_task' | 'approval' | 'contribution_review' | 'ip_todo' | 'finance_review' | 'finance_payment' | string
+  type: 'task' | 'overdue_task' | 'approval' | 'workflow_approval' | 'contribution_review' | 'ip_todo' | 'finance_review' | 'finance_payment' | string
   title: string
   url: string
   route_name?: string

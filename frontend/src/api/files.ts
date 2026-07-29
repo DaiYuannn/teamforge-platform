@@ -150,6 +150,12 @@ export function uploadFile(
   if (data.folder != null) {
     formData.append('folder', String(data.folder))
   }
+  if (data.team != null) {
+    formData.append('team', String(data.team))
+  }
+  if (data.competition_entry != null) {
+    formData.append('competition_entry', String(data.competition_entry))
+  }
   if (data.description) {
     formData.append('description', data.description)
   }

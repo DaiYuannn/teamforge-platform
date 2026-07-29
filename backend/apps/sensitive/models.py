@@ -6,6 +6,7 @@
 """
 from django.db import models
 from django.conf import settings
+from django.utils import timezone
 
 
 class SensitiveData(models.Model):
@@ -238,3 +239,105 @@ class SensitiveAccessRequest(models.Model):
             and self.is_accessible
             and self.sensitive_data.file_attachment_id
         )
+
+
+class SensitiveDataGrant(models.Model):
+    """A time-bound, purpose-bound grant for exactly one sensitive record."""
+
+    sensitive_data = models.ForeignKey(
+        SensitiveData,
+        on_delete=models.CASCADE,
+        related_name='direct_grants',
+        verbose_name='敏感资料',
+    )
+    granted_to = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='sensitive_data_grants',
+        verbose_name='被授权人',
+    )
+    can_view = models.BooleanField('允许查看明文', default=True)
+    can_download = models.BooleanField('允许下载附件', default=False)
+    purpose = models.TextField('授权用途')
+    expires_at = models.DateTimeField('授权到期时间')
+    granted_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name='issued_sensitive_data_grants',
+        verbose_name='授权人',
+    )
+    revoked_at = models.DateTimeField('撤销时间', null=True, blank=True)
+    revoked_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        related_name='revoked_sensitive_data_grants',
+        verbose_name='撤销人',
+        null=True,
+        blank=True,
+    )
+    created_at = models.DateTimeField('创建时间', auto_now_add=True)
+    updated_at = models.DateTimeField('更新时间', auto_now=True)
+
+    class Meta:
+        db_table = 'sensitive_data_grants'
+        verbose_name = '敏感资料单份授权'
+        verbose_name_plural = verbose_name
+        ordering = ['-created_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=('sensitive_data', 'granted_to'),
+                name='uniq_sensitive_data_granted_user',
+            ),
+        ]
+
+    @property
+    def is_active(self):
+        return bool(
+            self.revoked_at is None
+            and self.expires_at > timezone.now()
+            and (self.can_view or self.can_download)
+        )
+
+    def __str__(self):
+        return f'{self.sensitive_data.title} -> {self.granted_to.name}'
+
+
+class SensitiveGrantAccessLog(models.Model):
+    """Append-only evidence for each direct-grant view/download attempt."""
+
+    class Action(models.TextChoices):
+        VIEW = 'view', '查看明文'
+        DOWNLOAD = 'download', '下载附件'
+
+    grant = models.ForeignKey(
+        SensitiveDataGrant,
+        on_delete=models.PROTECT,
+        related_name='access_logs',
+        verbose_name='授权',
+    )
+    sensitive_data = models.ForeignKey(
+        SensitiveData,
+        on_delete=models.PROTECT,
+        related_name='grant_access_logs',
+        verbose_name='敏感资料',
+    )
+    accessor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name='sensitive_grant_access_logs',
+        verbose_name='访问人',
+    )
+    action = models.CharField('访问动作', max_length=20, choices=Action.choices)
+    purpose_snapshot = models.TextField('用途快照')
+    is_success = models.BooleanField('是否成功', default=True)
+    detail = models.CharField('结果说明', max_length=300, blank=True, default='')
+    request_method = models.CharField('请求方法', max_length=20, blank=True, default='')
+    request_path = models.CharField('请求路径', max_length=500, blank=True, default='')
+    request_ip = models.GenericIPAddressField('请求IP', null=True, blank=True)
+    accessed_at = models.DateTimeField('访问时间', auto_now_add=True)
+
+    class Meta:
+        db_table = 'sensitive_grant_access_logs'
+        verbose_name = '敏感授权访问审计'
+        verbose_name_plural = verbose_name
+        ordering = ['-accessed_at']

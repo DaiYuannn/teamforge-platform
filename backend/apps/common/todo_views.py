@@ -44,6 +44,7 @@ class UnifiedTodoView(APIView):
                 location=OpenApiParameter.QUERY,
                 enum=[
                     'task', 'overdue_task', 'approval',
+                    'workflow_approval',
                     'contribution_review', 'ip_todo',
                     'finance_review', 'finance_payment',
                 ],
@@ -76,6 +77,17 @@ class UnifiedTodoView(APIView):
                                 'project_name': serializers.CharField(required=False),
                                 'task_role': serializers.CharField(required=False),
                                 'applicant_id': serializers.IntegerField(required=False),
+                                'flow_id': serializers.IntegerField(required=False),
+                                'flow_name': serializers.CharField(required=False),
+                                'current_step_name': serializers.CharField(required=False),
+                                'reviewer_ids': serializers.ListField(
+                                    child=serializers.IntegerField(),
+                                    required=False,
+                                ),
+                                'reviewer_roles': serializers.ListField(
+                                    child=serializers.CharField(),
+                                    required=False,
+                                ),
                                 'status': serializers.CharField(required=False),
                                 'status_display': serializers.CharField(required=False),
                             },
@@ -101,15 +113,19 @@ class UnifiedTodoView(APIView):
         if not filter_type or filter_type == 'approval':
             todos.extend(self._collect_sensitive_approvals(user))
 
-        # 4. 待审核贡献：只发给明确分派的审核人；系统管理员保留兜底。
+        # 4. 通用审批流：只给真正轮到的明确审批人一张卡。
+        if not filter_type or filter_type == 'workflow_approval':
+            todos.extend(self._collect_workflow_approvals(user))
+
+        # 5. 待审核贡献：只发给明确分派的审核人；系统管理员保留兜底。
         if not filter_type or filter_type == 'contribution_review':
             todos.extend(self._collect_contribution_reviews(user))
 
-        # 5. 知识产权流程待办
+        # 6. 知识产权流程待办
         if not filter_type or filter_type == 'ip_todo':
             todos.extend(self._collect_ip_todos(user))
 
-        # 6. 经费流程待办。只按项目负责人/显式财务权限路由，
+        # 7. 经费流程待办。只按项目负责人/显式财务权限路由，
         # 不把所有老师都广播为经费审核人。
         if not filter_type or filter_type in ('finance_review', 'finance_payment'):
             todos.extend(self._collect_finance_todos(user, filter_type))
@@ -199,11 +215,25 @@ class UnifiedTodoView(APIView):
             and user.membership_status in {'active', 'on_leave'}
         ):
             review_filter |= Q(sensitive_data__team__isnull=True)
+        # If the same business request is already wrapped by a generic
+        # ApprovalRequest, the workflow card is the single source of truth.
+        from .approval_models import ApprovalRequest
+
+        linked_access_ids = set()
+        for metadata in ApprovalRequest.objects.filter(
+            status=ApprovalRequest.Status.PENDING,
+            flow__flow_type='sensitive',
+        ).values_list('metadata', flat=True):
+            if isinstance(metadata, dict) and metadata.get('access_request_id'):
+                linked_access_ids.add(metadata['access_request_id'])
+
         qs = SensitiveAccessRequest.objects.filter(
             review_filter,
             status=SensitiveAccessRequest.Status.PENDING,
         ).exclude(
             applicant=user,
+        ).exclude(
+            id__in=linked_access_ids,
         ).select_related('sensitive_data', 'sensitive_data__team', 'applicant')
 
         for req in qs:
@@ -220,6 +250,66 @@ class UnifiedTodoView(APIView):
                 'priority': 'high',
                 'due_date': req.created_at.isoformat() if req.created_at else None,
                 'applicant_id': req.applicant_id,
+            })
+        return todos
+
+    def _collect_workflow_approvals(self, user):
+        """Collect generic approval requests assigned to this exact reviewer."""
+        from .approval_models import ApprovalRequest
+        from .approval_services import (
+            approval_reviewer_details,
+            approval_step,
+            should_receive_approval_todo,
+        )
+
+        todos = []
+        queryset = ApprovalRequest.objects.filter(
+            status=ApprovalRequest.Status.PENDING,
+        ).exclude(
+            applicant=user,
+        ).select_related(
+            'flow',
+            'applicant',
+        ).order_by('created_at', 'id')
+        for approval_request in queryset:
+            if not should_receive_approval_todo(user, approval_request):
+                continue
+            step = approval_step(approval_request)
+            current_step_name = str(
+                step.get('name')
+                or f'第 {approval_request.current_step + 1} 级审批'
+            )
+            reviewer_details = approval_reviewer_details(approval_request)
+            todos.append({
+                'id': approval_request.id,
+                'type': 'workflow_approval',
+                'title': (
+                    f'待审批：{approval_request.title}'
+                    f'（{approval_request.applicant.name}）'
+                ),
+                'url': (
+                    '/admin/platform-capabilities'
+                    f'?tab=approvals&request_id={approval_request.id}'
+                ),
+                'route_name': 'PlatformCapabilities',
+                'route_params': {},
+                'route_query': {
+                    'tab': 'approvals',
+                    'request_id': approval_request.id,
+                },
+                'priority': 'high',
+                'due_date': (
+                    approval_request.created_at.isoformat()
+                    if approval_request.created_at else None
+                ),
+                'applicant_id': approval_request.applicant_id,
+                'flow_id': approval_request.flow_id,
+                'flow_name': approval_request.flow.name,
+                'current_step_name': current_step_name,
+                'reviewer_ids': reviewer_details['reviewer_ids'],
+                'reviewer_roles': reviewer_details['reviewer_roles'],
+                'status': approval_request.status,
+                'status_display': approval_request.get_status_display(),
             })
         return todos
 

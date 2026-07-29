@@ -20,6 +20,11 @@ from .views import (
     MemberDetailView,
     MemberGrowthTimelineView,
 )
+from apps.tasks.workload_views import (
+    CompetitionWorkItemViewSet,
+    CompetitionWorkloadAssessmentViewSet,
+    CompetitionWorkloadObjectionViewSet,
+)
 
 # 创建路由器并注册 ViewSet
 router = DefaultRouter()
@@ -29,6 +34,21 @@ router.register(r'skill-tags', SkillTagViewSet, basename='skill-tag')
 router.register(r'member-skills', MemberSkillViewSet, basename='member-skill')
 # 灵活工时管理
 router.register(r'flexible-schedules', FlexibleWorkScheduleViewSet, basename='work-schedule')
+router.register(
+    r'competition-work-items',
+    CompetitionWorkItemViewSet,
+    basename='competition-work-item',
+)
+router.register(
+    r'workload-assessments',
+    CompetitionWorkloadAssessmentViewSet,
+    basename='competition-workload-assessment',
+)
+router.register(
+    r'workload-objections',
+    CompetitionWorkloadObjectionViewSet,
+    basename='competition-workload-objection',
+)
 # 成员列表/详情（空前缀，最后注册，避免 detail 路由拦截子路由）
 router.register(r'', MemberViewSet, basename='member')
 

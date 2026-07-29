@@ -2,17 +2,18 @@
 经费趋势分析视图
 - FinanceTrendView: 月度支出趋势、类别分布
 """
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 
-from django.db.models import Sum
+from django.db.models import Q
 from drf_spectacular.utils import OpenApiParameter, extend_schema, inline_serializer
 from rest_framework import serializers
 from rest_framework.views import APIView
 
 from common.permissions import IsInternalTeamMember
+from common.project_access import scope_project_queryset
 from common.response import success_response
 from common.schema import success_response_schema
-from .models import FinanceExpense
+from .models import FinanceExpense, FinancePayment
 
 
 class FinanceTrendView(APIView):
@@ -70,17 +71,102 @@ class FinanceTrendView(APIView):
         params = request.query_params
         project_id = params.get('project')
 
-        queryset = FinanceExpense.objects.all()
+        queryset = scope_project_queryset(
+            FinanceExpense.objects.all(),
+            request.user,
+            project_lookup='project',
+        ).exclude(
+            reimbursement_status__in=[
+                FinanceExpense.ReimbursementStatus.DRAFT,
+                FinanceExpense.ReimbursementStatus.REJECTED,
+            ],
+        ).select_related(
+            'competition_entry',
+        ).prefetch_related(
+            'allocations__competition_entry',
+        )
         if project_id:
-            queryset = queryset.filter(project_id=project_id)
+            queryset = queryset.filter(
+                Q(competition_entry__project_id=project_id)
+                | Q(allocations__competition_entry__project_id=project_id)
+                | Q(
+                    project_id=project_id,
+                    competition_entry__isnull=True,
+                    allocations__isnull=True,
+                )
+            ).distinct()
 
-        # 月度趋势：按 expense_date 的年月分组
+        def attributed_amount(expense):
+            if not project_id:
+                return expense.amount
+            allocations = list(expense.allocations.all())
+            if allocations:
+                return sum(
+                    (
+                        allocation.amount
+                        for allocation in allocations
+                        if str(allocation.competition_entry.project_id)
+                        == str(project_id)
+                    ),
+                    Decimal('0'),
+                )
+            if expense.competition_entry_id:
+                return (
+                    expense.amount
+                    if str(expense.competition_entry.project_id)
+                    == str(project_id)
+                    else Decimal('0')
+                )
+            return (
+                expense.amount
+                if str(expense.project_id) == str(project_id)
+                else Decimal('0')
+            )
+
+        # 月度趋势与支出结构统一使用“真实完成付款”；无需报销记录按
+        # expense_date 计入。待审核、待付款只占额度，不冒充实际支出。
         monthly_trend = {}
-        for expense in queryset:
+        category_amounts = {
+            category_key: Decimal('0')
+            for category_key, _ in FinanceExpense.Category.choices
+        }
+        completed_payments = (
+            FinancePayment.objects.filter(
+                expense__in=queryset,
+                status=FinancePayment.Status.COMPLETED,
+            )
+            .select_related('expense')
+        )
+        for payment in completed_payments:
+            expense_share = attributed_amount(payment.expense)
+            amount = (
+                payment.amount * expense_share / payment.expense.amount
+                if payment.expense.amount else Decimal('0')
+            ).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+            effective_date = payment.paid_at.date() if payment.paid_at else payment.expense.expense_date
+            month_key = effective_date.strftime('%Y-%m')
+            monthly_trend.setdefault(month_key, Decimal('0'))
+            monthly_trend[month_key] += amount
+            category_amounts[payment.expense.category] += amount
+        for expense in queryset.filter(
+            reimbursement_status=FinanceExpense.ReimbursementStatus.NOT_REQUIRED,
+        ):
+            amount = attributed_amount(expense)
             if expense.expense_date:
                 month_key = expense.expense_date.strftime('%Y-%m')
                 monthly_trend.setdefault(month_key, Decimal('0'))
-                monthly_trend[month_key] += expense.amount
+                monthly_trend[month_key] += amount
+            category_amounts[expense.category] += amount
+        for expense in queryset.filter(
+            reimbursement_status=FinanceExpense.ReimbursementStatus.PAID,
+            payments__isnull=True,
+        ):
+            amount = attributed_amount(expense)
+            if expense.expense_date:
+                month_key = expense.expense_date.strftime('%Y-%m')
+                monthly_trend.setdefault(month_key, Decimal('0'))
+                monthly_trend[month_key] += amount
+            category_amounts[expense.category] += amount
 
         monthly_data = [
             {
@@ -93,18 +179,12 @@ class FinanceTrendView(APIView):
         # 类别分布
         category_breakdown = {}
         for category_key, category_label in FinanceExpense.Category.choices:
-            cat_sum = queryset.filter(category=category_key).aggregate(
-                total=Sum('amount')
-            )
-            total = cat_sum['total'] or Decimal('0')
             category_breakdown[category_key] = {
                 'label': category_label,
-                'amount': float(total),
+                'amount': float(category_amounts[category_key]),
             }
 
-        # 总支出
-        total_expense = queryset.aggregate(total=Sum('amount'))
-        total_amount = float(total_expense['total'] or 0)
+        total_amount = float(sum(category_amounts.values(), Decimal('0')))
 
         # 各类别占比
         category_percentage = {}

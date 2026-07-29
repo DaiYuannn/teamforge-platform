@@ -458,7 +458,7 @@ const notificationCategoryOptions = [
   { value: 'competition', label: '比赛节点' },
   { value: 'finance', label: '经费动态' },
   { value: 'contribution', label: '贡献与排名' },
-  { value: 'schedule', label: '灵活工时' },
+  { value: 'schedule', label: '任务与有效工作量' },
   { value: 'approval', label: '审批与敏感资料' },
   { value: 'report', label: '定时报表' },
 ]

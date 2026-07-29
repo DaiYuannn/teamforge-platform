@@ -1,30 +1,40 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { downloadMock, getMock, postMock } = vi.hoisted(() => ({
+const { downloadMock, getMock, postMock, uploadMock } = vi.hoisted(() => ({
   downloadMock: vi.fn(),
   getMock: vi.fn(),
   postMock: vi.fn(),
+  uploadMock: vi.fn(),
 }))
 
 vi.mock('@/api/request', () => ({
   download: downloadMock,
   get: getMock,
   post: postMock,
+  upload: uploadMock,
 }))
 
 import {
   createSensitiveData,
+  downloadSensitiveAttachmentByGrant,
   downloadSensitiveAttachment,
   getAccessRequest,
   getMyAccessRequests,
   getPendingApproveRequests,
   getSensitiveData,
+  getSensitiveDataGrants,
+  getSensitiveGrantAccessLogs,
+  getSensitiveGrantCandidates,
+  revokeSensitiveDataGrant,
+  saveSensitiveDataGrant,
+  viewSensitiveData,
 } from '@/api/sensitive'
 
 beforeEach(() => {
   downloadMock.mockReset()
   getMock.mockReset()
   postMock.mockReset()
+  uploadMock.mockReset()
 })
 
 describe('sensitive attachment API contract', () => {
@@ -88,5 +98,62 @@ describe('sensitive attachment API contract', () => {
     await getAccessRequest(17)
 
     expect(getMock).toHaveBeenCalledWith('/sensitive/requests/17/')
+  })
+
+  it('uses multipart only when a direct attachment is supplied', async () => {
+    const attachment = new File(['plan'], 'plan.pdf', { type: 'application/pdf' })
+    await createSensitiveData({
+      data_type: 'other',
+      title: '团队计划书',
+      team: 3,
+      attachment_upload: attachment,
+    })
+
+    expect(uploadMock).toHaveBeenCalledWith('/sensitive/data/', expect.any(FormData))
+    const formData = uploadMock.mock.calls[0]?.[1] as FormData
+    expect(formData.get('title')).toBe('团队计划书')
+    expect(formData.get('team')).toBe('3')
+    expect(formData.get('attachment_upload')).toBe(attachment)
+    expect(postMock).not.toHaveBeenCalled()
+  })
+
+  it('uses record-bound grant, candidate, audit, view and download endpoints', async () => {
+    const expiresAt = '2026-07-30T10:00:00+08:00'
+    getMock.mockResolvedValue([])
+    postMock.mockResolvedValue({ id: 9 })
+    downloadMock.mockResolvedValue(new Blob(['sensitive']))
+
+    await getSensitiveDataGrants(5)
+    await getSensitiveGrantCandidates(5, 'LYC')
+    await getSensitiveGrantAccessLogs(5)
+    await saveSensitiveDataGrant(5, {
+      granted_to: 7,
+      can_view: true,
+      can_download: true,
+      purpose: '提交专利',
+      expires_at: expiresAt,
+    })
+    await viewSensitiveData(5, undefined, 9)
+    await downloadSensitiveAttachmentByGrant(5, 9)
+    await revokeSensitiveDataGrant(5, 9)
+
+    expect(getMock).toHaveBeenCalledWith('/sensitive/data/5/grants/')
+    expect(getMock).toHaveBeenCalledWith('/sensitive/data/5/grant-candidates/', {
+      search: 'LYC',
+    })
+    expect(getMock).toHaveBeenCalledWith('/sensitive/data/5/grant-access-logs/')
+    expect(postMock).toHaveBeenCalledWith('/sensitive/data/5/grants/', {
+      granted_to: 7,
+      can_view: true,
+      can_download: true,
+      purpose: '提交专利',
+      expires_at: expiresAt,
+    })
+    expect(postMock).toHaveBeenCalledWith('/sensitive/data/5/view/', { grant_id: 9 })
+    expect(downloadMock).toHaveBeenCalledWith(
+      '/sensitive/data/5/download-by-grant/',
+      { params: { grant_id: 9 } },
+    )
+    expect(postMock).toHaveBeenCalledWith('/sensitive/data/5/grants/9/revoke/')
   })
 })

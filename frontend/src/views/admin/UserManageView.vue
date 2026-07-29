@@ -1,6 +1,6 @@
 <template>
   <div class="page-container">
-    <PageHeader title="用户管理" subtitle="系统用户与权限管理">
+    <PageHeader title="用户管理" subtitle="一位操作老师负责业务操作，其余老师按团队配置为只读查看者">
       <template #actions>
         <el-button type="primary" :icon="Plus" @click="handleCreate">新建用户</el-button>
       </template>
@@ -193,6 +193,13 @@
         :label-position="isMobile ? 'top' : 'right'"
         class="user-form"
       >
+        <el-alert
+          title="“操作老师”全局只能有一位；其他老师请使用“普通成员”，再到团队组织中设置为“查看老师（只读）”。"
+          type="info"
+          :closable="false"
+          show-icon
+          class="teacher-mode-alert"
+        />
         <el-form-item label="用户名" prop="username">
           <el-input v-model="form.username" placeholder="请输入用户名" :disabled="isEdit" />
         </el-form-item>
@@ -577,6 +584,11 @@ onMounted(() => {
 
 .lifecycle-alert {
   margin-bottom: 18px;
+}
+
+.teacher-mode-alert {
+  grid-column: 1 / -1;
+  margin-bottom: 4px;
 }
 
 .result-count {

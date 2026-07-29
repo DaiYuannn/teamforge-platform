@@ -1,23 +1,16 @@
 <template>
-  <div class="page-container finance-page">
-    <PageHeader title="经费管理" subtitle="查看团队预算使用、支出结构和需要关注的项目">
+  <div class="page-container finance-ledger-page">
+    <PageHeader
+      title="经费管理"
+      subtitle="按项目、比赛届次与参赛队追溯奖金、成员垫付、审核预留和真实付款"
+    >
       <template #actions>
-        <el-button v-if="canSetBudget" :icon="Setting" @click="openBudgetDialog">
-          设置预算
-        </el-button>
-        <el-button v-if="canRegisterIncome" :icon="Plus" @click="() => openIncomeDialog()">
-          登记收入
-        </el-button>
-        <el-button type="primary" :icon="Plus" @click="openExpenseDialog">
-          新增支出
-        </el-button>
-        <el-button :icon="CameraFilled" @click="openOCRDialog">
-          票据 OCR
-        </el-button>
+        <el-button :icon="CameraFilled" @click="openOCRDialog">票据识别</el-button>
+        <el-button v-if="canRegisterIncome" :icon="Plus" @click="openIncomeDialog">登记收入</el-button>
+        <el-button type="primary" :icon="Plus" @click="openExpenseDialog">登记成员垫付</el-button>
         <el-dropdown @command="handleExport">
           <el-button :icon="Download">
-            导出数据
-            <el-icon class="el-icon--right"><ArrowDown /></el-icon>
+            导出<el-icon class="el-icon--right"><ArrowDown /></el-icon>
           </el-button>
           <template #dropdown>
             <el-dropdown-menu>
@@ -31,837 +24,691 @@
 
     <div v-if="loadError" class="status-banner" role="alert">
       <el-icon><WarningFilled /></el-icon>
-      <span>经费数据未完整加载，请重新尝试。</span>
+      <span>部分经费数据未能加载，请重试。</span>
       <el-button link type="primary" @click="loadData">重新加载</el-button>
     </div>
 
-    <section v-loading="loading" class="metric-strip" aria-label="经费概览">
-      <div class="metric-item metric-item--spending">
-        <span>已记录支出</span>
-        <strong class="tabular-nums">{{ formatMoneyWithComma(totalRecordedExpense) }}</strong>
-        <small>{{ expenseList.length }} 笔；先看实际花在哪里，再看报销和余额</small>
-      </div>
-      <div class="metric-item">
-        <span>报销进度</span>
-        <strong class="tabular-nums">{{ formatMoneyWithComma(totalExpense) }}</strong>
-        <small>已完成；流程中 {{ formatMoneyWithComma(totalPending) }}，未进入流程 {{ formatMoneyWithComma(totalUncommitted) }}</small>
-      </div>
-      <div class="metric-item">
-        <span>核定预算上限</span>
-        <strong class="tabular-nums">{{ formatMoneyWithComma(totalPlanned) }}</strong>
-        <small>累计入账 {{ formatMoneyWithComma(totalIncome) }}；未单设时沿用入账额</small>
-      </div>
-      <div class="metric-item" :class="{ 'metric-item--danger': totalAvailable < 0 }">
-        <span>计算可用额度</span>
-        <strong class="tabular-nums">{{ formatMoneyWithComma(totalAvailable) }}</strong>
-        <small>{{ totalAvailable < 0 ? '计算结果已超预算' : '计算值＝预算控制基准－已完成及流程中支出' }}</small>
-      </div>
-    </section>
-
-    <section class="workspace-panel spending-destination-panel">
-      <header class="panel-header">
-        <div>
-          <h2>钱花在哪里</h2>
-          <p>按项目汇总已记录支出，并列出经手人、用途和报销进度</p>
-        </div>
-        <el-tag v-if="spendingDestinations.length" type="primary" effect="plain">
-          {{ spendingDestinations.length }} 个项目
-        </el-tag>
-      </header>
-      <el-table v-if="spendingDestinations.length" :data="spendingDestinations" class="destination-table">
-        <el-table-column prop="projectName" label="项目" min-width="150" show-overflow-tooltip />
-        <el-table-column label="已记录支出" width="138" align="right">
-          <template #default="{ row }">
-            <strong class="destination-amount tabular-nums">{{ formatMoneyWithComma(row.total) }}</strong>
-            <small>{{ row.count }} 笔</small>
-          </template>
-        </el-table-column>
-        <el-table-column label="谁花的" min-width="190">
-          <template #default="{ row }">
-            <div class="destination-lines">
-              <span v-for="person in row.people" :key="person.name">
-                {{ person.name }} {{ formatMoneyWithComma(person.amount) }}
-              </span>
-            </div>
-          </template>
-        </el-table-column>
-        <el-table-column label="花在什么地方" min-width="240">
-          <template #default="{ row }">
-            <div class="destination-lines">
-              <span v-for="purpose in row.purposes" :key="purpose.name">
-                {{ purpose.name }} {{ formatMoneyWithComma(purpose.amount) }}
-              </span>
-            </div>
-          </template>
-        </el-table-column>
-        <el-table-column label="报销情况" min-width="185">
-          <template #default="{ row }">
-            <div class="destination-status">
-              <span>完成 {{ formatMoneyWithComma(row.completed) }}</span>
-              <span>流程中 {{ formatMoneyWithComma(row.pending) }}</span>
-              <span v-if="row.uncommitted > 0">未进入流程 {{ formatMoneyWithComma(row.uncommitted) }}</span>
-            </div>
-          </template>
-        </el-table-column>
-      </el-table>
-      <EmptyState
-        v-else-if="!loading"
-        text="暂无支出明细"
-        description="新增支出后，这里会直接显示项目、经手人和用途。"
-        icon="Wallet"
-        compact
-      />
-    </section>
-
-    <div class="finance-overview-grid">
-      <section class="workspace-panel category-panel">
-        <header class="panel-header">
-          <div>
-            <h2>支出结构</h2>
-            <p>按全部已记录支出的类别比较金额</p>
-          </div>
-        </header>
-        <div v-if="categoryBreakdown.length" ref="chartRef" class="chart-container" />
-        <EmptyState
-          v-else-if="!loading"
-          text="暂无支出数据"
-          description="记录支出后会在这里形成类别对比。"
-          icon="DataAnalysis"
-          compact
-        />
-      </section>
-
-      <section class="workspace-panel risk-panel">
-        <header class="panel-header">
-          <div>
-            <h2>项目支出与计算余额</h2>
-            <p>每个项目先显示支出，再显示预算上限和系统计算值</p>
-          </div>
-          <el-tag v-if="riskProjects.length" type="warning" size="small">
-            {{ riskProjects.length }} 项需关注
-          </el-tag>
-        </header>
-
-        <div v-if="projectFinance.length" class="project-budget-list">
-          <article v-for="item in projectFinance.slice(0, 6)" :key="item.projectId" class="project-budget-row">
-            <div class="project-budget-head">
-              <div>
-                <h3>{{ item.projectName }}</h3>
-                <span>已记录支出 {{ formatMoneyWithComma(item.recorded) }} / 上限 {{ formatMoneyWithComma(item.budget) }}</span>
-                <span>进入预算占用 {{ formatMoneyWithComma(item.expense) }} · 计算可用 {{ formatMoneyWithComma(item.available) }}</span>
-              </div>
-              <span class="utilization" :data-tone="item.tone">{{ item.rate }}%</span>
-            </div>
-            <el-progress
-              :percentage="Math.min(item.rate, 100)"
-              :show-text="false"
-              :stroke-width="6"
-              :color="progressColor(item.tone)"
-            />
+    <el-tabs v-model="workspaceTab" class="workspace-tabs">
+      <el-tab-pane label="资金追溯台账" name="ledger">
+        <section v-loading="loading" class="metric-strip" aria-label="资金状态">
+          <article>
+            <span>实际到账资金</span>
+            <strong class="positive">{{ money(metrics.received_funds) }}</strong>
+            <small>仅“已到账”收入进入可用资金</small>
           </article>
-        </div>
-        <EmptyState
-          v-else-if="!loading"
-          text="暂无项目预算"
-          description="创建项目预算后可查看使用风险。"
-          icon="Wallet"
-          compact
-        />
-      </section>
-    </div>
+          <article>
+            <span>待审核预留</span>
+            <strong>{{ money(metrics.pending_review_reserved) }}</strong>
+            <small>提交后暂时占用额度</small>
+          </article>
+          <article>
+            <span>已审核待转账</span>
+            <strong>{{ money(metrics.approved_pending_payment) }}</strong>
+            <small>含部分支付的剩余金额</small>
+          </article>
+          <article>
+            <span>团队实际支付</span>
+            <strong>{{ money(metrics.actual_paid) }}</strong>
+            <small>付款凭证归档后才计入</small>
+          </article>
+          <article>
+            <span>奖金待到账</span>
+            <strong>{{ money(metrics.expected_bonus + metrics.confirmed_bonus) }}</strong>
+            <small>预计 {{ money(metrics.expected_bonus) }} · 已确认 {{ money(metrics.confirmed_bonus) }}</small>
+          </article>
+          <article :class="{ danger: metrics.available_funds < 0 }">
+            <span>当前可动用资金</span>
+            <strong>{{ money(metrics.available_funds) }}</strong>
+            <small>到账－预留－待转账－已支付</small>
+          </article>
+        </section>
 
-    <section class="workspace-panel details-panel">
-      <header class="details-toolbar">
-        <div>
-          <h2>收支与报销流水</h2>
-          <p>每笔资金都有状态、审核人和付款凭证</p>
-        </div>
-        <el-select
-          v-model="filterProject"
-          aria-label="按项目筛选收支流水"
-          placeholder="全部项目"
-          clearable
-          filterable
-          class="project-filter"
-          @change="loadData"
-        >
-          <el-option v-for="project in projectOptions" :key="project.id" :label="project.name" :value="project.id" />
-        </el-select>
-      </header>
-
-      <el-alert
-        class="workflow-explanation"
-        type="info"
-        :closable="false"
-        show-icon
-        title="报销流程：保存草稿 → 待报销审核 → 审核通过、待打款 → 已打款、报销完成。这里的“已打款”指团队向申请人完成报销，不是申请人向商家付款。"
-      />
-
-      <el-tabs v-model="financeTab" class="finance-tabs">
-        <el-tab-pane :label="`支出与报销（${expenseList.length}）`" name="expenses">
-          <FinanceTable
-            :expenses="expenseList"
-            :show-budget="false"
-            :show-actions="false"
-            :show-workflow-actions="true"
-            :can-submit="canSubmitExpense"
-            :can-review="canReviewExpense"
-            :can-pay="canPayExpense"
-            @submit-reimbursement="handleSubmitReimbursement"
-            @review-reimbursement="openReviewDialog"
-            @mark-paid="openPaymentDialog"
-          />
-        </el-tab-pane>
-        <el-tab-pane :label="`收入流水（${incomeList.length}）`" name="incomes">
-          <el-table :data="incomeList">
-            <template #empty>
-              <EmptyState text="暂无收入流水" description="登记奖金、拨款或赞助后，预算将自动汇总。" icon="Wallet" compact />
-            </template>
-            <el-table-column prop="income_date" label="入账日期" width="112" />
-            <el-table-column prop="income_type_display" label="类型" width="110" />
-            <el-table-column prop="project_name" label="项目" min-width="150" show-overflow-tooltip />
-            <el-table-column prop="title" label="收入说明" min-width="170" show-overflow-tooltip />
-            <el-table-column prop="source" label="来源" min-width="130" show-overflow-tooltip />
-            <el-table-column prop="reference_number" label="凭证号" min-width="130" show-overflow-tooltip />
-            <el-table-column prop="amount" label="金额" width="132" align="right">
-              <template #default="{ row }">
-                <strong class="tabular-nums">{{ formatMoneyWithComma(row.amount) }}</strong>
-              </template>
-            </el-table-column>
-            <el-table-column label="操作" width="116" fixed="right">
-              <template #default="{ row }">
-                <template v-if="canManageProjectFinance((row as FinanceIncome).project)">
-                  <el-button link type="primary" @click="openIncomeDialog(row as FinanceIncome)">编辑</el-button>
-                  <el-button link type="danger" @click="handleDeleteIncome(row as FinanceIncome)">删除</el-button>
-                </template>
-                <span v-else class="text-muted">只读</span>
-              </template>
-            </el-table-column>
-          </el-table>
-        </el-tab-pane>
-      </el-tabs>
-    </section>
-
-    <el-dialog v-model="budgetDialogVisible" title="设置项目核定预算" width="520px" append-to-body>
-      <el-alert
-        title="核定预算是预计允许支出的上限，与奖金、拨款等实际入账分开统计。"
-        type="info"
-        :closable="false"
-        show-icon
-      />
-      <el-form :model="budgetForm" label-position="top">
-        <el-form-item label="所属项目" required>
-          <el-select v-model="budgetForm.project" filterable @change="syncBudgetForm">
-            <el-option
-              v-for="project in projectOptions"
-              :key="project.id"
-              :label="project.name"
-              :value="project.id"
-              :disabled="!canConfigureProjectBudget(project.id)"
-            />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="核定预算上限" required>
-          <el-input-number
-            v-model="budgetForm.planned_amount"
-            :min="0"
-            :precision="2"
-            :controls="false"
-          />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="budgetDialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="budgetSaving" @click="saveBudget">保存预算</el-button>
-      </template>
-    </el-dialog>
-
-    <el-dialog v-model="expenseDialogVisible" title="新增支出" width="620px" append-to-body>
-      <el-alert
-        title="先记录已经发生的支出，保存后为草稿；确认票据和信息无误后再提交报销。"
-        type="info"
-        :closable="false"
-        show-icon
-      />
-      <el-form :model="expenseForm" label-position="top">
-        <div class="ocr-form-grid">
-          <el-form-item label="所属项目" required>
-            <el-select v-model="expenseForm.project" filterable>
-              <el-option v-for="project in projectOptions" :key="project.id" :label="project.name" :value="project.id" />
-            </el-select>
-          </el-form-item>
-          <el-form-item label="金额" required>
-            <el-input-number v-model="expenseForm.amount" :min="0.01" :precision="2" :controls="false" />
-          </el-form-item>
-          <el-form-item label="支出日期" required>
-            <el-date-picker v-model="expenseForm.expense_date" type="date" value-format="YYYY-MM-DD" />
-          </el-form-item>
-          <el-form-item label="类别" required>
-            <el-select v-model="expenseForm.category">
-              <el-option label="材料费" value="material" />
-              <el-option label="设备费" value="equipment" />
-              <el-option label="打印费" value="printing" />
-              <el-option label="差旅费" value="travel" />
-              <el-option label="软件费" value="software" />
-              <el-option label="比赛报名费" value="competition_fee" />
-              <el-option label="推广费" value="promotion" />
-              <el-option label="劳务费" value="labor" />
-              <el-option label="其他" value="other" />
-            </el-select>
-          </el-form-item>
-        </div>
-        <el-form-item label="支出标题" required>
-          <el-input v-model="expenseForm.title" maxlength="200" />
-        </el-form-item>
-        <el-form-item label="用途说明">
-          <el-input v-model="expenseForm.purpose" type="textarea" :rows="2" />
-        </el-form-item>
-        <el-form-item label="票据（选填）">
-          <el-upload
-            :auto-upload="false"
-            :limit="1"
-            :on-change="handleManualReceiptChange"
-            :on-remove="handleManualReceiptRemove"
-          >
-            <el-button>选择票据图片</el-button>
-          </el-upload>
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="expenseDialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="expenseSaving" @click="saveExpense">保存为草稿</el-button>
-      </template>
-    </el-dialog>
-
-    <el-dialog
-      v-model="incomeDialogVisible"
-      :title="editingIncome ? '编辑收入流水' : '登记收入流水'"
-      width="620px"
-      append-to-body
-    >
-      <el-form :model="incomeForm" label-position="top">
-        <div class="ocr-form-grid">
-          <el-form-item label="所属项目" required>
-            <el-select v-model="incomeForm.project" filterable>
-              <el-option v-for="project in projectOptions" :key="project.id" :label="project.name" :value="project.id" />
-            </el-select>
-          </el-form-item>
-          <el-form-item label="收入类型" required>
-            <el-select v-model="incomeForm.income_type">
-              <el-option label="比赛奖金" value="bonus" />
-              <el-option label="项目拨款" value="grant" />
-              <el-option label="赞助收入" value="sponsorship" />
-              <el-option label="退款入账" value="refund" />
-              <el-option label="其他收入" value="other" />
-            </el-select>
-          </el-form-item>
-          <el-form-item label="金额" required>
-            <el-input-number v-model="incomeForm.amount" :min="0.01" :precision="2" :controls="false" />
-          </el-form-item>
-          <el-form-item label="入账日期" required>
-            <el-date-picker v-model="incomeForm.income_date" type="date" value-format="YYYY-MM-DD" />
-          </el-form-item>
-        </div>
-        <el-form-item label="收入标题" required>
-          <el-input v-model="incomeForm.title" maxlength="200" />
-        </el-form-item>
-        <div class="ocr-form-grid">
-          <el-form-item label="收入来源">
-            <el-input v-model="incomeForm.source" />
-          </el-form-item>
-          <el-form-item label="入账凭证号">
-            <el-input v-model="incomeForm.reference_number" />
-          </el-form-item>
-        </div>
-        <el-form-item label="备注">
-          <el-input v-model="incomeForm.note" type="textarea" :rows="2" />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="incomeDialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="incomeSaving" @click="saveIncome">保存</el-button>
-      </template>
-    </el-dialog>
-
-    <el-dialog v-model="reviewDialogVisible" title="审核报销" width="520px" append-to-body>
-      <el-form :model="reviewForm" label-position="top">
-        <el-form-item label="审核结果">
-          <el-radio-group v-model="reviewForm.approved">
-            <el-radio :value="true">审核通过</el-radio>
-            <el-radio :value="false">驳回补充</el-radio>
-          </el-radio-group>
-        </el-form-item>
-        <el-form-item label="审核意见">
-          <el-input v-model="reviewForm.opinion" type="textarea" :rows="3" />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="reviewDialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="workflowSaving" @click="saveReview">提交审核</el-button>
-      </template>
-    </el-dialog>
-
-    <el-dialog v-model="paymentDialogVisible" title="登记报销打款" width="520px" append-to-body>
-      <el-form :model="paymentForm" label-position="top">
-        <el-form-item label="付款方式" required>
-          <el-select v-model="paymentForm.payment_method">
-            <el-option label="银行转账" value="银行转账" />
-            <el-option label="微信支付" value="微信支付" />
-            <el-option label="支付宝" value="支付宝" />
-            <el-option label="现金" value="现金" />
-            <el-option label="其他" value="其他" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="付款流水号">
-          <el-input v-model="paymentForm.payment_reference" />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="paymentDialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="workflowSaving" @click="savePayment">确认已向申请人打款</el-button>
-      </template>
-    </el-dialog>
-
-    <el-dialog
-      v-model="ocrVisible"
-      title="票据 OCR 识别"
-      width="680px"
-      append-to-body
-      destroy-on-close
-    >
-      <div class="ocr-workspace">
-        <el-alert
-          v-if="ocrDraftExpenseId"
-          type="warning"
-          :closable="false"
-          show-icon
-          :title="`票据尚未关联，重试将继续使用草稿支出 #${ocrDraftExpenseId}`"
-        />
-        <el-upload
-          drag
-          :auto-upload="false"
-          :limit="1"
-          accept="image/jpeg,image/png,image/gif,image/webp"
-          :on-change="handleReceiptSelect"
-          :on-remove="handleReceiptRemove"
-        >
-          <el-icon class="el-icon--upload"><UploadFilled /></el-icon>
-          <div class="el-upload__text">拖入票据图片，或<em>点击选择</em></div>
-          <template #tip>
-            <div class="el-upload__tip">支持 JPG、PNG、GIF、WebP，单张不超过 10MB。</div>
-          </template>
-        </el-upload>
-
-        <div v-if="receiptFile" class="ocr-action-row">
-          <span>{{ receiptFile.name }}</span>
-          <el-button
-            type="primary"
-            :loading="ocrLoading"
-            :disabled="!receiptFile"
-            @click="handleRecognizeReceipt"
-          >
-            开始识别
-          </el-button>
-        </div>
-
-        <template v-if="ocrResult">
-          <el-alert
-            v-if="ocrResult.recognized.warnings.length"
-            type="warning"
-            :closable="false"
-            show-icon
-          >
-            <template #title>请人工核对：{{ ocrResult.recognized.warnings.join('；') }}</template>
-          </el-alert>
-          <div class="ocr-result-head">
+        <section class="workspace-panel todo-panel">
+          <header class="panel-heading">
             <div>
-              <strong>识别结果</strong>
-              <span>保存前可修正所有字段</span>
+              <h2>资金待办</h2>
+              <p>先处理缺票据、待审核、待付款和异常记录；点击卡片可筛选流水。</p>
             </div>
-            <el-tag :type="ocrResult.recognized.confidence >= 0.7 ? 'success' : 'warning'">
-              综合置信度 {{ Math.round(ocrResult.recognized.confidence * 100) }}%
-            </el-tag>
+            <el-button :icon="Refresh" circle aria-label="刷新" @click="loadData" />
+          </header>
+          <div class="todo-grid">
+            <button
+              v-for="item in todoCards"
+              :key="item.key"
+              type="button"
+              class="todo-card"
+              :class="[{ active: todoFilter === item.key }, `todo-card--${item.tone}`]"
+              @click="selectTodo(item.key)"
+            >
+              <span>{{ item.label }}</span>
+              <strong>{{ item.value }}</strong>
+              <small>{{ item.hint }}</small>
+            </button>
           </div>
-          <el-form label-position="top" :model="ocrForm">
-            <div class="ocr-form-grid">
-              <el-form-item label="所属项目" required>
-                <el-select v-model="ocrForm.project" filterable placeholder="请选择项目">
-                  <el-option
-                    v-for="project in projectOptions"
-                    :key="project.id"
-                    :label="project.name"
-                    :value="project.id"
-                  />
-                </el-select>
-              </el-form-item>
-              <el-form-item label="金额" required>
-                <el-input-number v-model="ocrForm.amount" :min="0.01" :precision="2" :controls="false" />
-              </el-form-item>
-              <el-form-item label="支出日期" required>
-                <el-date-picker
-                  v-model="ocrForm.expense_date"
-                  type="date"
-                  value-format="YYYY-MM-DD"
-                  placeholder="选择日期"
-                />
-              </el-form-item>
-              <el-form-item label="类别" required>
-                <el-select v-model="ocrForm.category">
-                  <el-option label="差旅交通" value="travel" />
-                  <el-option label="设备采购" value="equipment" />
-                  <el-option label="材料耗材" value="material" />
-                  <el-option label="打印费" value="printing" />
-                  <el-option label="软件费" value="software" />
-                  <el-option label="比赛报名费" value="competition_fee" />
-                  <el-option label="推广费" value="promotion" />
-                  <el-option label="劳务费" value="labor" />
-                  <el-option label="其他" value="other" />
-                </el-select>
-              </el-form-item>
+        </section>
+
+        <section class="workspace-panel traceability-panel">
+          <header class="traceability-toolbar">
+            <div>
+              <h2>项目—比赛—参赛队资金追溯</h2>
+              <p>同一批流水按两个方向分组，不重复登记、不重复计算。</p>
             </div>
-            <el-form-item label="支出标题" required>
-              <el-input v-model="ocrForm.title" maxlength="200" />
-            </el-form-item>
-            <el-form-item label="用途与票据信息">
-              <el-input v-model="ocrForm.purpose" type="textarea" :rows="2" />
-            </el-form-item>
-          </el-form>
-          <el-collapse class="ocr-raw-text">
-            <el-collapse-item title="查看 OCR 原文">
-              <pre>{{ ocrResult.raw_text || '未识别到文本' }}</pre>
-            </el-collapse-item>
-          </el-collapse>
-        </template>
-      </div>
-      <template #footer>
-        <el-button @click="ocrVisible = false">取消</el-button>
-        <el-button
-          type="primary"
-          :loading="ocrSaving"
-          :disabled="!ocrResult"
-          @click="saveOCRExpense"
-        >
-          保存支出并关联票据
-        </el-button>
-      </template>
+            <el-segmented
+              v-model="perspective"
+              :options="perspectiveOptions"
+              aria-label="切换资金追溯视角"
+            />
+          </header>
+
+          <div class="filter-row">
+            <el-select v-model="filterProject" clearable filterable placeholder="全部项目" aria-label="按项目筛选">
+              <el-option v-for="project in projectOptions" :key="project.id" :label="project.name" :value="project.id" />
+            </el-select>
+            <el-select v-model="filterEvent" clearable filterable placeholder="全部比赛届次" aria-label="按比赛届次筛选">
+              <el-option v-for="event in eventOptions" :key="event.id" :label="eventLabel(event)" :value="event.id" />
+            </el-select>
+            <el-input v-model="ledgerKeyword" clearable placeholder="搜索项目、比赛、参赛队或流水标题" aria-label="搜索资金台账" />
+            <el-button v-if="filterProject || filterEvent || ledgerKeyword" @click="resetFilters">清空筛选</el-button>
+          </div>
+
+          <FinanceTraceabilityTable
+            v-loading="loading"
+            :perspective="perspective"
+            :groups="visibleGroups"
+            @open="openTraceabilityRow"
+          />
+        </section>
+
+        <section ref="flowSection" class="workspace-panel flow-panel">
+          <header class="panel-heading">
+            <div>
+              <h2>资金流水与处理</h2>
+              <p>成员垫付、付款和内部转付分开记录；内部转付不重复计为收入或支出。</p>
+            </div>
+            <el-tag v-if="todoFilter" closable type="warning" @close="todoFilter = ''">
+              待办筛选：{{ todoFilterLabel }}
+            </el-tag>
+          </header>
+
+          <el-tabs v-model="flowTab">
+            <el-tab-pane :label="`支出与报销（${visibleExpenses.length}）`" name="expenses">
+              <el-table :data="visibleExpenses" row-key="id" size="small">
+                <template #empty><EmptyState text="暂无支出记录" compact /></template>
+                <el-table-column prop="expense_date" label="日期" width="108" />
+                <el-table-column label="项目 / 比赛 / 参赛队" min-width="220">
+                  <template #default="{ row }">
+                    <div class="stacked-cell"><strong>{{ row.project_name }}</strong><span>{{ expenseScopeLabel(row) }}</span></div>
+                  </template>
+                </el-table-column>
+                <el-table-column label="用途" min-width="190">
+                  <template #default="{ row }"><div class="stacked-cell"><strong>{{ row.title }}</strong><span>{{ row.purpose || row.category_display || getFinanceCategoryLabel(row.category) }}</span></div></template>
+                </el-table-column>
+                <el-table-column label="垫付 / 收款人" min-width="145">
+                  <template #default="{ row }">{{ row.spender_name || '-' }} / {{ row.payee_name || row.spender_name || '-' }}</template>
+                </el-table-column>
+                <el-table-column label="金额" width="116" align="right"><template #default="{ row }"><strong>{{ money(row.amount) }}</strong></template></el-table-column>
+                <el-table-column label="已付 / 待付" width="152" align="right"><template #default="{ row }">{{ money(expensePaid(row)) }} / {{ money(expensePayable(row)) }}</template></el-table-column>
+                <el-table-column label="状态" width="154"><template #default="{ row }"><el-tag size="small" :type="expenseStatusTone(row.reimbursement_status)">{{ expenseStatusLabel(row.reimbursement_status) }}</el-tag></template></el-table-column>
+                <el-table-column label="操作" width="196" fixed="right">
+                  <template #default="{ row }">
+                    <el-button v-if="canSubmitExpense(row)" link type="primary" @click="submitExpense(row)">提交</el-button>
+                    <el-button v-if="canReviewExpense(row)" link type="warning" @click="openReviewDialog(row)">审核</el-button>
+                    <el-button v-if="canPayExpense(row) && expensePayable(row) > 0" link type="primary" @click="openPaymentDialog(row)">付款</el-button>
+                    <el-button link @click="openExpenseTrace(row)">追溯</el-button>
+                  </template>
+                </el-table-column>
+              </el-table>
+            </el-tab-pane>
+
+            <el-tab-pane :label="`奖金与收入（${visibleIncomes.length}）`" name="incomes">
+              <el-table :data="visibleIncomes" row-key="id" size="small">
+                <template #empty><EmptyState text="暂无收入记录" compact /></template>
+                <el-table-column label="记录日期" width="112"><template #default="{ row }">{{ row.received_at?.slice(0, 10) || row.confirmed_at?.slice(0, 10) || row.income_date || '-' }}</template></el-table-column>
+                <el-table-column label="项目 / 比赛 / 参赛队" min-width="220"><template #default="{ row }"><div class="stacked-cell"><strong>{{ row.project_name }}</strong><span>{{ incomeScopeLabel(row) }}</span></div></template></el-table-column>
+                <el-table-column label="收入" min-width="190"><template #default="{ row }"><div class="stacked-cell"><strong>{{ row.title }}</strong><span>{{ row.source || row.income_type_display || incomeTypeLabel(row.income_type) }}</span></div></template></el-table-column>
+                <el-table-column label="阶段" width="126"><template #default="{ row }"><el-tag size="small" :type="row.stage === 'received' ? 'success' : row.stage === 'confirmed' ? 'warning' : 'info'">{{ incomeStageLabel(row.stage) }}</el-tag></template></el-table-column>
+                <el-table-column label="金额" width="130" align="right"><template #default="{ row }"><strong>{{ money(row.amount) }}</strong></template></el-table-column>
+                <el-table-column label="操作" width="160" fixed="right"><template #default="{ row }"><el-button v-if="canAdvanceIncome(row)" link type="primary" @click="openIncomeStageDialog(row)">推进阶段</el-button><el-button link @click="openIncomeTrace(row)">追溯</el-button></template></el-table-column>
+              </el-table>
+            </el-tab-pane>
+
+            <el-tab-pane :label="`付款记录（${visiblePayments.length}）`" name="payments">
+              <el-table :data="visiblePayments" row-key="id" size="small">
+                <template #empty><EmptyState text="暂无付款记录" compact /></template>
+                <el-table-column label="支出" min-width="230"><template #default="{ row }"><div class="stacked-cell"><strong>{{ row.expense_title || expenseById(row.expense)?.title || `支出 #${row.expense}` }}</strong><span>{{ row.project_name || expenseById(row.expense)?.project_name }}</span></div></template></el-table-column>
+                <el-table-column prop="recipient_name" label="收款人" min-width="110" />
+                <el-table-column label="金额" width="126" align="right"><template #default="{ row }"><strong>{{ money(row.amount) }}</strong></template></el-table-column>
+                <el-table-column label="付款信息" min-width="180"><template #default="{ row }"><div class="stacked-cell"><strong>{{ row.payment_method || '-' }}</strong><span>{{ row.payment_reference || '未填流水号' }}</span></div></template></el-table-column>
+                <el-table-column label="状态" width="120"><template #default="{ row }"><el-tag size="small" :type="paymentStatusTone(row.status)">{{ row.status_display || paymentStatusLabel(row.status) }}</el-tag></template></el-table-column>
+                <el-table-column label="操作" width="170" fixed="right"><template #default="{ row }"><el-button v-if="row.status === 'pending_proof' && canOperatePayment(row)" link type="primary" @click="openCompletePaymentDialog(row)">补凭证完成</el-button><el-button v-if="row.status === 'pending_proof' && canOperatePayment(row)" link type="danger" @click="markPaymentFailed(row)">标记异常</el-button></template></el-table-column>
+              </el-table>
+            </el-tab-pane>
+
+            <el-tab-pane :label="`内部转付（${visibleTransfers.length}）`" name="transfers">
+              <div class="tab-actions"><el-button v-if="canRegisterTransfer" type="primary" plain :icon="Plus" @click="openTransferDialog">登记内部转付</el-button></div>
+              <el-table :data="visibleTransfers" row-key="id" size="small">
+                <template #empty><EmptyState text="暂无内部转付记录" description="学校或经办人之间的转付只记录资金去向，不重复计算收支。" compact /></template>
+                <el-table-column label="项目 / 参赛队" min-width="190"><template #default="{ row }"><div class="stacked-cell"><strong>{{ row.project_name }}</strong><span>{{ row.competition_entry_name || '项目公共' }}</span></div></template></el-table-column>
+                <el-table-column label="转出来源" min-width="135"><template #default="{ row }">{{ row.from_user_name || row.source_label || '外部来源' }}</template></el-table-column>
+                <el-table-column prop="to_user_name" label="接收人" min-width="110" />
+                <el-table-column label="金额" width="126" align="right"><template #default="{ row }"><strong>{{ money(row.amount) }}</strong></template></el-table-column>
+                <el-table-column label="状态" width="120"><template #default="{ row }"><el-tag size="small" :type="transferStatusTone(row.status)">{{ row.status_display || transferStatusLabel(row.status) }}</el-tag></template></el-table-column>
+                <el-table-column label="转账信息" min-width="180"><template #default="{ row }">{{ row.payment_method || '-' }} · {{ row.payment_reference || '无流水号' }}</template></el-table-column>
+                <el-table-column label="操作" width="170" fixed="right"><template #default="{ row }"><el-button v-if="row.status === 'pending_proof' && canOperateTransfer(row)" link type="primary" @click="openCompleteTransferDialog(row)">补凭证完成</el-button><el-button v-if="row.status === 'pending_proof' && canOperateTransfer(row)" link type="danger" @click="markTransferFailed(row)">标记异常</el-button></template></el-table-column>
+              </el-table>
+            </el-tab-pane>
+          </el-tabs>
+        </section>
+      </el-tab-pane>
+
+      <el-tab-pane label="数据分析" name="analysis">
+        <div class="analysis-grid">
+          <section class="workspace-panel analysis-card">
+            <header class="panel-heading"><div><h2>支出结构</h2><p>作为辅助分析，不占用经费首页第一屏。</p></div></header>
+            <div v-if="categoryBreakdown.length" class="breakdown-list">
+              <article v-for="item in categoryBreakdown" :key="item.key">
+                <div><span>{{ item.label }}</span><strong>{{ money(item.amount) }}</strong></div>
+                <el-progress :percentage="item.percentage" :show-text="false" :stroke-width="7" />
+              </article>
+            </div>
+            <EmptyState v-else text="暂无支出数据" compact />
+          </section>
+
+          <section class="workspace-panel analysis-card">
+            <header class="panel-heading">
+              <div><h2>项目支出与预算</h2><p>核定上限与计算余额仅作风险参考。</p></div>
+              <el-button v-if="canSetBudget" link type="primary" @click="openBudgetDialog">设置预算</el-button>
+            </header>
+            <div v-if="projectAnalysis.length" class="project-analysis-list">
+              <article v-for="item in projectAnalysis" :key="item.id">
+                <div class="analysis-row-head"><strong>{{ item.name }}</strong><span>已发生 {{ money(item.spent) }} / 上限 {{ money(item.budget) }}</span></div>
+                <el-progress :percentage="Math.min(item.rate, 100)" :status="item.rate > 100 ? 'exception' : item.rate >= 80 ? 'warning' : undefined" :stroke-width="7" />
+              </article>
+            </div>
+            <EmptyState v-else text="暂无项目预算数据" compact />
+          </section>
+        </div>
+      </el-tab-pane>
+    </el-tabs>
+
+    <FinanceRecordDrawer
+      v-model="drawerVisible"
+      :row="drawerRow"
+      @review="openReviewDialog"
+      @pay="openPaymentDialog"
+      @advance-income="openIncomeStageDialog"
+    />
+
+    <el-dialog v-model="expenseDialogVisible" title="登记成员垫付 / 项目支出" width="min(760px, 94vw)" destroy-on-close>
+      <el-alert title="成员垫付不等于团队已支出；只有实际转账并归档付款凭证后才计入团队实际支付。" type="info" :closable="false" show-icon />
+      <el-form label-position="top" class="dialog-form">
+        <div class="form-grid form-grid--3">
+          <el-form-item :label="expenseForm.scope === 'allocated' ? '发起 / 归账项目' : '项目'" required><el-select v-model="expenseForm.project" filterable @change="resetExpenseScope"><el-option v-for="item in projectOptions" :key="item.id" :label="item.name" :value="item.id" /></el-select></el-form-item>
+          <el-form-item label="资金归属" required><el-select v-model="expenseForm.scope" @change="resetExpenseScopeTarget"><el-option label="单个比赛参赛队" value="competition_entry" /><el-option label="项目公共支出" value="project_common" /><el-option v-if="expenseForm.project && canManageProjectById(expenseForm.project)" label="一笔流水、跨队分摊" value="allocated" /></el-select></el-form-item>
+          <el-form-item v-if="expenseForm.scope === 'competition_entry'" label="比赛 / 参赛队" required><el-select v-model="expenseForm.competition_entry" filterable><el-option v-for="item in expenseEntryOptions" :key="item.id" :label="competitionLabel(item)" :value="item.id" /></el-select></el-form-item>
+        </div>
+        <div v-if="expenseForm.scope === 'allocated'" class="allocation-editor">
+          <el-alert :title="expenseForm.allocation_mode === 'same_event' ? '一笔流水、跨队分摊：只登记一次总支出，再分到同一比赛届次下的不同项目参赛队。' : '兼容单项目分摊：流水仍归属当前项目，可分到该项目参加的多个比赛。'" type="info" :closable="false" show-icon />
+          <div class="allocation-mode">
+            <span>分摊范围</span>
+            <el-radio-group v-model="expenseForm.allocation_mode" @change="resetExpenseAllocationMode">
+              <el-radio-button value="same_event">同届次跨项目 / 跨队</el-radio-button>
+              <el-radio-button value="same_project">仅当前项目（兼容旧版）</el-radio-button>
+            </el-radio-group>
+          </div>
+          <header><div><strong>分摊明细</strong><span>{{ expenseForm.allocation_mode === 'same_event' ? '先选锚点比赛届次，也可直接选择首个参赛队自动锁定同届' : '只显示当前归账项目的参赛条目，可跨比赛选择' }}；合计必须等于支出金额</span></div><el-button link type="primary" @click="addExpenseAllocation">添加分摊</el-button></header>
+          <div v-if="expenseForm.allocation_mode === 'same_event'" class="allocation-anchor">
+            <span>锚点比赛届次</span>
+            <el-select v-model="expenseForm.allocation_event" clearable filterable placeholder="选择届次，或由首个分摊自动锁定" @change="handleExpenseAllocationEventChange">
+              <el-option v-for="event in allocationEventOptions" :key="event.id" :label="eventLabel(event)" :value="event.id" />
+            </el-select>
+          </div>
+          <small v-if="expenseForm.allocation_mode === 'same_event' && expenseForm.allocation_event" class="allocation-scope-summary">已锁定 {{ allocationEventLabel(expenseForm.allocation_event) }}，可选 {{ expenseAllocationProjectCount }} 个项目的 {{ expenseAllocationEntryOptions.length }} 个参赛队。</small>
+          <small v-else-if="expenseForm.allocation_mode === 'same_project'" class="allocation-scope-summary">当前仅可选择 {{ projectName(expenseForm.project) }} 的 {{ expenseAllocationEntryOptions.length }} 个参赛条目。</small>
+          <div v-for="(allocation, index) in expenseForm.allocations" :key="index" class="allocation-row">
+            <el-select v-model="allocation.competition_entry" filterable placeholder="项目 / 参赛队" @change="handleExpenseAllocationEntryChange"><el-option v-for="item in expenseAllocationEntryOptions" :key="item.id" :label="allocationCompetitionLabel(item)" :value="item.id" :disabled="isExpenseAllocationEntrySelected(item.id, index)" /></el-select>
+            <el-input-number v-model="allocation.amount" :min="0" :precision="2" :controls="false" placeholder="金额" />
+            <el-input v-model="allocation.note" placeholder="分摊说明（可选）" />
+            <el-button link type="danger" @click="expenseForm.allocations.splice(index, 1)">移除</el-button>
+          </div>
+          <small :class="{ danger: !expenseAllocationBalanced }">分摊合计 {{ money(expenseAllocationTotal) }} / 支出 {{ money(expenseForm.amount || 0) }}</small>
+        </div>
+        <div class="form-grid form-grid--3">
+          <el-form-item label="垫付人 / 经办人" required><el-select v-model="expenseForm.spender" filterable :disabled="!expenseForm.project || !canManageProjectById(expenseForm.project)"><el-option v-for="member in memberOptions" :key="memberUserId(member)" :label="memberName(member)" :value="memberUserId(member)" /></el-select></el-form-item>
+          <el-form-item label="实际收款人" required><el-select v-model="expenseForm.payee" filterable :disabled="!expenseForm.project || !canManageProjectById(expenseForm.project)"><el-option v-for="member in memberOptions" :key="memberUserId(member)" :label="memberName(member)" :value="memberUserId(member)" /></el-select></el-form-item>
+          <el-form-item label="支出类别" required><el-select v-model="expenseForm.category"><el-option v-for="item in categoryOptions" :key="item.value" :label="item.label" :value="item.value" /></el-select></el-form-item>
+        </div>
+        <div class="form-grid form-grid--3">
+          <el-form-item label="金额" required><el-input-number v-model="expenseForm.amount" :min="0.01" :precision="2" :controls="false" /></el-form-item>
+          <el-form-item label="支出日期" required><el-date-picker v-model="expenseForm.expense_date" type="date" value-format="YYYY-MM-DD" /></el-form-item>
+          <el-form-item label="票据类型"><el-select v-model="expenseForm.attachment_type"><el-option label="发票" value="invoice" /><el-option label="原始票据 / 车票" value="original_receipt" /><el-option label="其他附件" value="other" /></el-select></el-form-item>
+        </div>
+        <el-form-item label="支出标题" required><el-input v-model="expenseForm.title" maxlength="100" show-word-limit placeholder="例如：省赛现场往返打车费" /></el-form-item>
+        <el-form-item label="用途说明"><el-input v-model="expenseForm.purpose" type="textarea" :rows="2" placeholder="说明行程、用途或费用覆盖范围" /></el-form-item>
+        <el-form-item label="发票 / 原始票据"><el-upload :auto-upload="false" :limit="1" :on-change="handleExpenseFile" :on-remove="clearExpenseFile"><el-button>选择文件</el-button><template #tip><span class="upload-tip">提交审核前必须上传发票或原始票据；保存草稿可稍后补充。</span></template></el-upload></el-form-item>
+      </el-form>
+      <template #footer><el-button @click="expenseDialogVisible = false">取消</el-button><el-button :loading="expenseSaving" @click="saveExpense(false)">保存草稿</el-button><el-button type="primary" :loading="expenseSaving" @click="saveExpense(true)">保存并提交审核</el-button></template>
+    </el-dialog>
+
+    <el-dialog v-model="incomeDialogVisible" title="登记奖金 / 收入" width="min(720px, 94vw)" destroy-on-close>
+      <el-alert title="预计奖金不计入可用资金；获奖后转为已确认应收，凭到账记录转为已到账。" type="info" :closable="false" show-icon />
+      <el-form label-position="top" class="dialog-form">
+        <div class="form-grid form-grid--3">
+          <el-form-item :label="incomeForm.scope === 'allocated' ? '发起 / 归账项目' : '项目'" required><el-select v-model="incomeForm.project" filterable @change="resetIncomeScope"><el-option v-for="item in manageableProjects" :key="item.id" :label="item.name" :value="item.id" /></el-select></el-form-item>
+          <el-form-item label="资金归属" required><el-select v-model="incomeForm.scope" @change="resetIncomeScopeTarget"><el-option label="单个比赛参赛队" value="competition_entry" /><el-option label="项目公共收入" value="project_common" /><el-option label="一笔流水、跨队分摊" value="allocated" /></el-select></el-form-item>
+          <el-form-item v-if="incomeForm.scope === 'competition_entry'" label="比赛 / 参赛队" required><el-select v-model="incomeForm.competition_entry" filterable><el-option v-for="item in incomeEntryOptions" :key="item.id" :label="competitionLabel(item)" :value="item.id" /></el-select></el-form-item>
+        </div>
+        <div v-if="incomeForm.scope === 'allocated'" class="allocation-editor">
+          <el-alert :title="incomeForm.allocation_mode === 'same_event' ? '一笔流水、跨队分摊：只登记一次总收入，再分到同一比赛届次下的不同项目参赛队。' : '兼容单项目分摊：流水仍归属当前项目，可分到该项目参加的多个比赛。'" type="info" :closable="false" show-icon />
+          <div class="allocation-mode">
+            <span>分摊范围</span>
+            <el-radio-group v-model="incomeForm.allocation_mode" @change="resetIncomeAllocationMode">
+              <el-radio-button value="same_event">同届次跨项目 / 跨队</el-radio-button>
+              <el-radio-button value="same_project">仅当前项目（兼容旧版）</el-radio-button>
+            </el-radio-group>
+          </div>
+          <header><div><strong>分摊明细</strong><span>{{ incomeForm.allocation_mode === 'same_event' ? '先选锚点比赛届次，也可直接选择首个参赛队自动锁定同届' : '只显示当前归账项目的参赛条目，可跨比赛选择' }}；合计必须一致</span></div><el-button link type="primary" @click="addIncomeAllocation">添加分摊</el-button></header>
+          <div v-if="incomeForm.allocation_mode === 'same_event'" class="allocation-anchor">
+            <span>锚点比赛届次</span>
+            <el-select v-model="incomeForm.allocation_event" clearable filterable placeholder="选择届次，或由首个分摊自动锁定" @change="handleIncomeAllocationEventChange">
+              <el-option v-for="event in allocationEventOptions" :key="event.id" :label="eventLabel(event)" :value="event.id" />
+            </el-select>
+          </div>
+          <small v-if="incomeForm.allocation_mode === 'same_event' && incomeForm.allocation_event" class="allocation-scope-summary">已锁定 {{ allocationEventLabel(incomeForm.allocation_event) }}，可选 {{ incomeAllocationProjectCount }} 个项目的 {{ incomeAllocationEntryOptions.length }} 个参赛队。</small>
+          <small v-else-if="incomeForm.allocation_mode === 'same_project'" class="allocation-scope-summary">当前仅可选择 {{ projectName(incomeForm.project) }} 的 {{ incomeAllocationEntryOptions.length }} 个参赛条目。</small>
+          <div v-for="(allocation, index) in incomeForm.allocations" :key="index" class="allocation-row">
+            <el-select v-model="allocation.competition_entry" filterable placeholder="项目 / 参赛队" @change="handleIncomeAllocationEntryChange"><el-option v-for="item in incomeAllocationEntryOptions" :key="item.id" :label="allocationCompetitionLabel(item)" :value="item.id" :disabled="isIncomeAllocationEntrySelected(item.id, index)" /></el-select>
+            <el-input-number v-model="allocation.amount" :min="0" :precision="2" :controls="false" placeholder="金额" />
+            <el-input v-model="allocation.note" placeholder="分摊说明（可选）" />
+            <el-button link type="danger" @click="incomeForm.allocations.splice(index, 1)">移除</el-button>
+          </div>
+          <small :class="{ danger: !incomeAllocationBalanced }">分摊合计 {{ money(incomeAllocationTotal) }} / 收入 {{ money(incomeForm.amount || 0) }}</small>
+        </div>
+        <div class="form-grid form-grid--3">
+          <el-form-item label="收入类型" required><el-select v-model="incomeForm.income_type"><el-option v-for="item in incomeTypeOptions" :key="item.value" :label="item.label" :value="item.value" /></el-select></el-form-item>
+          <el-form-item label="当前阶段" required><el-select v-model="incomeForm.stage"><el-option label="预计" value="expected" /><el-option label="已确认应收" value="confirmed" /><el-option label="已到账" value="received" /></el-select></el-form-item>
+          <el-form-item label="业务日期" required><el-date-picker v-model="incomeForm.income_date" type="date" value-format="YYYY-MM-DD" /></el-form-item>
+        </div>
+        <div class="form-grid form-grid--2"><el-form-item label="金额" required><el-input-number v-model="incomeForm.amount" :min="0.01" :precision="2" :controls="false" /></el-form-item><el-form-item label="收入标题" required><el-input v-model="incomeForm.title" placeholder="例如：互联网+省赛奖金" /></el-form-item></div>
+        <div class="form-grid form-grid--2"><el-form-item label="来源"><el-input v-model="incomeForm.source" placeholder="主办方 / 学校 / 赞助方" /></el-form-item><el-form-item label="凭证编号"><el-input v-model="incomeForm.reference_number" placeholder="通知编号或到账流水号" /></el-form-item></div>
+        <el-form-item label="备注"><el-input v-model="incomeForm.note" type="textarea" :rows="2" /></el-form-item>
+        <el-form-item v-if="incomeForm.stage === 'received'" label="到账凭证" required><el-upload :auto-upload="false" :limit="1" :on-change="handleIncomeProof" :on-remove="clearIncomeProof"><el-button>选择到账截图 / 回单</el-button></el-upload></el-form-item>
+      </el-form>
+      <template #footer><el-button @click="incomeDialogVisible = false">取消</el-button><el-button type="primary" :loading="incomeSaving" @click="saveIncome">保存收入记录</el-button></template>
+    </el-dialog>
+
+    <el-dialog v-model="reviewDialogVisible" title="审核报销并预留额度" width="min(520px, 94vw)">
+      <el-alert v-if="workflowExpense" :title="`${workflowExpense.title} · ${money(workflowExpense.amount)}`" type="info" :closable="false" />
+      <el-form label-position="top" class="dialog-form"><el-form-item label="审核结果"><el-radio-group v-model="reviewForm.approved"><el-radio-button :value="true">通过并进入待转账</el-radio-button><el-radio-button :value="false">驳回并释放预留</el-radio-button></el-radio-group></el-form-item><el-form-item label="审核意见"><el-input v-model="reviewForm.opinion" type="textarea" :rows="3" /></el-form-item></el-form>
+      <template #footer><el-button @click="reviewDialogVisible = false">取消</el-button><el-button type="primary" :loading="workflowSaving" @click="saveReview">确认审核</el-button></template>
+    </el-dialog>
+
+    <el-dialog v-model="paymentDialogVisible" :title="paymentMode === 'create' ? '登记付款' : '补充凭证并完成付款'" width="min(600px, 94vw)">
+      <el-alert title="只有状态为“已完成”且付款凭证归档成功的金额，才计入团队实际支付。" type="warning" :closable="false" show-icon />
+      <el-form label-position="top" class="dialog-form">
+        <div class="form-grid form-grid--2"><el-form-item label="收款人" required><el-select v-model="paymentForm.recipient" filterable :disabled="paymentMode === 'complete'"><el-option v-for="member in memberOptions" :key="memberUserId(member)" :label="memberName(member)" :value="memberUserId(member)" /></el-select></el-form-item><el-form-item label="付款金额" required><el-input-number v-model="paymentForm.amount" :min="0.01" :max="paymentMaxAmount" :precision="2" :controls="false" :disabled="paymentMode === 'complete'" /></el-form-item></div>
+        <div class="form-grid form-grid--2"><el-form-item label="付款方式" required><el-input v-model="paymentForm.payment_method" :disabled="paymentMode === 'complete'" placeholder="银行转账 / 微信 / 支付宝" /></el-form-item><el-form-item label="流水号" required><el-input v-model="paymentForm.payment_reference" /></el-form-item></div>
+        <div class="form-grid form-grid--2"><el-form-item label="付款时间"><el-date-picker v-model="paymentForm.payment_date" type="datetime" value-format="YYYY-MM-DDTHH:mm:ss" /></el-form-item><el-form-item v-if="paymentMode === 'create'" label="登记状态"><el-select v-model="paymentForm.status"><el-option label="已转账并归档凭证" value="completed" /><el-option label="已登记，待补付款凭证" value="pending_proof" /></el-select></el-form-item></div>
+        <el-form-item v-if="paymentForm.status === 'completed' || paymentMode === 'complete'" label="转账截图 / 银行回单" required><el-upload :auto-upload="false" :limit="1" :on-change="handlePaymentProof" :on-remove="clearPaymentProof"><el-button>选择付款凭证</el-button></el-upload></el-form-item>
+      </el-form>
+      <template #footer><el-button @click="paymentDialogVisible = false">取消</el-button><el-button type="primary" :loading="workflowSaving" @click="savePayment">{{ paymentMode === 'create' && paymentForm.status === 'pending_proof' ? '登记待补凭证' : '确认付款完成' }}</el-button></template>
+    </el-dialog>
+
+    <el-dialog v-model="incomeStageDialogVisible" title="推进收入阶段" width="min(520px, 94vw)">
+      <el-alert v-if="workflowIncome" :title="`${workflowIncome.title} · ${money(workflowIncome.amount)} · ${incomeStageLabel(workflowIncome.stage)}`" type="info" :closable="false" />
+      <el-form label-position="top" class="dialog-form"><el-form-item label="推进到" required><el-select v-model="incomeStageForm.stage"><el-option v-if="workflowIncome?.stage === 'expected'" label="已确认应收" value="confirmed" /><el-option label="已到账" value="received" /></el-select></el-form-item><el-form-item v-if="incomeStageForm.stage === 'received'" label="到账凭证" required><el-upload :auto-upload="false" :limit="1" :on-change="handleIncomeStageProof" :on-remove="clearIncomeStageProof"><el-button>选择到账凭证</el-button></el-upload></el-form-item></el-form>
+      <template #footer><el-button @click="incomeStageDialogVisible = false">取消</el-button><el-button type="primary" :loading="workflowSaving" @click="saveIncomeStage">确认推进</el-button></template>
+    </el-dialog>
+
+    <el-dialog v-model="transferDialogVisible" title="登记内部资金转付" width="min(650px, 94vw)">
+      <el-alert title="学校拨款给老师或经办人、经办人再转给成员，都属于内部资金移动，不重复计入收入和支出。" type="info" :closable="false" show-icon />
+      <el-form label-position="top" class="dialog-form">
+        <div class="form-grid form-grid--2"><el-form-item label="项目" required><el-select v-model="transferForm.project" filterable @change="transferForm.competition_entry = undefined"><el-option v-for="item in payableProjects" :key="item.id" :label="item.name" :value="item.id" /></el-select></el-form-item><el-form-item label="比赛 / 参赛队"><el-select v-model="transferForm.competition_entry" clearable filterable><el-option v-for="item in transferEntryOptions" :key="item.id" :label="competitionLabel(item)" :value="item.id" /></el-select></el-form-item></div>
+        <el-form-item label="转出来源类型"><el-radio-group v-model="transferForm.source_type"><el-radio-button value="member">团队经办人</el-radio-button><el-radio-button value="external">学校 / 外部来源</el-radio-button></el-radio-group></el-form-item>
+        <div class="form-grid form-grid--2"><el-form-item v-if="transferForm.source_type === 'member'" label="转出人" required><el-select v-model="transferForm.from_user" filterable><el-option v-for="member in memberOptions" :key="memberUserId(member)" :label="memberName(member)" :value="memberUserId(member)" /></el-select></el-form-item><el-form-item v-else label="资金来源" required><el-input v-model="transferForm.source_label" placeholder="例如：学校创新创业中心" /></el-form-item><el-form-item label="接收人" required><el-select v-model="transferForm.to_user" filterable><el-option v-for="member in memberOptions" :key="memberUserId(member)" :label="memberName(member)" :value="memberUserId(member)" /></el-select></el-form-item></div>
+        <div class="form-grid form-grid--3"><el-form-item label="金额" required><el-input-number v-model="transferForm.amount" :min="0.01" :precision="2" :controls="false" /></el-form-item><el-form-item label="状态"><el-select v-model="transferForm.status"><el-option label="已完成" value="completed" /><el-option label="待补凭证" value="pending_proof" /><el-option label="转付失败" value="failed" /></el-select></el-form-item><el-form-item label="转付时间"><el-date-picker v-model="transferForm.transfer_date" type="datetime" value-format="YYYY-MM-DDTHH:mm:ss" /></el-form-item></div>
+        <div class="form-grid form-grid--2"><el-form-item label="付款方式"><el-input v-model="transferForm.payment_method" /></el-form-item><el-form-item label="流水号"><el-input v-model="transferForm.payment_reference" /></el-form-item></div>
+        <el-form-item v-if="transferForm.status === 'failed'" label="失败原因" required><el-input v-model="transferForm.failure_reason" /></el-form-item>
+        <el-form-item label="备注"><el-input v-model="transferForm.note" type="textarea" :rows="2" /></el-form-item>
+        <el-form-item v-if="transferForm.status === 'completed'" label="内部转账凭证" required><el-upload :auto-upload="false" :limit="1" :on-change="handleTransferProof" :on-remove="clearTransferProof"><el-button>选择凭证</el-button></el-upload></el-form-item>
+      </el-form>
+      <template #footer><el-button @click="transferDialogVisible = false">取消</el-button><el-button type="primary" :loading="workflowSaving" @click="saveTransfer">保存转付记录</el-button></template>
+    </el-dialog>
+
+    <el-dialog v-model="transferCompletionVisible" title="补充内部转付凭证" width="min(480px, 94vw)">
+      <el-form label-position="top" class="dialog-form"><el-form-item label="转付时间"><el-date-picker v-model="transferCompletionDate" type="datetime" value-format="YYYY-MM-DDTHH:mm:ss" /></el-form-item><el-form-item label="流水号"><el-input v-model="transferCompletionReference" placeholder="银行或支付平台流水号" /></el-form-item><el-form-item label="转账凭证" required><el-upload :auto-upload="false" :limit="1" :on-change="handleTransferCompletionProof" :on-remove="clearTransferCompletionProof"><el-button>选择凭证</el-button></el-upload></el-form-item></el-form>
+      <template #footer><el-button @click="transferCompletionVisible = false">取消</el-button><el-button type="primary" :loading="workflowSaving" @click="completeTransfer">确认完成</el-button></template>
+    </el-dialog>
+
+    <el-dialog v-model="ocrVisible" title="票据 OCR 识别" width="min(660px, 94vw)">
+      <el-upload drag :auto-upload="false" :limit="1" accept="image/*" :on-change="handleOCRFile" :on-remove="clearOCRFile"><div class="el-upload__text">拖入票据图片，或点击选择</div></el-upload>
+      <div v-if="ocrResult" class="ocr-result"><el-alert :title="ocrResult.message" type="success" :closable="false" /><dl><div><dt>金额</dt><dd>{{ ocrResult.recognized.amount || '未识别' }}</dd></div><div><dt>日期</dt><dd>{{ ocrResult.recognized.expense_date || '未识别' }}</dd></div><div><dt>标题</dt><dd>{{ ocrResult.recognized.title || '未识别' }}</dd></div><div><dt>商户</dt><dd>{{ ocrResult.recognized.vendor || '未识别' }}</dd></div></dl></div>
+      <template #footer><el-button @click="ocrVisible = false">取消</el-button><el-button :disabled="!ocrFile" :loading="ocrLoading" @click="recognizeOCRFile">开始识别</el-button><el-button type="primary" :disabled="!ocrResult" @click="applyOCRToExpense">带入支出登记</el-button></template>
+    </el-dialog>
+
+    <el-dialog v-model="budgetDialogVisible" title="设置项目核定预算上限" width="min(480px, 94vw)">
+      <el-form label-position="top" class="dialog-form"><el-form-item label="项目" required><el-select v-model="budgetForm.project" filterable @change="syncBudgetAmount"><el-option v-for="item in manageableProjects" :key="item.id" :label="item.name" :value="item.id" /></el-select></el-form-item><el-form-item label="核定预算上限" required><el-input-number v-model="budgetForm.planned_amount" :min="0" :precision="2" :controls="false" /></el-form-item></el-form>
+      <template #footer><el-button @click="budgetDialogVisible = false">取消</el-button><el-button type="primary" :loading="budgetSaving" @click="saveBudget">保存</el-button></template>
     </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import * as echarts from 'echarts'
 import { ElMessage, ElMessageBox, type UploadFile } from 'element-plus'
-import { ArrowDown, CameraFilled, Download, Plus, Setting, UploadFilled, WarningFilled } from '@element-plus/icons-vue'
+import { ArrowDown, CameraFilled, Download, Plus, Refresh, WarningFilled } from '@element-plus/icons-vue'
 import {
+  completeFinancePayment,
+  completeFinanceTransfer,
   createFinanceBudget,
-  createFinanceIncome,
   createFinanceExpense,
-  deleteFinanceExpense,
-  deleteFinanceIncome,
+  createFinanceIncome,
+  createFinancePayment,
+  createFinanceTransfer,
+  failFinancePayment,
+  failFinanceTransfer,
   getAllFinanceBudgets,
   getAllFinanceExpenses,
   getAllFinanceIncomes,
-  markReimbursementPaid,
+  getAllFinancePayments,
+  getFinanceFundTodos,
+  getFinanceTraceabilitySummary,
+  getFinanceTransfers,
   recognizeReceipt,
   resolveFinanceExportTarget,
   reviewReimbursement,
+  setExpenseAllocations,
+  setFinanceIncomeStage,
+  setIncomeAllocations,
   submitReimbursement,
-  updateFinanceIncome,
   updateFinanceBudget,
-  updateFinanceExpense,
-  uploadReceipt,
+  uploadFinanceAttachment,
   type FinanceExportFormat,
+  type FinanceFundTodosResponse,
+  type FinanceTraceabilitySummaryResponse,
   type OCRReceiptResult,
 } from '@/api/finance'
+import { getCompetitionEvents, getCompetitions, type CompetitionEvent } from '@/api/competitions'
+import { getMembers } from '@/api/members'
 import { getProjects } from '@/api/projects'
 import { exportData } from '@/api/exports'
-import { downloadBlob, formatMoneyWithComma, getFinanceCategoryLabel } from '@/utils/format'
 import { useUserStore } from '@/stores/user'
+import { FINANCE_CATEGORY_MAP } from '@/utils/constants'
+import { downloadBlob, formatMoneyWithComma, getFinanceCategoryLabel } from '@/utils/format'
+import PageHeader from '@/components/PageHeader.vue'
+import EmptyState from '@/components/EmptyState.vue'
+import FinanceRecordDrawer from './FinanceRecordDrawer.vue'
+import FinanceTraceabilityTable from './FinanceTraceabilityTable.vue'
 import {
-  createEChartsTooltipStyle,
-  readEChartsThemePalette,
-  useEChartsTheme,
-} from '@/composables/useEChartsTheme'
+  allocationEntriesForEvent,
+  allocationTargetsBelongToProject,
+  allocationTargetsShareEvent,
+  attributedRecordAmount,
+  allExpenseAttachments,
+  buildMetricSummary,
+  buildTraceabilityGroups,
+  completedPaymentAmount,
+  expenseStatusLabel,
+  expenseStatusTone,
+  filterLedgerRecordByDestination,
+  incomeStageLabel,
+  mergePaymentsIntoExpenses,
+  moneyNumber,
+  normalizeFundTodos,
+  normalizedExpenseStatus,
+  remainingPayable,
+  resolveAllocationEventId,
+} from './financeLedger'
 import type {
+  Competition,
   FinanceBudget,
   FinanceCategory,
-  FinanceExpense,
-  FinanceIncome,
   FinanceIncomeType,
+  Member,
   Project,
 } from '@/types'
-import EmptyState from '@/components/EmptyState.vue'
-import FinanceTable from '@/components/FinanceTable.vue'
-import PageHeader from '@/components/PageHeader.vue'
+import type {
+  FinanceAttachmentKind,
+  FinanceIncomeStage,
+  FinanceInternalTransfer,
+  FinanceLedgerExpense,
+  FinanceLedgerIncome,
+  FinanceLedgerPayment,
+  FinancePerspective,
+  FinanceTraceabilityLeaf,
+} from '@/types/financeLedger'
 
-type BudgetTone = 'success' | 'warning' | 'danger' | 'neutral'
-
-interface ProjectFinanceRow {
-  projectId: number
-  projectName: string
-  budget: number
-  expense: number
-  recorded: number
-  available: number
-  rate: number
-  tone: BudgetTone
-}
-
-interface SpendingGroup {
-  name: string
-  amount: number
-}
-
-interface SpendingDestinationRow {
-  projectId: number
-  projectName: string
-  total: number
-  count: number
-  people: SpendingGroup[]
-  purposes: SpendingGroup[]
-  completed: number
-  pending: number
-  uncommitted: number
+interface AllocationFormRow {
+  competition_entry?: number
+  amount?: number
+  note: string
 }
 
 const route = useRoute()
-const requestedProjectId = Number(route.query.project_id)
-const expenseList = ref<FinanceExpense[]>([])
-const incomeList = ref<FinanceIncome[]>([])
-const budgetList = ref<FinanceBudget[]>([])
-const projectOptions = ref<Project[]>([])
-const filterProject = ref<number | undefined>(
-  Number.isInteger(requestedProjectId) && requestedProjectId > 0
-    ? requestedProjectId
-    : undefined,
-)
-const financeTab = ref('expenses')
-const chartRef = ref<HTMLElement>()
+const userStore = useUserStore()
+const requestedProject = Number(route.query.project_id)
+const workspaceTab = ref('ledger')
+const flowTab = ref('expenses')
+const perspective = ref<FinancePerspective>('project')
+const filterProject = ref<number | undefined>(Number.isInteger(requestedProject) && requestedProject > 0 ? requestedProject : undefined)
+const filterEvent = ref<number | undefined>()
+const ledgerKeyword = ref('')
+const todoFilter = ref('')
 const loading = ref(false)
 const loadError = ref(false)
-const ocrVisible = ref(false)
-const ocrLoading = ref(false)
-const ocrSaving = ref(false)
-const receiptFile = ref<File | null>(null)
-const ocrResult = ref<OCRReceiptResult | null>(null)
-const ocrDraftExpenseId = ref<number | null>(null)
-const budgetDialogVisible = ref(false)
-const budgetSaving = ref(false)
-const expenseDialogVisible = ref(false)
-const expenseSaving = ref(false)
-const manualReceiptFile = ref<File | null>(null)
-const incomeDialogVisible = ref(false)
-const incomeSaving = ref(false)
-const editingIncome = ref<FinanceIncome | null>(null)
-const reviewDialogVisible = ref(false)
-const paymentDialogVisible = ref(false)
-const workflowSaving = ref(false)
-const workflowExpense = ref<FinanceExpense | null>(null)
-const userStore = useUserStore()
-const incomeForm = reactive({
-  project: undefined as number | undefined,
-  title: '',
-  amount: undefined as number | undefined,
-  income_type: 'grant' as FinanceIncomeType,
-  income_date: '',
-  source: '',
-  reference_number: '',
-  note: '',
-})
-const reviewForm = reactive({ approved: true, opinion: '' })
-const paymentForm = reactive({ payment_method: '银行转账', payment_reference: '' })
-const budgetForm = reactive({
-  project: undefined as number | undefined,
-  planned_amount: undefined as number | undefined,
-})
-const expenseForm = reactive({
-  project: undefined as number | undefined,
-  amount: undefined as number | undefined,
-  expense_date: '',
-  category: 'other' as FinanceCategory,
-  title: '',
-  purpose: '',
-})
-const ocrForm = reactive({
-  project: undefined as number | undefined,
-  amount: undefined as number | undefined,
-  expense_date: '',
-  category: 'other' as FinanceCategory,
-  title: '',
-  purpose: '',
-})
-let chart: echarts.ECharts | null = null
-let resizeObserver: ResizeObserver | null = null
+const expenseList = ref<FinanceLedgerExpense[]>([])
+const incomeList = ref<FinanceLedgerIncome[]>([])
+const paymentList = ref<FinanceLedgerPayment[]>([])
+const transferList = ref<FinanceInternalTransfer[]>([])
+const budgetList = ref<FinanceBudget[]>([])
+const projectOptions = ref<Project[]>([])
+const competitionOptions = ref<Competition[]>([])
+const eventOptions = ref<CompetitionEvent[]>([])
+const memberOptions = ref<Member[]>([])
+const traceSummary = ref<FinanceTraceabilitySummaryResponse | null>(null)
+const fundTodos = ref<FinanceFundTodosResponse | null>(null)
+const flowSection = ref<HTMLElement | null>(null)
+const drawerVisible = ref(false)
+const drawerRow = ref<FinanceTraceabilityLeaf | null>(null)
+const allocationEventOptions = computed(() => eventOptions.value.filter(
+  (event) => competitionOptions.value.some((entry) => entry.event === event.id),
+))
 
-function toAmount(value: number | string | null | undefined): number {
-  const numberValue = Number(value)
-  return Number.isFinite(numberValue) ? numberValue : 0
+const perspectiveOptions = [
+  { label: '按项目查看比赛', value: 'project' },
+  { label: '按比赛查看项目', value: 'competition' },
+]
+const categoryOptions = Object.entries(FINANCE_CATEGORY_MAP).map(([value, item]) => ({ value: value as FinanceCategory, label: item.label }))
+const incomeTypeOptions: Array<{ value: FinanceIncomeType; label: string }> = [
+  { value: 'bonus', label: '比赛奖金' },
+  { value: 'grant', label: '学校 / 项目拨款' },
+  { value: 'sponsorship', label: '赞助' },
+  { value: 'refund', label: '退款 / 返还' },
+  { value: 'other', label: '其他收入' },
+]
+
+const globalFinanceManager = computed(() => {
+  const role = userStore.userInfo?.global_role || ''
+  const permissions = userStore.userInfo?.permission_codes || []
+  return ['teacher', 'sys_admin'].includes(role) || permissions.includes('finance.manage')
+})
+
+function canManageProject(project: Project): boolean {
+  return globalFinanceManager.value
+    || project.can_manage === true
+    || project.leader === userStore.userInfo?.id
 }
 
-const paidExpenses = computed(() =>
-  expenseList.value.filter((item) => ['paid', 'not_required'].includes(item.reimbursement_status || 'draft')),
-)
-const totalRecordedExpense = computed(() =>
-  expenseList.value.reduce((sum, item) => sum + toAmount(item.amount), 0),
-)
-const totalExpense = computed(() => paidExpenses.value.reduce((sum, item) => sum + toAmount(item.amount), 0))
-const pendingExpenses = computed(() =>
-  expenseList.value.filter((item) => ['pending', 'approved'].includes(item.reimbursement_status || 'draft')),
-)
-const totalPending = computed(() => pendingExpenses.value.reduce((sum, item) => sum + toAmount(item.amount), 0))
-const totalCommitted = computed(() => totalExpense.value + totalPending.value)
-const totalUncommitted = computed(() =>
-  Math.max(0, totalRecordedExpense.value - totalCommitted.value),
-)
-const totalIncome = computed(() =>
-  budgetList.value.reduce((sum, item) => sum + toAmount(item.bonus_amount) + toAmount(item.other_income), 0),
-)
-const totalPlanned = computed(() =>
-  budgetList.value.reduce((sum, item) => sum + toAmount(item.budget_basis), 0),
-)
-const totalAvailable = computed(() =>
-  budgetList.value.reduce((sum, item) => sum + toAmount(item.available_amount), 0),
-)
+const manageableProjects = computed(() => projectOptions.value.filter(canManageProject))
+const canRegisterIncome = computed(() => manageableProjects.value.length > 0)
+const canSetBudget = computed(() => canRegisterIncome.value)
+const canRegisterTransfer = computed(() => globalFinanceManager.value)
+const payableProjects = computed(() => canRegisterTransfer.value ? projectOptions.value : [])
+
+const filteredExpenses = computed(() => expenseList.value
+  .map((item) => filterLedgerRecordByDestination(item, filterProject.value, filterEvent.value))
+  .filter((item): item is FinanceLedgerExpense => Boolean(item)))
+const filteredIncomes = computed(() => incomeList.value
+  .map((item) => filterLedgerRecordByDestination(item, filterProject.value, filterEvent.value))
+  .filter((item): item is FinanceLedgerIncome => Boolean(item)))
+
+const metrics = computed(() => buildMetricSummary(filteredExpenses.value, filteredIncomes.value, traceSummary.value))
+const todoCounts = computed(() => normalizeFundTodos(fundTodos.value, expenseList.value))
+const todoCards = computed(() => [
+  { key: 'missing_receipt', label: '待补发票', value: todoCounts.value.missing_receipt, hint: '缺少发票或原始票据', tone: 'warning' },
+  { key: 'pending_review', label: '待负责人审核', value: todoCounts.value.pending_review, hint: '额度已临时预留', tone: 'warning' },
+  { key: 'pending_payment', label: '已审核待转账', value: todoCounts.value.pending_payment, hint: '等待经费经办人付款', tone: 'primary' },
+  { key: 'missing_payment_proof', label: '缺付款凭证', value: todoCounts.value.missing_payment_proof, hint: '已登记转账但未归档', tone: 'danger' },
+  { key: 'partially_paid', label: '部分支付', value: todoCounts.value.partially_paid, hint: '仍有金额需要覆盖', tone: 'primary' },
+  { key: 'payment_exception', label: '付款异常', value: todoCounts.value.payment_exception, hint: '失败或退回待处理', tone: 'danger' },
+  { key: 'stale', label: '长时间未处理', value: todoCounts.value.stale, hint: '超过 7 天未推进', tone: 'muted' },
+])
+const todoFilterLabel = computed(() => todoCards.value.find((item) => item.key === todoFilter.value)?.label || '')
+
+const rawGroups = computed(() => buildTraceabilityGroups(perspective.value, filteredExpenses.value, filteredIncomes.value)
+  .map((group) => ({
+    ...group,
+    children: group.children.map((row) => {
+      const entry = competitionOptions.value.find((item) => item.id === row.competition_entry_id)
+      if (!entry) return row
+      const activeParticipants = (entry.participants || []).filter((item) => item.participation_status !== 'withdrawn')
+      const participantName = (item: typeof activeParticipants[number]) => item.user_detail?.name || `成员 ${item.user}`
+      const leaders = [
+        ...(entry.leader_names || []),
+        ...activeParticipants.filter((item) => item.role === 'leader').map(participantName),
+      ].filter((name, index, list) => Boolean(name) && list.indexOf(name) === index)
+      const participants = activeParticipants.map(participantName).filter((name, index, list) => list.indexOf(name) === index)
+      const awardResult = entry.is_awarded
+        ? entry.award_level || '已获奖'
+        : entry.status === 'completed' ? '未获奖' : '结果待公布'
+      return { ...row, leader_names: leaders, participant_names: participants, award_result: awardResult }
+    }),
+  })))
+const visibleGroups = computed(() => {
+  const keyword = ledgerKeyword.value.trim().toLocaleLowerCase()
+  if (!keyword) return rawGroups.value
+  return rawGroups.value
+    .map((group) => ({
+      ...group,
+      children: group.children.filter((row) => [
+        row.project_name,
+        row.event_name,
+        row.event_edition,
+        row.competition_entry_name,
+        ...row.expenses.map((item) => `${item.title} ${item.purpose || ''} ${item.spender_name || ''}`),
+        ...row.incomes.map((item) => `${item.title} ${item.source || ''}`),
+      ].join(' ').toLocaleLowerCase().includes(keyword)),
+    }))
+    .filter((group) => group.children.length > 0)
+})
+
+const visibleExpenses = computed(() => filteredExpenses.value.filter(expenseMatchesTodo))
+const visibleIncomes = computed(() => filteredIncomes.value)
+const filteredPaymentIds = computed(() => new Set(filteredExpenses.value.map((item) => item.id)))
+const displayPayments = computed(() => paymentList.value.filter((item) => filteredPaymentIds.value.has(item.expense)))
+const visiblePayments = computed(() => todoFilter.value === 'missing_payment_proof'
+  ? displayPayments.value.filter((item) => item.status === 'pending_proof' || (item.status === 'completed' && !(item.receipts?.length || item.attachments?.length)))
+  : displayPayments.value)
+
+const visibleTransfers = computed(() => transferList.value.filter((item) => (
+  (!filterProject.value || item.project === filterProject.value)
+  && (!filterEvent.value || competitionOptions.value.find((entry) => entry.id === item.competition_entry)?.event === filterEvent.value)
+)))
 
 const categoryBreakdown = computed(() => {
   const totals = new Map<string, number>()
-  expenseList.value.forEach((item) => {
-    const key = item.category || 'other'
-    totals.set(key, (totals.get(key) || 0) + toAmount(item.amount))
-  })
-  return Array.from(totals.entries())
-    .map(([key, value]) => ({ key, name: getFinanceCategoryLabel(key), value }))
-    .filter((item) => item.value > 0)
-    .sort((left, right) => right.value - left.value)
+  filteredExpenses.value.forEach((item) => totals.set(
+    item.category,
+    (totals.get(item.category) || 0) + attributedRecordAmount(item),
+  ))
+  const max = Math.max(0, ...totals.values())
+  return Array.from(totals.entries()).map(([key, amount]) => ({ key, label: getFinanceCategoryLabel(key), amount, percentage: max ? Math.round(amount / max * 100) : 0 })).sort((a, b) => b.amount - a.amount)
 })
 
-function topSpendingGroups(totals: Map<string, number>, limit = 3): SpendingGroup[] {
-  return Array.from(totals.entries())
-    .map(([name, amount]) => ({ name, amount }))
-    .sort((left, right) => right.amount - left.amount)
-    .slice(0, limit)
+const projectAnalysis = computed(() => projectOptions.value.map((project) => {
+  const spent = expenseList.value.reduce((sum, item) => {
+    const attributed = filterLedgerRecordByDestination(item, project.id)
+    return sum + (attributed ? attributedRecordAmount(attributed) : 0)
+  }, 0)
+  const budget = budgetList.value.filter((item) => item.project === project.id).reduce((sum, item) => sum + moneyNumber(item.budget_basis ?? item.planned_amount), 0)
+  return { id: project.id, name: project.name, spent, budget, rate: budget > 0 ? Math.round(spent / budget * 100) : spent > 0 ? 100 : 0 }
+}).filter((item) => item.spent > 0 || item.budget > 0).sort((a, b) => b.rate - a.rate))
+
+function expenseMatchesTodo(item: FinanceLedgerExpense): boolean {
+  if (!todoFilter.value) return true
+  const status = normalizedExpenseStatus(item)
+  if (todoFilter.value === 'missing_receipt') return !allExpenseAttachments(item).some((attachment) => ['invoice', 'original_receipt'].includes(attachment.attachment_type || ''))
+  if (todoFilter.value === 'pending_review') return ['pending', 'pending_review', 'reserved'].includes(status)
+  if (todoFilter.value === 'pending_payment') return ['approved', 'pending_payment'].includes(status)
+  if (todoFilter.value === 'partially_paid') return status === 'partial_paid'
+  if (todoFilter.value === 'payment_exception') return status === 'payment_exception' || (item.payments || []).some((payment) => payment.status === 'failed')
+  if (todoFilter.value === 'missing_payment_proof') return (item.payments || []).some((payment) => payment.status === 'pending_proof' || (payment.status === 'completed' && !(payment.receipts?.length || payment.attachments?.length)))
+  if (todoFilter.value === 'stale') return ['pending', 'approved', 'partial_paid'].includes(status) && Date.now() - new Date(item.updated_at || item.created_at).getTime() >= 7 * 86400000
+  return true
 }
 
-const spendingDestinations = computed<SpendingDestinationRow[]>(() => {
-  const rows = new Map<number, {
-    projectName: string
-    total: number
-    count: number
-    people: Map<string, number>
-    purposes: Map<string, number>
-    completed: number
-    pending: number
-    uncommitted: number
-  }>()
+function money(value: number | string | null | undefined): string { return formatMoneyWithComma(value) }
+function memberUserId(member: Member): number { return member.user || member.id }
+function memberName(member: Member): string { return member.user_name || member.name || member.username || member.email }
+function eventLabel(event: CompetitionEvent): string { return `${event.name}${event.edition ? ` · ${event.edition}` : ''}` }
+function competitionLabel(item: Competition): string { return `${item.event_name || item.name}${item.event_edition ? ` · ${item.event_edition}` : ''} / ${item.entry_name || item.project_name || item.name}` }
+function allocationCompetitionLabel(item: Competition): string {
+  const edition = item.event_edition ? ` · ${item.event_edition}` : ''
+  return `${item.event_name || item.name}${edition} / ${item.project_name || `项目 ${item.project}`} / ${item.entry_name || item.name}`
+}
+function allocationEventLabel(eventId: number): string {
+  const event = eventOptions.value.find((item) => item.id === eventId)
+  return event ? eventLabel(event) : `比赛届次 ${eventId}`
+}
+function projectName(projectId?: number): string {
+  return projectOptions.value.find((item) => item.id === projectId)?.name || '当前项目'
+}
+function incomeTypeLabel(type: string): string { return incomeTypeOptions.find((item) => item.value === type)?.label || type }
+function paymentStatusLabel(status?: string): string { return ({ pending_proof: '待补凭证', completed: '已完成', failed: '付款异常', reversed: '已冲正' } as Record<string, string>)[status || ''] || status || '未知' }
+function paymentStatusTone(status?: string): 'success' | 'warning' | 'danger' | 'info' { return status === 'completed' ? 'success' : status === 'failed' ? 'danger' : status === 'pending_proof' ? 'warning' : 'info' }
+function transferStatusLabel(status?: string): string { return ({ pending_proof: '待补凭证', completed: '已完成', failed: '转付异常' } as Record<string, string>)[status || ''] || status || '未知' }
+function transferStatusTone(status?: string): 'success' | 'warning' | 'danger' { return status === 'completed' ? 'success' : status === 'failed' ? 'danger' : 'warning' }
+function expenseById(id: number): FinanceLedgerExpense | undefined { return expenseList.value.find((item) => item.id === id) }
+function expensePaid(item: unknown): number { return completedPaymentAmount(item as FinanceLedgerExpense) }
+function expensePayable(item: unknown): number { return remainingPayable(item as FinanceLedgerExpense) }
+function expenseScopeLabel(value: unknown): string { const item = value as FinanceLedgerExpense; return item.allocations?.length ? `分摊至 ${item.allocations.length} 个参赛队` : item.competition_entry_name ? `${item.event_name || '比赛'} / ${item.competition_entry_name}` : '项目公共支出' }
+function incomeScopeLabel(value: unknown): string { const item = value as FinanceLedgerIncome; return item.allocations?.length ? `分摊至 ${item.allocations.length} 个参赛队` : item.competition_entry_name ? `${item.event_name || '比赛'} / ${item.competition_entry_name}` : '项目公共收入' }
 
-  expenseList.value.forEach((item) => {
-    const amount = toAmount(item.amount)
-    const row = rows.get(item.project) || {
-      projectName: item.project_name || `项目 ${item.project}`,
-      total: 0,
-      count: 0,
-      people: new Map<string, number>(),
-      purposes: new Map<string, number>(),
-      completed: 0,
-      pending: 0,
-      uncommitted: 0,
-    }
-    const person = item.spender_name || '未登记经手人'
-    const purpose = item.purpose?.trim() || item.title || '未填写用途'
-    const status = item.reimbursement_status || 'draft'
+function normalizePage<T>(value: { results?: T[] } | T[]): T[] { return Array.isArray(value) ? value : value.results || [] }
 
-    row.total += amount
-    row.count += 1
-    row.people.set(person, (row.people.get(person) || 0) + amount)
-    row.purposes.set(purpose, (row.purposes.get(purpose) || 0) + amount)
-    if (['paid', 'not_required'].includes(status)) row.completed += amount
-    else if (['pending', 'approved'].includes(status)) row.pending += amount
-    else row.uncommitted += amount
-    rows.set(item.project, row)
-  })
-
-  return Array.from(rows.entries())
-    .map(([projectId, row]) => ({
-      projectId,
-      projectName: row.projectName,
-      total: row.total,
-      count: row.count,
-      people: topSpendingGroups(row.people),
-      purposes: topSpendingGroups(row.purposes),
-      completed: row.completed,
-      pending: row.pending,
-      uncommitted: row.uncommitted,
-    }))
-    .sort((left, right) => right.total - left.total)
-})
-
-const projectFinance = computed<ProjectFinanceRow[]>(() => {
-  const rows = new Map<number, Omit<ProjectFinanceRow, 'rate' | 'tone'>>()
-
-  budgetList.value.forEach((item) => {
-    const current = rows.get(item.project) || {
-      projectId: item.project,
-      projectName: item.project_name || `项目 ${item.project}`,
-      budget: 0,
-      expense: 0,
-      recorded: 0,
-      available: 0,
-    }
-    current.budget += toAmount(item.budget_basis)
-    current.expense += toAmount(item.committed_amount)
-    current.available += toAmount(item.available_amount)
-    rows.set(item.project, current)
-  })
-
-  expenseList.value.forEach((item) => {
-    const current = rows.get(item.project) || {
-      projectId: item.project,
-      projectName: item.project_name || `项目 ${item.project}`,
-      budget: 0,
-      expense: 0,
-      recorded: 0,
-      available: 0,
-    }
-    current.recorded += toAmount(item.amount)
-    rows.set(item.project, current)
-  })
-
-  return Array.from(rows.values())
-    .map((item) => {
-      const rate = item.budget > 0 ? Math.round((item.recorded / item.budget) * 100) : item.recorded > 0 ? 100 : 0
-      const tone: BudgetTone = rate > 100 ? 'danger' : rate >= 80 ? 'warning' : rate > 0 ? 'success' : 'neutral'
-      return { ...item, rate, tone }
-    })
-    .sort((left, right) => right.rate - left.rate)
-})
-
-const riskProjects = computed(() => projectFinance.value.filter((item) => item.rate >= 80))
-
-function progressColor(tone: BudgetTone): string {
-  if (tone === 'danger') return '#B64242'
-  if (tone === 'warning') return '#A66116'
-  if (tone === 'success') return '#237A55'
-  return '#98A29E'
+async function loadReferenceData(): Promise<void> {
+  const [projects, competitions, events, members] = await Promise.allSettled([
+    getProjects({ page: 1, page_size: 100 }),
+    getCompetitions({ page: 1, page_size: 100 }),
+    getCompetitionEvents({ page: 1, page_size: 100 }),
+    getMembers({ page: 1, page_size: 100 }),
+  ])
+  if (projects.status === 'fulfilled') projectOptions.value = projects.value.results
+  if (competitions.status === 'fulfilled') competitionOptions.value = competitions.value.results
+  if (events.status === 'fulfilled') eventOptions.value = events.value.results
+  if (members.status === 'fulfilled') memberOptions.value = members.value.results
 }
 
 async function loadData(): Promise<void> {
   loading.value = true
   loadError.value = false
   try {
-    const params = filterProject.value ? { project: filterProject.value } : {}
-
-    const [expenses, budgets, incomes] = await Promise.all([
-      getAllFinanceExpenses(params),
-      getAllFinanceBudgets(params),
-      getAllFinanceIncomes(params),
+    const [expenses, incomes, payments, transfers, budgets, todos] = await Promise.all([
+      getAllFinanceExpenses() as unknown as Promise<FinanceLedgerExpense[]>,
+      getAllFinanceIncomes() as unknown as Promise<FinanceLedgerIncome[]>,
+      getAllFinancePayments().catch(() => []),
+      getFinanceTransfers({ page: 1, page_size: 100 }).then(normalizePage).catch(() => []),
+      getAllFinanceBudgets().catch(() => []),
+      getFinanceFundTodos().catch(() => null),
     ])
-    expenseList.value = expenses
-    budgetList.value = budgets
+    paymentList.value = payments
+    expenseList.value = mergePaymentsIntoExpenses(expenses, payments)
     incomeList.value = incomes
-    await nextTick()
-    renderChart()
+    transferList.value = transfers
+    budgetList.value = budgets
+    fundTodos.value = todos
+    await loadTraceSummary()
   } catch {
     loadError.value = true
   } finally {
@@ -869,816 +716,413 @@ async function loadData(): Promise<void> {
   }
 }
 
-function isFinanceManager(): boolean {
-  return ['teacher', 'sys_admin'].includes(userStore.userInfo?.global_role || '')
-    || Boolean(userStore.userInfo?.permission_codes?.includes('finance.manage'))
-}
-
-function projectLeaderId(projectId: number): number | undefined {
-  return projectOptions.value.find((item) => item.id === projectId)?.leader
-}
-
-function canManageProjectFinance(projectId: number): boolean {
-  return isFinanceManager()
-    || Boolean(projectOptions.value.find((item) => item.id === projectId)?.can_manage)
-}
-
-function canCreateProjectFinance(projectId: number): boolean {
-  return ['teacher', 'sys_admin'].includes(userStore.userInfo?.global_role || '')
-    || Boolean(userStore.userInfo?.permission_codes?.includes('finance.create'))
-    || Boolean(projectOptions.value.find((item) => item.id === projectId)?.can_manage)
-}
-
-const canRegisterIncome = computed(() =>
-  projectOptions.value.some((item) => canCreateProjectFinance(item.id)),
-)
-const canSetBudget = computed(() =>
-  projectOptions.value.some((item) => canConfigureProjectBudget(item.id)),
-)
-
-function canConfigureProjectBudget(projectId: number): boolean {
-  const existing = budgetList.value.some((item) => item.project === projectId)
-  return existing
-    ? canManageProjectFinance(projectId)
-    : canCreateProjectFinance(projectId)
-}
-
-function canSubmitExpense(expense: FinanceExpense): boolean {
-  if (!['draft', 'rejected'].includes(expense.reimbursement_status || 'draft')) return false
-  const userId = userStore.userInfo?.id
-  return Boolean(
-    isFinanceManager()
-    || expense.spender === userId
-    || projectLeaderId(expense.project) === userId,
-  )
-}
-
-function canReviewExpense(expense: FinanceExpense): boolean {
-  if (expense.reimbursement_status !== 'pending') return false
-  return canManageProjectFinance(expense.project)
-}
-
-function canPayExpense(expense: FinanceExpense): boolean {
-  return expense.reimbursement_status === 'approved' && isFinanceManager()
-}
-
-function openBudgetDialog(): void {
-  budgetForm.project = filterProject.value
-    && canConfigureProjectBudget(filterProject.value)
-    ? filterProject.value
-    : projectOptions.value.find((item) => canConfigureProjectBudget(item.id))?.id
-  syncBudgetForm()
-  budgetDialogVisible.value = true
-}
-
-function syncBudgetForm(): void {
-  const existing = budgetList.value.find((item) => item.project === budgetForm.project)
-  budgetForm.planned_amount = existing
-    ? toAmount(existing.planned_amount)
-    : undefined
-}
-
-async function saveBudget(): Promise<void> {
-  if (!budgetForm.project || budgetForm.planned_amount === undefined) {
-    ElMessage.warning('请选择项目并填写核定预算上限')
-    return
-  }
-  budgetSaving.value = true
+async function loadTraceSummary(): Promise<void> {
   try {
-    const existing = budgetList.value.find((item) => item.project === budgetForm.project)
-    if (existing) {
-      await updateFinanceBudget(existing.id, {
-        planned_amount: budgetForm.planned_amount,
-      })
-    } else {
-      await createFinanceBudget({
-        project: budgetForm.project,
-        planned_amount: budgetForm.planned_amount,
-      })
-    }
-    budgetDialogVisible.value = false
-    ElMessage.success('项目核定预算已保存')
-    await loadData()
-  } finally {
-    budgetSaving.value = false
+    traceSummary.value = await getFinanceTraceabilitySummary({ perspective: perspective.value, project: filterProject.value, event: filterEvent.value })
+  } catch {
+    traceSummary.value = null
   }
 }
+
+function resetFilters(): void { filterProject.value = undefined; filterEvent.value = undefined; ledgerKeyword.value = '' }
+function selectTodo(key: string): void {
+  todoFilter.value = todoFilter.value === key ? '' : key
+  flowTab.value = key === 'missing_payment_proof' ? 'payments' : 'expenses'
+  nextTick(() => flowSection.value?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
+}
+
+function openTraceabilityRow(row: FinanceTraceabilityLeaf): void { drawerRow.value = row; drawerVisible.value = true }
+function openExpenseTrace(value: unknown): void {
+  const expense = value as FinanceLedgerExpense
+  const row = buildTraceabilityGroups('project', [expense], []).flatMap((group) => group.children)[0]
+  if (row) openTraceabilityRow(row)
+}
+function openIncomeTrace(value: unknown): void {
+  const income = value as FinanceLedgerIncome
+  const row = buildTraceabilityGroups('project', [], [income]).flatMap((group) => group.children)[0]
+  if (row) openTraceabilityRow(row)
+}
+
+function canSubmitExpense(value: unknown): boolean {
+  const item = value as FinanceLedgerExpense
+  if (!['draft', 'rejected', 'missing_receipt'].includes(normalizedExpenseStatus(item))) return false
+  const userId = userStore.userInfo?.id
+  return item.can_manage === true || globalFinanceManager.value || item.spender === userId || projectOptions.value.find((project) => project.id === item.project)?.leader === userId
+}
+function canReviewExpense(value: unknown): boolean { const item = value as FinanceLedgerExpense; return ['pending', 'pending_review', 'reserved'].includes(normalizedExpenseStatus(item)) && (item.can_review ?? canManageProjectById(item.project)) }
+function canPayExpense(value: unknown): boolean { const item = value as FinanceLedgerExpense; return ['approved', 'pending_payment', 'partial_paid', 'payment_exception'].includes(normalizedExpenseStatus(item)) && (item.can_pay ?? canManageProjectById(item.project)) }
+function canAdvanceIncome(value: unknown): boolean { const item = value as FinanceLedgerIncome; return item.stage !== 'received' && (item.can_manage ?? canManageProjectById(item.project)) }
+function canManageProjectById(id: number): boolean { const project = projectOptions.value.find((item) => item.id === id); return project ? canManageProject(project) : globalFinanceManager.value }
+function canOperatePayment(value: unknown): boolean { const item = value as FinanceLedgerPayment; return canPayExpense(expenseById(item.expense) || ({ project: 0, reimbursement_status: 'approved' } as FinanceLedgerExpense)) }
+function canOperateTransfer(value: unknown): boolean { const item = value as FinanceInternalTransfer; return item.can_manage ?? canManageProjectById(item.project) }
+
+async function submitExpense(value: unknown): Promise<void> {
+  const item = value as FinanceLedgerExpense
+  try {
+    await ElMessageBox.confirm(`提交“${item.title}”并预留 ${money(item.amount)}？`, '提交报销')
+    await submitReimbursement(item.id)
+    ElMessage.success('已提交负责人审核，额度已进入预留')
+    await loadData()
+  } catch { /* 用户取消或请求拦截器已提示 */ }
+}
+
+const expenseDialogVisible = ref(false)
+const expenseSaving = ref(false)
+const expenseFile = ref<File | null>(null)
+const expenseDraftId = ref<number | null>(null)
+const expenseAttachmentUploaded = ref(false)
+const expenseAllocationsSaved = ref(false)
+const expenseForm = reactive({ project: undefined as number | undefined, scope: 'competition_entry' as 'competition_entry' | 'project_common' | 'allocated', competition_entry: undefined as number | undefined, allocation_mode: 'same_event' as 'same_event' | 'same_project', allocation_event: undefined as number | undefined, allocations: [] as AllocationFormRow[], spender: undefined as number | undefined, payee: undefined as number | undefined, category: 'travel' as FinanceCategory, amount: undefined as number | undefined, expense_date: '', attachment_type: 'invoice' as FinanceAttachmentKind, title: '', purpose: '' })
+const expenseEntryOptions = computed(() => competitionOptions.value.filter((item) => !expenseForm.project || item.project === expenseForm.project))
+const expenseAllocationEventId = computed(() => resolveAllocationEventId(
+  expenseForm.allocation_event,
+  expenseForm.allocations.map((item) => item.competition_entry),
+  competitionOptions.value,
+))
+const expenseAllocationEntryOptions = computed(() => allocationEntriesForEvent(
+  expenseForm.allocation_mode === 'same_project'
+    ? competitionOptions.value.filter((item) => item.project === expenseForm.project)
+    : competitionOptions.value.filter((item) => Boolean(item.event)),
+  expenseForm.allocation_mode === 'same_event' ? expenseAllocationEventId.value : undefined,
+))
+const expenseAllocationProjectCount = computed(() => new Set(
+  expenseAllocationEntryOptions.value.map((item) => item.project),
+).size)
+const expenseAllocationTotal = computed(() => expenseForm.allocations.reduce((sum, item) => sum + Number(item.amount || 0), 0))
+const expenseAllocationBalanced = computed(() => Math.abs(expenseAllocationTotal.value - Number(expenseForm.amount || 0)) < 0.005)
 
 function openExpenseDialog(): void {
-  Object.assign(expenseForm, {
-    project: filterProject.value,
-    amount: undefined,
-    expense_date: new Date().toISOString().slice(0, 10),
-    category: 'other',
-    title: '',
-    purpose: '',
+  const currentUser = userStore.userInfo?.id
+  Object.assign(expenseForm, { project: filterProject.value || projectOptions.value[0]?.id, scope: 'competition_entry', competition_entry: undefined, allocation_mode: 'same_event', allocation_event: undefined, allocations: [], spender: currentUser, payee: currentUser, category: 'travel', amount: undefined, expense_date: new Date().toISOString().slice(0, 10), attachment_type: 'invoice', title: '', purpose: '' })
+  expenseFile.value = null; expenseDraftId.value = null; expenseAttachmentUploaded.value = false; expenseAllocationsSaved.value = false; expenseDialogVisible.value = true
+}
+function resetExpenseScope(): void { expenseForm.competition_entry = undefined; expenseForm.allocation_event = undefined; expenseForm.allocations = []; expenseDraftId.value = null; if (!expenseForm.project || !canManageProjectById(expenseForm.project)) { expenseForm.scope = 'competition_entry'; expenseForm.spender = userStore.userInfo?.id; expenseForm.payee = userStore.userInfo?.id } }
+function resetExpenseScopeTarget(): void { expenseForm.competition_entry = undefined; expenseForm.allocation_event = undefined; expenseForm.allocations = []; if (expenseForm.scope === 'allocated') addExpenseAllocation() }
+function addExpenseAllocation(): void { expenseForm.allocations.push({ competition_entry: undefined, amount: undefined, note: '' }) }
+function resetExpenseAllocationMode(): void {
+  expenseForm.allocation_event = undefined
+  expenseForm.allocations = []
+  addExpenseAllocation()
+  expenseAllocationsSaved.value = false
+}
+function handleExpenseAllocationEventChange(eventId?: number): void {
+  expenseForm.allocation_event = eventId || undefined
+  expenseForm.allocations.forEach((allocation) => {
+    const entry = competitionOptions.value.find((item) => item.id === allocation.competition_entry)
+    if (!eventId || entry?.event !== eventId) allocation.competition_entry = undefined
   })
-  manualReceiptFile.value = null
-  expenseDialogVisible.value = true
+  expenseAllocationsSaved.value = false
 }
-
-function handleManualReceiptChange(file: UploadFile): void {
-  manualReceiptFile.value = file.raw || null
+function handleExpenseAllocationEntryChange(entryId?: number): void {
+  const entry = competitionOptions.value.find((item) => item.id === entryId)
+  if (expenseForm.allocation_mode === 'same_event' && !expenseForm.allocation_event && entry?.event) expenseForm.allocation_event = entry.event
+  expenseAllocationsSaved.value = false
 }
-
-function handleManualReceiptRemove(): void {
-  manualReceiptFile.value = null
+function isExpenseAllocationEntrySelected(entryId: number, rowIndex: number): boolean {
+  return expenseForm.allocations.some((allocation, index) => index !== rowIndex && allocation.competition_entry === entryId)
 }
+function handleExpenseFile(file: UploadFile): void { expenseFile.value = file.raw || null; expenseAttachmentUploaded.value = false }
+function clearExpenseFile(): void { expenseFile.value = null; expenseAttachmentUploaded.value = false }
 
-async function saveExpense(): Promise<void> {
-  if (
-    !expenseForm.project
-    || !expenseForm.amount
-    || !expenseForm.expense_date
-    || !expenseForm.title.trim()
-  ) {
-    ElMessage.warning('请补全项目、金额、日期和支出标题')
-    return
+function validateExpense(submitNow: boolean): string | null {
+  if (!expenseForm.project || !expenseForm.amount || !expenseForm.expense_date || !expenseForm.title.trim()) return '请补全项目、金额、日期和支出标题'
+  if (!expenseForm.spender || !expenseForm.payee) return '请选择垫付人和实际收款人'
+  if (expenseForm.scope === 'competition_entry' && !expenseForm.competition_entry) return '请选择具体比赛和参赛队'
+  if (expenseForm.scope === 'allocated') {
+    const entryIds = expenseForm.allocations.map((item) => item.competition_entry)
+    if (expenseForm.allocation_mode === 'same_event' && (!expenseForm.allocation_event || !allocationTargetsShareEvent(entryIds, competitionOptions.value, expenseForm.allocation_event))) return '跨项目分摊的所有参赛队必须属于同一比赛届次'
+    if (expenseForm.allocation_mode === 'same_project' && !allocationTargetsBelongToProject(entryIds, competitionOptions.value, expenseForm.project)) return '单项目兼容分摊只能选择当前归账项目的参赛条目'
+    if (new Set(entryIds).size !== entryIds.length) return '同一个参赛队不能重复分摊'
+    if (!expenseForm.allocations.length || expenseForm.allocations.some((item) => !item.competition_entry || !item.amount) || !expenseAllocationBalanced.value) return '请完整填写分摊明细，并确保合计等于支出金额'
   }
+  if (submitNow && (!expenseFile.value || !['invoice', 'original_receipt'].includes(expenseForm.attachment_type))) return '提交审核前必须上传发票或原始票据'
+  return null
+}
+
+async function saveExpense(submitNow: boolean): Promise<void> {
+  const invalid = validateExpense(submitNow)
+  if (invalid) { ElMessage.warning(invalid); return }
   expenseSaving.value = true
   try {
-    const expense = await createFinanceExpense({
-      project: expenseForm.project,
-      amount: expenseForm.amount,
-      expense_date: expenseForm.expense_date,
-      category: expenseForm.category,
-      title: expenseForm.title.trim(),
-      purpose: expenseForm.purpose.trim(),
-    })
-    if (manualReceiptFile.value) {
-      try {
-        await uploadReceipt(expense.id, manualReceiptFile.value)
-      } catch {
-        ElMessage.warning('支出草稿已保存，但票据上传失败，可稍后重新上传')
-      }
+    if (!expenseDraftId.value) {
+      const created = await createFinanceExpense({ project: expenseForm.project!, competition_entry: expenseForm.scope === 'competition_entry' ? expenseForm.competition_entry : null, scope: expenseForm.scope, category: expenseForm.category, title: expenseForm.title.trim(), purpose: expenseForm.purpose.trim(), amount: expenseForm.amount!, expense_date: expenseForm.expense_date, spender: expenseForm.spender, payee: expenseForm.payee })
+      expenseDraftId.value = created.id
     }
+    if (expenseForm.scope === 'allocated' && !expenseAllocationsSaved.value) {
+      await setExpenseAllocations(expenseDraftId.value, expenseForm.allocations.map((item) => ({ competition_entry: item.competition_entry!, amount: item.amount!, note: item.note.trim() })))
+      expenseAllocationsSaved.value = true
+    }
+    if (expenseFile.value && !expenseAttachmentUploaded.value) {
+      await uploadFinanceAttachment({ expense: expenseDraftId.value, file: expenseFile.value, attachment_type: expenseForm.attachment_type })
+      expenseAttachmentUploaded.value = true
+    }
+    if (submitNow) await submitReimbursement(expenseDraftId.value)
+    ElMessage.success(submitNow ? '支出已提交审核，额度已预留' : '支出已保存为草稿')
     expenseDialogVisible.value = false
-    ElMessage.success('支出已保存为草稿，请核对后提交报销')
     await loadData()
-  } finally {
-    expenseSaving.value = false
-  }
+  } finally { expenseSaving.value = false }
 }
 
-function openIncomeDialog(income?: FinanceIncome): void {
-  editingIncome.value = income || null
-  incomeForm.project = income?.project || filterProject.value
-  incomeForm.title = income?.title || ''
-  incomeForm.amount = income ? toAmount(income.amount) : undefined
-  incomeForm.income_type = income?.income_type || 'grant'
-  incomeForm.income_date = income?.income_date || new Date().toISOString().slice(0, 10)
-  incomeForm.source = income?.source || ''
-  incomeForm.reference_number = income?.reference_number || ''
-  incomeForm.note = income?.note || ''
-  incomeDialogVisible.value = true
+const incomeDialogVisible = ref(false)
+const incomeSaving = ref(false)
+const incomeProof = ref<File | null>(null)
+const incomeDraftId = ref<number | null>(null)
+const incomeAllocationsSaved = ref(false)
+const incomeForm = reactive({ project: undefined as number | undefined, scope: 'competition_entry' as 'competition_entry' | 'project_common' | 'allocated', competition_entry: undefined as number | undefined, allocation_mode: 'same_event' as 'same_event' | 'same_project', allocation_event: undefined as number | undefined, allocations: [] as AllocationFormRow[], income_type: 'bonus' as FinanceIncomeType, stage: 'expected' as FinanceIncomeStage, income_date: '', amount: undefined as number | undefined, title: '', source: '', reference_number: '', note: '' })
+const incomeEntryOptions = computed(() => competitionOptions.value.filter((item) => !incomeForm.project || item.project === incomeForm.project))
+const incomeAllocationEventId = computed(() => resolveAllocationEventId(
+  incomeForm.allocation_event,
+  incomeForm.allocations.map((item) => item.competition_entry),
+  competitionOptions.value,
+))
+const incomeAllocationEntryOptions = computed(() => allocationEntriesForEvent(
+  incomeForm.allocation_mode === 'same_project'
+    ? competitionOptions.value.filter((item) => item.project === incomeForm.project)
+    : competitionOptions.value.filter((item) => Boolean(item.event)),
+  incomeForm.allocation_mode === 'same_event' ? incomeAllocationEventId.value : undefined,
+))
+const incomeAllocationProjectCount = computed(() => new Set(
+  incomeAllocationEntryOptions.value.map((item) => item.project),
+).size)
+const incomeAllocationTotal = computed(() => incomeForm.allocations.reduce((sum, item) => sum + Number(item.amount || 0), 0))
+const incomeAllocationBalanced = computed(() => Math.abs(incomeAllocationTotal.value - Number(incomeForm.amount || 0)) < 0.005)
+
+function openIncomeDialog(): void { Object.assign(incomeForm, { project: filterProject.value && manageableProjects.value.some((item) => item.id === filterProject.value) ? filterProject.value : manageableProjects.value[0]?.id, scope: 'competition_entry', competition_entry: undefined, allocation_mode: 'same_event', allocation_event: undefined, allocations: [], income_type: 'bonus', stage: 'expected', income_date: new Date().toISOString().slice(0, 10), amount: undefined, title: '', source: '', reference_number: '', note: '' }); incomeProof.value = null; incomeDraftId.value = null; incomeAllocationsSaved.value = false; incomeDialogVisible.value = true }
+function resetIncomeScope(): void { incomeForm.competition_entry = undefined; incomeForm.allocation_event = undefined; incomeForm.allocations = []; incomeDraftId.value = null }
+function resetIncomeScopeTarget(): void { incomeForm.competition_entry = undefined; incomeForm.allocation_event = undefined; incomeForm.allocations = []; if (incomeForm.scope === 'allocated') addIncomeAllocation() }
+function addIncomeAllocation(): void { incomeForm.allocations.push({ competition_entry: undefined, amount: undefined, note: '' }) }
+function resetIncomeAllocationMode(): void {
+  incomeForm.allocation_event = undefined
+  incomeForm.allocations = []
+  addIncomeAllocation()
+  incomeAllocationsSaved.value = false
 }
+function handleIncomeAllocationEventChange(eventId?: number): void {
+  incomeForm.allocation_event = eventId || undefined
+  incomeForm.allocations.forEach((allocation) => {
+    const entry = competitionOptions.value.find((item) => item.id === allocation.competition_entry)
+    if (!eventId || entry?.event !== eventId) allocation.competition_entry = undefined
+  })
+  incomeAllocationsSaved.value = false
+}
+function handleIncomeAllocationEntryChange(entryId?: number): void {
+  const entry = competitionOptions.value.find((item) => item.id === entryId)
+  if (incomeForm.allocation_mode === 'same_event' && !incomeForm.allocation_event && entry?.event) incomeForm.allocation_event = entry.event
+  incomeAllocationsSaved.value = false
+}
+function isIncomeAllocationEntrySelected(entryId: number, rowIndex: number): boolean {
+  return incomeForm.allocations.some((allocation, index) => index !== rowIndex && allocation.competition_entry === entryId)
+}
+function handleIncomeProof(file: UploadFile): void { incomeProof.value = file.raw || null }
+function clearIncomeProof(): void { incomeProof.value = null }
 
 async function saveIncome(): Promise<void> {
-  if (!incomeForm.project || !incomeForm.title.trim() || !incomeForm.amount || !incomeForm.income_date) {
-    ElMessage.warning('请补全项目、标题、金额和入账日期')
-    return
+  if (!incomeForm.project || !incomeForm.amount || !incomeForm.title.trim() || !incomeForm.income_date) { ElMessage.warning('请补全项目、标题、金额和业务日期'); return }
+  if (incomeForm.scope === 'competition_entry' && !incomeForm.competition_entry) { ElMessage.warning('请选择具体比赛和参赛队'); return }
+  if (incomeForm.scope === 'allocated') {
+    const entryIds = incomeForm.allocations.map((item) => item.competition_entry)
+    if (incomeForm.allocation_mode === 'same_event' && (!incomeForm.allocation_event || !allocationTargetsShareEvent(entryIds, competitionOptions.value, incomeForm.allocation_event))) { ElMessage.warning('跨项目分摊的所有参赛队必须属于同一比赛届次'); return }
+    if (incomeForm.allocation_mode === 'same_project' && !allocationTargetsBelongToProject(entryIds, competitionOptions.value, incomeForm.project)) { ElMessage.warning('单项目兼容分摊只能选择当前归账项目的参赛条目'); return }
+    if (new Set(entryIds).size !== entryIds.length) { ElMessage.warning('同一个参赛队不能重复分摊'); return }
+    if (!incomeForm.allocations.length || incomeForm.allocations.some((item) => !item.competition_entry || !item.amount) || !incomeAllocationBalanced.value) { ElMessage.warning('请完整填写分摊，并确保合计等于收入金额'); return }
   }
+  if (incomeForm.stage === 'received' && !incomeProof.value) { ElMessage.warning('登记已到账收入必须上传到账凭证'); return }
   incomeSaving.value = true
-  const payload = {
-    project: incomeForm.project,
-    title: incomeForm.title.trim(),
-    amount: incomeForm.amount,
-    income_type: incomeForm.income_type,
-    income_date: incomeForm.income_date,
-    source: incomeForm.source.trim(),
-    reference_number: incomeForm.reference_number.trim(),
-    note: incomeForm.note.trim(),
-  }
   try {
-    if (editingIncome.value) {
-      await updateFinanceIncome(editingIncome.value.id, payload)
-      ElMessage.success('收入流水已更新')
-    } else {
-      await createFinanceIncome(payload)
-      ElMessage.success('收入流水已登记，预算已自动汇总')
+    if (!incomeDraftId.value) {
+      const created = await createFinanceIncome({ project: incomeForm.project, competition_entry: incomeForm.scope === 'competition_entry' ? incomeForm.competition_entry : null, title: incomeForm.title.trim(), amount: incomeForm.amount, income_type: incomeForm.income_type, stage: 'expected', income_date: incomeForm.income_date, source: incomeForm.source.trim(), reference_number: incomeForm.reference_number.trim(), note: incomeForm.note.trim() })
+      incomeDraftId.value = created.id
     }
+    if (incomeForm.scope === 'allocated' && !incomeAllocationsSaved.value) {
+      await setIncomeAllocations(incomeDraftId.value, incomeForm.allocations.map((item) => ({ competition_entry: item.competition_entry!, amount: item.amount!, note: item.note.trim() })))
+      incomeAllocationsSaved.value = true
+    }
+    if (incomeForm.stage !== 'expected') await setFinanceIncomeStage(incomeDraftId.value, incomeForm.stage, incomeForm.stage === 'received' ? incomeProof.value || undefined : undefined)
+    ElMessage.success(incomeForm.stage === 'received' ? '收入已登记为到账资金' : incomeForm.stage === 'confirmed' ? '收入已登记为确认应收' : '预计收入已登记')
     incomeDialogVisible.value = false
     await loadData()
-  } finally {
-    incomeSaving.value = false
-  }
+  } finally { incomeSaving.value = false }
 }
 
-async function handleDeleteIncome(income: FinanceIncome): Promise<void> {
-  try {
-    await ElMessageBox.confirm(
-      `删除收入“${income.title}”后预算将自动重算，是否继续？`,
-      '删除收入流水',
-      { type: 'warning' },
-    )
-    await deleteFinanceIncome(income.id)
-    ElMessage.success('收入流水已删除')
-    await loadData()
-  } catch {
-    // 用户取消或请求错误已由拦截器处理。
-  }
-}
+const workflowExpense = ref<FinanceLedgerExpense | null>(null)
+const workflowIncome = ref<FinanceLedgerIncome | null>(null)
+const workflowSaving = ref(false)
+const reviewDialogVisible = ref(false)
+const reviewForm = reactive({ approved: true, opinion: '' })
+function openReviewDialog(value: unknown): void { const item = value as FinanceLedgerExpense; workflowExpense.value = item; reviewForm.approved = true; reviewForm.opinion = ''; reviewDialogVisible.value = true }
+async function saveReview(): Promise<void> { if (!workflowExpense.value) return; workflowSaving.value = true; try { await reviewReimbursement(workflowExpense.value.id, reviewForm.approved, reviewForm.opinion.trim()); ElMessage.success(reviewForm.approved ? '审核通过，进入待转账' : '已驳回并释放预留'); reviewDialogVisible.value = false; await loadData() } finally { workflowSaving.value = false } }
 
-async function handleSubmitReimbursement(expense: FinanceExpense): Promise<void> {
-  try {
-    await ElMessageBox.confirm(`提交“${expense.title}”的报销申请？`, '提交报销')
-    await submitReimbursement(expense.id)
-    ElMessage.success('报销已提交审核')
-    await loadData()
-  } catch {
-    // 用户取消或请求错误已由拦截器处理。
-  }
-}
-
-function openReviewDialog(expense: FinanceExpense): void {
-  workflowExpense.value = expense
-  reviewForm.approved = true
-  reviewForm.opinion = ''
-  reviewDialogVisible.value = true
-}
-
-async function saveReview(): Promise<void> {
-  if (!workflowExpense.value) return
-  workflowSaving.value = true
-  try {
-    await reviewReimbursement(
-      workflowExpense.value.id,
-      reviewForm.approved,
-      reviewForm.opinion.trim(),
-    )
-    ElMessage.success(reviewForm.approved ? '报销已审核通过' : '报销已驳回')
-    reviewDialogVisible.value = false
-    await loadData()
-  } finally {
-    workflowSaving.value = false
-  }
-}
-
-function openPaymentDialog(expense: FinanceExpense): void {
-  workflowExpense.value = expense
-  paymentForm.payment_method = '银行转账'
-  paymentForm.payment_reference = ''
-  paymentDialogVisible.value = true
-}
-
-function openRequestedTodo(): void {
-  const expenseId = Number(route.query.expense_id)
-  const action = String(route.query.action || '')
-  if (!Number.isInteger(expenseId) || expenseId <= 0) return
-  const expense = expenseList.value.find((item) => item.id === expenseId)
-  if (!expense) return
-  financeTab.value = 'expenses'
-  if (action === 'finance_review' && expense.reimbursement_status === 'pending') {
-    openReviewDialog(expense)
-  } else if (
-    action === 'finance_payment'
-    && expense.reimbursement_status === 'approved'
-  ) {
-    openPaymentDialog(expense)
-  }
-}
-
+const paymentDialogVisible = ref(false)
+const paymentMode = ref<'create' | 'complete'>('create')
+const selectedPayment = ref<FinanceLedgerPayment | null>(null)
+const paymentProof = ref<File | null>(null)
+const paymentForm = reactive({ recipient: undefined as number | undefined, amount: undefined as number | undefined, payment_method: '银行转账', payment_reference: '', payment_date: '', status: 'completed' as 'completed' | 'pending_proof' })
+const paymentMaxAmount = computed(() => paymentMode.value === 'complete' ? Number(selectedPayment.value?.amount || 0) : workflowExpense.value ? remainingPayable(workflowExpense.value) : 0)
+function openPaymentDialog(value: unknown): void { const item = value as FinanceLedgerExpense; workflowExpense.value = item; selectedPayment.value = null; paymentMode.value = 'create'; Object.assign(paymentForm, { recipient: item.payee || item.spender || undefined, amount: remainingPayable(item), payment_method: '银行转账', payment_reference: '', payment_date: '', status: 'completed' }); paymentProof.value = null; paymentDialogVisible.value = true }
+function openCompletePaymentDialog(value: unknown): void { const item = value as FinanceLedgerPayment; selectedPayment.value = item; workflowExpense.value = expenseById(item.expense) || null; paymentMode.value = 'complete'; Object.assign(paymentForm, { recipient: item.recipient || undefined, amount: moneyNumber(item.amount), payment_method: item.payment_method || '银行转账', payment_reference: item.payment_reference || '', payment_date: '', status: 'completed' }); paymentProof.value = null; paymentDialogVisible.value = true }
+function handlePaymentProof(file: UploadFile): void { paymentProof.value = file.raw || null }
+function clearPaymentProof(): void { paymentProof.value = null }
 async function savePayment(): Promise<void> {
-  if (!workflowExpense.value || !paymentForm.payment_method) return
+  if (!paymentForm.recipient || !paymentForm.amount || !paymentForm.payment_method.trim() || !paymentForm.payment_reference.trim()) { ElMessage.warning('请补全收款人、金额、付款方式和流水号'); return }
+  if ((paymentMode.value === 'complete' || paymentForm.status === 'completed') && !paymentProof.value) { ElMessage.warning('完成付款必须上传转账凭证'); return }
   workflowSaving.value = true
   try {
-    await markReimbursementPaid(
-      workflowExpense.value.id,
-      paymentForm.payment_method,
-      paymentForm.payment_reference.trim(),
-    )
-    ElMessage.success('报销打款已登记，预算汇总已更新')
+    if (paymentMode.value === 'complete' && selectedPayment.value && paymentProof.value) {
+      await completeFinancePayment(selectedPayment.value.id, { recipient: paymentForm.recipient, amount: paymentForm.amount, payment_method: paymentForm.payment_method.trim(), payment_reference: paymentForm.payment_reference.trim(), payment_date: paymentForm.payment_date || undefined, proof: paymentProof.value })
+    } else if (workflowExpense.value) {
+      await createFinancePayment({ expense: workflowExpense.value.id, recipient: paymentForm.recipient, amount: paymentForm.amount, payment_method: paymentForm.payment_method.trim(), payment_reference: paymentForm.payment_reference.trim(), payment_date: paymentForm.payment_date || undefined, status: paymentForm.status, proof: paymentProof.value || undefined })
+    }
+    ElMessage.success(paymentForm.status === 'pending_proof' ? '付款已登记为待补凭证，尚未计入实际支出' : '付款凭证已归档，金额计入团队实际支付')
     paymentDialogVisible.value = false
     await loadData()
-  } finally {
-    workflowSaving.value = false
-  }
+  } finally { workflowSaving.value = false }
+}
+async function markPaymentFailed(input: unknown): Promise<void> { const item = input as FinanceLedgerPayment; try { const { value } = await ElMessageBox.prompt('填写付款失败、退回或其他异常原因', '标记付款异常', { inputValidator: (text) => Boolean(String(text || '').trim()) || '必须填写原因' }); await failFinancePayment(item.id, value.trim()); ElMessage.success('已标记付款异常'); await loadData() } catch { /* 用户取消 */ } }
+
+const incomeStageDialogVisible = ref(false)
+const incomeStageProof = ref<File | null>(null)
+const incomeStageForm = reactive({ stage: 'confirmed' as FinanceIncomeStage })
+function openIncomeStageDialog(value: unknown): void { const item = value as FinanceLedgerIncome; workflowIncome.value = item; incomeStageForm.stage = item.stage === 'expected' ? 'confirmed' : 'received'; incomeStageProof.value = null; incomeStageDialogVisible.value = true }
+function handleIncomeStageProof(file: UploadFile): void { incomeStageProof.value = file.raw || null }
+function clearIncomeStageProof(): void { incomeStageProof.value = null }
+async function saveIncomeStage(): Promise<void> { if (!workflowIncome.value) return; if (incomeStageForm.stage === 'received' && !incomeStageProof.value) { ElMessage.warning('转为已到账必须上传到账凭证'); return } workflowSaving.value = true; try { await setFinanceIncomeStage(workflowIncome.value.id, incomeStageForm.stage, incomeStageProof.value || undefined); ElMessage.success(`收入已推进为${incomeStageLabel(incomeStageForm.stage)}`); incomeStageDialogVisible.value = false; await loadData() } finally { workflowSaving.value = false } }
+
+const transferDialogVisible = ref(false)
+const transferProof = ref<File | null>(null)
+const transferForm = reactive({ project: undefined as number | undefined, competition_entry: undefined as number | undefined, source_type: 'member' as 'member' | 'external', from_user: undefined as number | undefined, source_label: '', to_user: undefined as number | undefined, amount: undefined as number | undefined, status: 'completed' as 'completed' | 'pending_proof' | 'failed', payment_method: '银行转账', payment_reference: '', transfer_date: '', failure_reason: '', note: '' })
+const transferEntryOptions = computed(() => competitionOptions.value.filter((item) => !transferForm.project || item.project === transferForm.project))
+function openTransferDialog(): void { Object.assign(transferForm, { project: filterProject.value && payableProjects.value.some((item) => item.id === filterProject.value) ? filterProject.value : payableProjects.value[0]?.id, competition_entry: undefined, source_type: 'member', from_user: userStore.userInfo?.id, source_label: '', to_user: undefined, amount: undefined, status: 'completed', payment_method: '银行转账', payment_reference: '', transfer_date: '', failure_reason: '', note: '' }); transferProof.value = null; transferDialogVisible.value = true }
+function handleTransferProof(file: UploadFile): void { transferProof.value = file.raw || null }
+function clearTransferProof(): void { transferProof.value = null }
+async function saveTransfer(): Promise<void> {
+  if (!transferForm.project || !transferForm.to_user || !transferForm.amount) { ElMessage.warning('请补全项目、接收人和金额'); return }
+  if (transferForm.source_type === 'member' && !transferForm.from_user) { ElMessage.warning('请选择转出人'); return }
+  if (transferForm.source_type === 'external' && !transferForm.source_label.trim()) { ElMessage.warning('请填写外部资金来源'); return }
+  if (transferForm.source_type === 'member' && transferForm.from_user === transferForm.to_user) { ElMessage.warning('转出人与接收人不能相同'); return }
+  if (transferForm.status === 'completed' && !transferProof.value) { ElMessage.warning('完成内部转付必须上传转账凭证'); return }
+  if (transferForm.status === 'failed' && !transferForm.failure_reason.trim()) { ElMessage.warning('转付失败必须填写原因'); return }
+  workflowSaving.value = true
+  try { await createFinanceTransfer({ project: transferForm.project, competition_entry: transferForm.competition_entry, from_user: transferForm.source_type === 'member' ? transferForm.from_user : null, to_user: transferForm.to_user, source_label: transferForm.source_type === 'external' ? transferForm.source_label.trim() : '', amount: transferForm.amount, status: transferForm.status, payment_method: transferForm.payment_method.trim(), payment_reference: transferForm.payment_reference.trim(), transfer_date: transferForm.transfer_date || undefined, failure_reason: transferForm.failure_reason.trim(), note: transferForm.note.trim(), proof_file: transferProof.value || undefined }); ElMessage.success('内部转付已登记，不重复计入收支'); transferDialogVisible.value = false; await loadData() } finally { workflowSaving.value = false }
 }
 
-async function loadProjects(): Promise<void> {
-  try {
-    const response = await getProjects({ page: 1, page_size: 100 })
-    projectOptions.value = response.results
-  } catch {
-    // The finance page remains usable without the optional project filter.
-  }
-}
+const transferCompletionVisible = ref(false)
+const selectedTransfer = ref<FinanceInternalTransfer | null>(null)
+const transferCompletionProof = ref<File | null>(null)
+const transferCompletionDate = ref('')
+const transferCompletionReference = ref('')
+function openCompleteTransferDialog(value: unknown): void { const item = value as FinanceInternalTransfer; selectedTransfer.value = item; transferCompletionProof.value = null; transferCompletionDate.value = ''; transferCompletionReference.value = item.payment_reference || ''; transferCompletionVisible.value = true }
+function handleTransferCompletionProof(file: UploadFile): void { transferCompletionProof.value = file.raw || null }
+function clearTransferCompletionProof(): void { transferCompletionProof.value = null }
+async function completeTransfer(): Promise<void> { if (!selectedTransfer.value || !transferCompletionProof.value) { ElMessage.warning('请选择内部转账凭证'); return } workflowSaving.value = true; try { await completeFinanceTransfer(selectedTransfer.value.id, transferCompletionProof.value, transferCompletionDate.value || undefined, transferCompletionReference.value.trim() || undefined); ElMessage.success('内部转付凭证已归档'); transferCompletionVisible.value = false; await loadData() } finally { workflowSaving.value = false } }
+async function markTransferFailed(input: unknown): Promise<void> { const item = input as FinanceInternalTransfer; try { const { value } = await ElMessageBox.prompt('填写内部转付失败原因', '标记转付异常', { inputValidator: (text) => Boolean(String(text || '').trim()) || '必须填写原因' }); await failFinanceTransfer(item.id, value.trim()); ElMessage.success('已标记转付异常'); await loadData() } catch { /* 用户取消 */ } }
 
-function openOCRDialog(): void {
-  ocrVisible.value = true
-  ocrResult.value = null
-  receiptFile.value = null
-  ocrForm.project = filterProject.value
-  ocrForm.amount = undefined
-  ocrForm.expense_date = ''
-  ocrForm.category = 'other'
-  ocrForm.title = ''
-  ocrForm.purpose = ''
-}
+const ocrVisible = ref(false)
+const ocrLoading = ref(false)
+const ocrFile = ref<File | null>(null)
+const ocrResult = ref<OCRReceiptResult | null>(null)
+function openOCRDialog(): void { ocrFile.value = null; ocrResult.value = null; ocrVisible.value = true }
+function handleOCRFile(file: UploadFile): void { ocrFile.value = file.raw || null; ocrResult.value = null }
+function clearOCRFile(): void { ocrFile.value = null; ocrResult.value = null }
+async function recognizeOCRFile(): Promise<void> { if (!ocrFile.value) return; ocrLoading.value = true; try { ocrResult.value = await recognizeReceipt(ocrFile.value); ElMessage.success('识别完成，请核对后带入支出登记') } finally { ocrLoading.value = false } }
+function applyOCRToExpense(): void { if (!ocrResult.value || !ocrFile.value) return; const result = ocrResult.value.recognized; openExpenseDialog(); expenseForm.amount = result.amount ? Number(result.amount) : undefined; expenseForm.expense_date = result.expense_date || expenseForm.expense_date; expenseForm.category = (result.category || 'other') as FinanceCategory; expenseForm.title = result.title || ''; expenseForm.purpose = [result.vendor ? `商户：${result.vendor}` : '', result.invoice_number ? `票号：${result.invoice_number}` : ''].filter(Boolean).join('；'); expenseForm.attachment_type = 'invoice'; expenseFile.value = ocrFile.value; ocrVisible.value = false }
 
-function handleReceiptSelect(uploadFile: UploadFile): void {
-  receiptFile.value = uploadFile.raw || null
-  ocrResult.value = null
-}
+const budgetDialogVisible = ref(false)
+const budgetSaving = ref(false)
+const budgetForm = reactive({ project: undefined as number | undefined, planned_amount: undefined as number | undefined })
+function openBudgetDialog(): void { budgetForm.project = filterProject.value && manageableProjects.value.some((item) => item.id === filterProject.value) ? filterProject.value : manageableProjects.value[0]?.id; syncBudgetAmount(); budgetDialogVisible.value = true }
+function syncBudgetAmount(): void { const existing = budgetList.value.find((item) => item.project === budgetForm.project); budgetForm.planned_amount = existing ? moneyNumber(existing.planned_amount) : undefined }
+async function saveBudget(): Promise<void> { if (!budgetForm.project || budgetForm.planned_amount === undefined) { ElMessage.warning('请选择项目并填写核定预算上限'); return } budgetSaving.value = true; try { const existing = budgetList.value.find((item) => item.project === budgetForm.project); if (existing) await updateFinanceBudget(existing.id, { planned_amount: budgetForm.planned_amount }); else await createFinanceBudget({ project: budgetForm.project, planned_amount: budgetForm.planned_amount }); ElMessage.success('预算上限已保存'); budgetDialogVisible.value = false; await loadData() } finally { budgetSaving.value = false } }
 
-function handleReceiptRemove(): void {
-  receiptFile.value = null
-  ocrResult.value = null
-}
+async function handleExport(command: string | number | object): Promise<void> { const format = String(command); if (format !== 'xlsx' && format !== 'pdf') return; const target = resolveFinanceExportTarget(format as FinanceExportFormat, filterProject.value); try { const blob = await exportData(target.type, format, target.projectId, undefined, { event_id: filterEvent.value }); downloadBlob(blob, `${target.type}_${Date.now()}.${format}`); ElMessage.success('导出成功') } catch { /* 请求拦截器已提示 */ } }
 
-async function handleRecognizeReceipt(): Promise<void> {
-  if (!receiptFile.value) return
-  ocrLoading.value = true
-  try {
-    const result = await recognizeReceipt(receiptFile.value)
-    ocrResult.value = result
-    const recognized = result.recognized
-    ocrForm.amount = recognized.amount ? Number(recognized.amount) : undefined
-    ocrForm.expense_date = recognized.expense_date
-    ocrForm.category = recognized.category as FinanceCategory
-    ocrForm.title = recognized.title
-    const details = [
-      recognized.vendor ? `商户：${recognized.vendor}` : '',
-      recognized.invoice_number ? `票号：${recognized.invoice_number}` : '',
-    ].filter(Boolean)
-    ocrForm.purpose = details.join('；')
-    ElMessage.success('识别完成，请核对关键字段')
-  } catch {
-    // 请求拦截器展示后端的 OCR 错误。
-  } finally {
-    ocrLoading.value = false
-  }
-}
-
-async function saveOCRExpense(): Promise<void> {
-  if (!receiptFile.value || !ocrResult.value) return
-  if (!ocrForm.project || !ocrForm.amount || !ocrForm.expense_date || !ocrForm.title.trim()) {
-    ElMessage.warning('请补全项目、金额、日期和标题')
-    return
-  }
-  ocrSaving.value = true
-  try {
-    const payload = {
-      project: ocrForm.project,
-      amount: ocrForm.amount,
-      expense_date: ocrForm.expense_date,
-      category: ocrForm.category,
-      title: ocrForm.title.trim(),
-      purpose: ocrForm.purpose,
-    }
-    let expenseId = ocrDraftExpenseId.value
-    if (expenseId) {
-      await updateFinanceExpense(expenseId, payload)
-    } else {
-      const expense = await createFinanceExpense(payload)
-      expenseId = expense.id
-      ocrDraftExpenseId.value = expense.id
-    }
-
-    try {
-      await uploadReceipt(expenseId, receiptFile.value)
-    } catch (uploadError) {
-      try {
-        await deleteFinanceExpense(expenseId)
-        ocrDraftExpenseId.value = null
-      } catch {
-        ElMessage.warning(`票据上传失败，草稿支出 #${expenseId} 已保留；重试不会重复创建支出`)
-      }
-      throw uploadError
-    }
-
-    ocrDraftExpenseId.value = null
-    ElMessage.success('支出与原票据已保存为草稿，请继续提交报销')
-    ocrVisible.value = false
-    await loadData()
-  } catch {
-    // 请求拦截器展示保存错误，弹窗保留以便修正。
-  } finally {
-    ocrSaving.value = false
-  }
-}
-
-function renderChart(): void {
-  if (!chartRef.value || !categoryBreakdown.value.length) {
-    chart?.dispose()
-    chart = null
-    return
-  }
-
-  chart ||= echarts.init(chartRef.value)
-  const palette = readEChartsThemePalette()
-  chart.setOption(
-    {
-      animationDuration: 250,
-      grid: { top: 8, right: 74, bottom: 8, left: 72, containLabel: false },
-      tooltip: {
-        ...createEChartsTooltipStyle(palette),
-        trigger: 'axis',
-        axisPointer: { type: 'shadow', shadowStyle: { color: palette.surfaceStrong } },
-        formatter: (items: any[]) => {
-          const item = items[0]
-          return `${item.name}<br/>${formatMoneyWithComma(item.value)}`
-        },
-      },
-      xAxis: {
-        type: 'value',
-        axisLabel: { show: false },
-        axisLine: { show: false },
-        splitLine: { lineStyle: { color: palette.borderLight } },
-      },
-      yAxis: {
-        type: 'category',
-        inverse: true,
-        data: categoryBreakdown.value.map((item) => item.name),
-        axisTick: { show: false },
-        axisLine: { show: false },
-        axisLabel: { color: palette.textRegular, fontSize: 12 },
-      },
-      series: [
-        {
-          type: 'bar',
-          data: categoryBreakdown.value.map((item) => item.value),
-          barWidth: 12,
-          itemStyle: { color: palette.primary, borderRadius: [0, 4, 4, 0] },
-          label: {
-            show: true,
-            position: 'right',
-            color: palette.textRegular,
-            fontSize: 11,
-            formatter: ({ value }: { value: number }) => formatMoneyWithComma(value),
-          },
-        },
-      ],
-    },
-    true,
-  )
-
-  resizeObserver?.disconnect()
-  resizeObserver = new ResizeObserver(() => chart?.resize())
-  resizeObserver.observe(chartRef.value)
-}
-
-useEChartsTheme(renderChart)
-
-async function handleExport(format: string | number | object): Promise<void> {
-  const exportFormat = String(format)
-  if (exportFormat !== 'xlsx' && exportFormat !== 'pdf') return
-
-  const target = resolveFinanceExportTarget(
-    exportFormat as FinanceExportFormat,
-    filterProject.value,
-  )
-  try {
-    const blob = await exportData(
-      target.type,
-      exportFormat,
-      target.projectId,
-    )
-    downloadBlob(blob, `${target.type}_${Date.now()}.${exportFormat}`)
-    ElMessage.success('导出成功')
-  } catch {
-    // The request interceptor presents the backend error.
-  }
-}
+watch([perspective, filterProject, filterEvent], () => { void loadTraceSummary() })
+watch(workspaceTab, () => { if (workspaceTab.value === 'analysis') todoFilter.value = '' })
 
 onMounted(async () => {
-  await Promise.all([loadProjects(), loadData()])
-  openRequestedTodo()
-})
-
-onUnmounted(() => {
-  resizeObserver?.disconnect()
-  chart?.dispose()
+  await loadReferenceData()
+  await loadData()
+  const action = String(route.query.action || '')
+  const expenseId = Number(route.query.expense_id)
+  const target = expenseList.value.find((item) => item.id === expenseId)
+  if (target && action === 'finance_review' && canReviewExpense(target)) openReviewDialog(target)
+  if (target && action === 'finance_payment' && canPayExpense(target)) openPaymentDialog(target)
 })
 </script>
 
-<style lang="scss" scoped>
-.finance-page {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
+<style scoped lang="scss">
+.finance-ledger-page { display: grid; gap: 14px; }
+.workspace-tabs { min-width: 0; }
+.workspace-tabs > :deep(.el-tabs__header) { margin-bottom: 14px; }
+.status-banner { display: flex; align-items: center; gap: 8px; padding: 10px 14px; color: var(--color-danger); background: var(--color-danger-light, #fdf0f0); border: 1px solid color-mix(in srgb, var(--color-danger) 22%, transparent); border-radius: var(--radius-md); }
+.status-banner .el-button { margin-left: auto; }
+.workspace-panel { min-width: 0; padding: 18px; background: var(--color-surface); border: 1px solid var(--color-border-light); border-radius: var(--radius-md); }
+.metric-strip { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); margin-bottom: 14px; overflow: hidden; background: var(--color-surface); border: 1px solid var(--color-border-light); border-radius: var(--radius-md); }
+.metric-strip article { display: grid; gap: 5px; min-width: 0; padding: 15px; }
+.metric-strip article + article { border-left: 1px solid var(--color-border-light); }
+.metric-strip span { color: var(--color-text-muted); font-size: 11px; }
+.metric-strip strong { font-size: 18px; font-variant-numeric: tabular-nums; }
+.metric-strip small { color: var(--color-text-muted); font-size: 10px; line-height: 1.45; }
+.positive { color: var(--color-success); }
+.danger { color: var(--color-danger) !important; }
+.panel-heading, .traceability-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 18px; margin-bottom: 14px; }
+.panel-heading h2, .traceability-toolbar h2 { margin: 0; font-size: 16px; }
+.panel-heading p, .traceability-toolbar p { margin: 4px 0 0; color: var(--color-text-muted); font-size: 12px; }
+.todo-panel, .traceability-panel, .flow-panel { margin-bottom: 14px; }
+.todo-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 8px; }
+.todo-card { display: grid; gap: 5px; min-width: 0; padding: 12px; color: var(--color-text); text-align: left; background: var(--color-surface-subtle); border: 1px solid var(--color-border-light); border-radius: 8px; cursor: pointer; transition: border-color .16s, transform .16s; }
+.todo-card:hover, .todo-card.active { border-color: var(--color-primary); transform: translateY(-1px); }
+.todo-card span, .todo-card small { overflow: hidden; color: var(--color-text-muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.todo-card strong { font-size: 22px; font-variant-numeric: tabular-nums; }
+.todo-card--danger strong { color: var(--color-danger); }
+.todo-card--warning strong { color: var(--color-warning); }
+.todo-card--primary strong { color: var(--color-primary); }
+.filter-row { display: grid; grid-template-columns: minmax(170px, .7fr) minmax(190px, .8fr) minmax(260px, 1.5fr) auto; gap: 10px; margin-bottom: 14px; }
+.stacked-cell { display: grid; gap: 3px; }
+.stacked-cell span { overflow: hidden; color: var(--color-text-muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.tab-actions { display: flex; justify-content: flex-end; margin-bottom: 10px; }
+.analysis-grid { display: grid; grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr); gap: 14px; }
+.breakdown-list, .project-analysis-list { display: grid; gap: 14px; }
+.breakdown-list article, .project-analysis-list article { display: grid; gap: 7px; }
+.breakdown-list article > div, .analysis-row-head { display: flex; justify-content: space-between; gap: 12px; font-size: 12px; }
+.analysis-row-head span { color: var(--color-text-muted); }
+.dialog-form { margin-top: 14px; }
+.form-grid { display: grid; gap: 12px; }
+.form-grid--2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.form-grid--3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.dialog-form :deep(.el-select), .dialog-form :deep(.el-date-editor), .dialog-form :deep(.el-input-number) { width: 100%; }
+.allocation-editor { display: grid; gap: 9px; margin-bottom: 15px; padding: 12px; background: var(--color-surface-subtle); border: 1px solid var(--color-border-light); border-radius: 8px; }
+.allocation-editor > header { display: flex; align-items: center; justify-content: space-between; }
+.allocation-editor > header div { display: grid; gap: 2px; }
+.allocation-editor > header span, .allocation-editor > small { color: var(--color-text-muted); font-size: 11px; }
+.allocation-anchor, .allocation-mode { display: grid; grid-template-columns: 112px minmax(240px, 1fr); align-items: center; gap: 10px; }
+.allocation-anchor > span, .allocation-mode > span { color: var(--color-text-secondary); font-size: 12px; font-weight: 600; }
+.allocation-scope-summary { padding-left: 122px; }
+.allocation-row { display: grid; grid-template-columns: minmax(190px, 1.35fr) minmax(100px, .55fr) minmax(150px, 1fr) auto; gap: 8px; }
+.upload-tip { color: var(--color-text-muted); font-size: 11px; }
+.ocr-result { display: grid; gap: 12px; margin-top: 14px; }
+.ocr-result dl { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 0; overflow: hidden; border: 1px solid var(--color-border-light); border-radius: 8px; }
+.ocr-result dl div { padding: 10px; }
+.ocr-result dl div + div { border-left: 1px solid var(--color-border-light); }
+.ocr-result dt { color: var(--color-text-muted); font-size: 10px; }
+.ocr-result dd { margin: 4px 0 0; overflow: hidden; font-size: 12px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+
+@media (max-width: 1180px) {
+  .metric-strip { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .metric-strip article:nth-child(4) { border-left: 0; border-top: 1px solid var(--color-border-light); }
+  .metric-strip article:nth-child(5), .metric-strip article:nth-child(6) { border-top: 1px solid var(--color-border-light); }
+  .todo-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }
-
-.finance-page :deep(.page-header) {
-  margin-bottom: 0;
-}
-
-.status-banner {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 12px;
-  color: var(--danger-text);
-  background: var(--danger-light);
-  border: 1px solid var(--danger-border);
-  border-radius: var(--radius-sm);
-}
-
-.status-banner span {
-  flex: 1;
-}
-
-.metric-strip {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  min-height: 112px;
-  background: var(--color-surface);
-  border: 1px solid var(--color-border-light);
-  border-radius: var(--radius-md);
-}
-
-.metric-item {
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  min-width: 0;
-  padding: 16px 18px;
-}
-
-.metric-item + .metric-item {
-  border-left: 1px solid var(--color-border-light);
-}
-
-.metric-item > span {
-  color: var(--color-text-muted);
-  font-size: 12px;
-}
-
-.metric-item strong {
-  max-width: 100%;
-  margin-top: 7px;
-  overflow: hidden;
-  color: var(--color-text);
-  font-size: 22px;
-  font-weight: 650;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.metric-item small {
-  margin-top: 4px;
-  color: var(--color-text-muted);
-  font-size: 11px;
-}
-
-.metric-item--warning strong { color: var(--color-warning); }
-.metric-item--danger strong { color: var(--color-danger); }
-
-.metric-item--spending {
-  background: var(--color-primary-soft);
-}
-
-.metric-item--spending strong {
-  color: var(--color-primary);
-}
-
-.finance-overview-grid {
-  display: grid;
-  grid-template-columns: minmax(320px, 0.8fr) minmax(440px, 1.2fr);
-  gap: 16px;
-}
-
-.workspace-panel {
-  min-width: 0;
-  padding: 18px;
-  background: var(--color-surface);
-  border: 1px solid var(--color-border-light);
-  border-radius: var(--radius-md);
-}
-
-.destination-table :deep(.el-table__cell) {
-  vertical-align: top;
-}
-
-.destination-amount {
-  display: block;
-  color: var(--color-primary);
-  font-size: 14px;
-}
-
-.destination-table small {
-  display: block;
-  margin-top: 2px;
-  color: var(--color-text-muted);
-  font-size: 11px;
-}
-
-.destination-lines,
-.destination-status {
-  display: grid;
-  gap: 3px;
-  color: var(--color-text-regular);
-  font-size: 12px;
-  line-height: 1.45;
-}
-
-.destination-lines span,
-.destination-status span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.destination-status span:first-child {
-  color: var(--color-success);
-}
-
-.panel-header,
-.details-toolbar,
-.project-budget-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-}
-
-.panel-header,
-.details-toolbar {
-  margin-bottom: 16px;
-}
-
-.panel-header h2,
-.details-toolbar h2 {
-  color: var(--color-text);
-  font-size: 16px;
-  font-weight: 600;
-}
-
-.panel-header p,
-.details-toolbar p {
-  margin-top: 3px;
-  color: var(--color-text-muted);
-  font-size: 12px;
-}
-
-.chart-container {
-  width: 100%;
-  height: 270px;
-}
-
-.project-budget-list {
-  border-top: 1px solid var(--color-border-light);
-}
-
-.project-budget-row {
-  padding: 13px 0;
-  border-bottom: 1px solid var(--color-border-light);
-}
-
-.project-budget-row:last-child {
-  border-bottom: 0;
-}
-
-.project-budget-head {
-  margin-bottom: 8px;
-}
-
-.project-budget-head h3 {
-  max-width: 34ch;
-  overflow: hidden;
-  color: var(--color-text);
-  font-size: 13px;
-  font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.project-budget-head span:not(.utilization) {
-  display: block;
-  margin-top: 2px;
-  color: var(--color-text-muted);
-  font-size: 11px;
-}
-
-.utilization {
-  flex: 0 0 auto;
-  color: var(--color-success);
-  font-size: 13px;
-  font-weight: 650;
-  font-variant-numeric: tabular-nums;
-}
-
-.utilization[data-tone='warning'] { color: var(--color-warning); }
-.utilization[data-tone='danger'] { color: var(--color-danger); }
-.utilization[data-tone='neutral'] { color: var(--color-text-muted); }
-
-.project-filter {
-  width: 220px;
-}
-
-.ocr-workspace {
-  display: grid;
-  gap: 16px;
-
-  :deep(.el-upload),
-  :deep(.el-upload-dragger),
-  :deep(.el-select),
-  :deep(.el-date-editor),
-  :deep(.el-input-number) {
-    width: 100%;
-  }
-}
-
-.ocr-action-row,
-.ocr-result-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.ocr-action-row {
-  padding: 10px 12px;
-  background: var(--color-surface-subtle);
-  border-radius: var(--radius-md);
-  color: var(--color-text-regular);
-  font-size: 13px;
-}
-
-.ocr-result-head {
-  padding-top: 4px;
-
-  div {
-    display: grid;
-    gap: 2px;
-  }
-
-  strong {
-    color: var(--color-text);
-    font-size: 15px;
-  }
-
-  span {
-    color: var(--color-text-muted);
-    font-size: 12px;
-  }
-}
-
-.ocr-form-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0 16px;
-}
-
-.ocr-raw-text pre {
-  max-height: 180px;
-  margin: 0;
-  overflow: auto;
-  color: var(--color-text-regular);
-  font: 12px/1.6 ui-monospace, SFMono-Regular, Consolas, monospace;
-  white-space: pre-wrap;
-}
-
-@media screen and (max-width: 1100px) {
-  .finance-overview-grid {
-    grid-template-columns: 1fr;
-  }
-}
-
-@media screen and (max-width: 768px) {
-  .metric-strip {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .metric-item {
-    min-height: 98px;
-    padding: 13px;
-  }
-
-  .metric-item + .metric-item {
-    border-left: 0;
-  }
-
-  .metric-item:nth-child(even) {
-    border-left: 1px solid var(--color-border-light);
-  }
-
-  .metric-item:nth-child(n + 3) {
-    border-top: 1px solid var(--color-border-light);
-  }
-
-  .metric-item strong {
-    font-size: 17px;
-  }
-
-  .workspace-panel {
-    padding: 14px;
-  }
-
-  .chart-container {
-    height: 230px;
-  }
-
-  .details-toolbar {
-    align-items: flex-end;
-  }
-
-  .project-filter {
-    width: min(48%, 190px);
-  }
-
-  .ocr-form-grid {
-    grid-template-columns: 1fr;
-  }
+@media (max-width: 760px) {
+  .metric-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .metric-strip article:nth-child(odd) { border-left: 0; }
+  .metric-strip article:nth-child(n + 3) { border-top: 1px solid var(--color-border-light); }
+  .todo-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .traceability-toolbar, .panel-heading { align-items: stretch; flex-direction: column; }
+  .filter-row, .analysis-grid, .form-grid--2, .form-grid--3 { grid-template-columns: 1fr; }
+  .allocation-anchor, .allocation-mode, .allocation-row { grid-template-columns: 1fr; }
+  .allocation-scope-summary { padding-left: 0; }
+  .ocr-result dl { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ocr-result dl div:nth-child(3) { border-left: 0; border-top: 1px solid var(--color-border-light); }
+  .ocr-result dl div:nth-child(4) { border-top: 1px solid var(--color-border-light); }
 }
 </style>

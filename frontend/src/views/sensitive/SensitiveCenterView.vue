@@ -61,6 +61,29 @@
           <el-table-column prop="created_at" label="创建时间" width="120">
             <template #default="{ row }">{{ formatDate(row.created_at) }}</template>
           </el-table-column>
+          <el-table-column label="操作" width="210" fixed="right">
+            <template #default="{ row }">
+              <el-button
+                v-if="row.active_direct_grant?.can_view"
+                link
+                type="primary"
+                :icon="View"
+                @click="handleGrantView(row as SensitiveData)"
+              >授权查看</el-button>
+              <el-button
+                v-if="row.active_direct_grant?.can_download && row.has_file"
+                link
+                type="success"
+                :icon="Download"
+                @click="handleGrantDownload(row as SensitiveData)"
+              >授权下载</el-button>
+              <el-button
+                v-if="row.can_manage_grants"
+                link
+                @click="openGrantDialog(row as SensitiveData)"
+              >授权管理</el-button>
+            </template>
+          </el-table-column>
           <template #empty><el-empty description="暂无敏感资料" /></template>
         </el-table>
 
@@ -77,6 +100,10 @@
               <div><dt>资料本人</dt><dd>{{ item.subject_name || item.owner_name || '-' }}</dd></div>
               <div><dt>所属小团队</dt><dd>{{ item.team_name || '-' }}</dd></div>
             </dl>
+            <div v-if="item.active_direct_grant || item.can_manage_grants" class="mobile-access-buttons">
+              <el-button v-if="item.active_direct_grant?.can_view" size="small" @click="handleGrantView(item)">授权查看</el-button>
+              <el-button v-if="item.can_manage_grants" size="small" @click="openGrantDialog(item)">授权管理</el-button>
+            </div>
           </article>
           <el-empty v-if="myDataList.length === 0 && !myDataLoading" description="暂无敏感资料" />
         </div>
@@ -400,7 +427,14 @@
             </el-select>
           </el-form-item>
           <el-form-item label="关联项目">
-            <el-select v-model="createForm.project" placeholder="可选" clearable filterable style="width: 100%">
+            <el-select
+              v-model="createForm.project"
+              placeholder="可选"
+              clearable
+              filterable
+              style="width: 100%"
+              @change="handleSensitiveProjectChange"
+            >
               <el-option v-for="p in projectOptions" :key="p.id" :label="p.name" :value="p.id" />
             </el-select>
           </el-form-item>
@@ -415,6 +449,44 @@
               autocomplete="off"
               placeholder="请输入需要加密保存的完整内容"
             />
+          </el-form-item>
+          <el-form-item class="form-wide" label="资料附件">
+            <el-radio-group v-model="createForm.attachment_mode" @change="handleAttachmentModeChange">
+              <el-radio-button value="none">无附件</el-radio-button>
+              <el-radio-button value="existing">选择已有文件</el-radio-button>
+              <el-radio-button value="upload">直接上传</el-radio-button>
+            </el-radio-group>
+            <el-select
+              v-if="createForm.attachment_mode === 'existing'"
+              v-model="createForm.file_attachment"
+              class="attachment-control"
+              clearable
+              filterable
+              :loading="attachmentOptionsLoading"
+              placeholder="请选择本人上传或有权管理的项目文件"
+            >
+              <el-option
+                v-for="file in attachmentOptions"
+                :key="file.id"
+                :label="`${file.name} · ${file.level_display || file.level}`"
+                :value="file.id"
+              />
+            </el-select>
+            <el-upload
+              v-if="createForm.attachment_mode === 'upload'"
+              class="attachment-control"
+              drag
+              :auto-upload="false"
+              :limit="1"
+              :file-list="createAttachmentFileList"
+              :on-change="handleCreateAttachmentChange"
+              :on-remove="handleCreateAttachmentRemove"
+            >
+              <el-icon><UploadFilled /></el-icon>
+              <div>选择证件照、授权书、PPT、计划书或其他资料</div>
+              <template #tip><span>上传后立即按敏感附件保存并撤销分享链接</span></template>
+            </el-upload>
+            <p class="form-help">明文与附件至少填写一项；也可只上传证件照或扫描件。</p>
           </el-form-item>
         </div>
       </el-form>
@@ -460,10 +532,106 @@
       </template>
     </el-dialog>
 
+    <el-dialog
+      v-model="grantDialogVisible"
+      title="单份敏感资料授权"
+      width="min(760px, calc(100vw - 28px))"
+      :close-on-click-modal="false"
+    >
+      <el-alert
+        :title="`仅授权「${grantTarget?.title || '-'}」，不会获得本团队其他敏感资料权限。`"
+        type="warning"
+        :closable="false"
+        show-icon
+      />
+      <el-form class="grant-form" label-position="top">
+        <el-form-item label="被授权同学" required>
+          <el-select
+            v-model="grantForm.granted_to"
+            filterable
+            remote
+            clearable
+            :remote-method="loadGrantCandidates"
+            :loading="grantCandidatesLoading"
+            placeholder="姓名、拼音、首字母、邮箱或手机号"
+          >
+            <el-option
+              v-for="member in grantCandidates"
+              :key="member.id"
+              :label="[member.name, member.email, member.school].filter(Boolean).join(' · ')"
+              :value="member.id"
+            />
+          </el-select>
+        </el-form-item>
+        <div class="grant-form-grid">
+          <el-form-item label="授权能力">
+            <el-checkbox v-model="grantForm.can_view">查看明文</el-checkbox>
+            <el-checkbox v-model="grantForm.can_download" :disabled="!grantTarget?.has_file">下载附件</el-checkbox>
+          </el-form-item>
+          <el-form-item label="授权截止" required>
+            <el-date-picker
+              v-model="grantForm.expires_at"
+              type="datetime"
+              :disabled-date="disablePastDate"
+              placeholder="选择到期时间"
+              style="width: 100%"
+            />
+          </el-form-item>
+        </div>
+        <el-form-item label="限定用途" required>
+          <el-input
+            v-model="grantForm.purpose"
+            type="textarea"
+            :rows="3"
+            maxlength="300"
+            show-word-limit
+            placeholder="例如：仅用于 2026 年专利申请材料整理，不得另存或转发"
+          />
+        </el-form-item>
+        <el-button type="primary" :loading="grantSaving" @click="saveGrant">保存单份授权</el-button>
+      </el-form>
+
+      <el-divider content-position="left">现有授权</el-divider>
+      <el-table :data="grants" size="small" max-height="220">
+        <el-table-column prop="granted_to_name" label="被授权人" min-width="110" />
+        <el-table-column prop="purpose" label="用途" min-width="180" show-overflow-tooltip />
+        <el-table-column label="权限" width="105">
+          <template #default="{ row }">{{ [row.can_view ? '查看' : '', row.can_download ? '下载' : ''].filter(Boolean).join('+') }}</template>
+        </el-table-column>
+        <el-table-column label="截止" width="150">
+          <template #default="{ row }">{{ formatDateTime(row.expires_at) }}</template>
+        </el-table-column>
+        <el-table-column label="状态" width="82">
+          <template #default="{ row }"><el-tag :type="row.is_active ? 'success' : 'info'" size="small">{{ row.is_active ? '有效' : '失效' }}</el-tag></template>
+        </el-table-column>
+        <el-table-column label="操作" width="72">
+          <template #default="{ row }"><el-button v-if="row.is_active" link type="danger" @click="revokeGrant(row.id)">撤销</el-button></template>
+        </el-table-column>
+      </el-table>
+
+      <el-divider content-position="left">访问审计</el-divider>
+      <el-table :data="grantAccessLogs" size="small" max-height="200">
+        <el-table-column prop="accessor_name" label="访问人" width="100" />
+        <el-table-column prop="action_display" label="动作" width="92" />
+        <el-table-column prop="purpose_snapshot" label="用途快照" min-width="180" show-overflow-tooltip />
+        <el-table-column label="结果" width="76">
+          <template #default="{ row }"><el-tag :type="row.is_success ? 'success' : 'danger'" size="small">{{ row.is_success ? '成功' : '拒绝' }}</el-tag></template>
+        </el-table-column>
+        <el-table-column label="时间" width="150">
+          <template #default="{ row }">{{ formatDateTime(row.accessed_at) }}</template>
+        </el-table-column>
+      </el-table>
+    </el-dialog>
+
     <!-- 限时查看弹窗 -->
     <SensitiveViewDialog
       v-model:visible="viewDialogVisible"
       :request="viewingRequest"
+    />
+    <SensitiveViewDialog
+      v-model:visible="grantViewDialogVisible"
+      :sensitive-data="grantViewingData"
+      :grant-id="grantViewingData?.active_direct_grant?.id"
     />
   </div>
 </template>
@@ -471,8 +639,15 @@
 <script setup lang="ts">
 import { computed, ref, reactive, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter, type LocationQueryRaw } from 'vue-router'
-import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
-import { CircleCheck, CircleClose, Download, Files, Plus, View } from '@element-plus/icons-vue'
+import {
+  ElMessage,
+  ElMessageBox,
+  type FormInstance,
+  type FormRules,
+  type UploadFile,
+  type UploadUserFile,
+} from 'element-plus'
+import { CircleCheck, CircleClose, Download, Files, Plus, UploadFilled, View } from '@element-plus/icons-vue'
 import {
   createSensitiveData,
   downloadSensitiveAttachment,
@@ -483,15 +658,22 @@ import {
   createAccessRequest,
   approveAccessRequest,
   rejectAccessRequest,
+  downloadSensitiveAttachmentByGrant,
+  getSensitiveDataGrants,
+  getSensitiveGrantAccessLogs,
+  getSensitiveGrantCandidates,
+  revokeSensitiveDataGrant,
+  saveSensitiveDataGrant,
 } from '@/api/sensitive'
 import { getProjects } from '@/api/projects'
+import { getFilesByProject, type ManagedFileAsset } from '@/api/files'
 import {
   getTeamMembers,
   getTeams,
   type Team,
   type TeamMember,
 } from '@/api/teams'
-import { downloadBlob, formatDate } from '@/utils/format'
+import { downloadBlob, formatDate, formatDateTime } from '@/utils/format'
 import { SENSITIVE_DATA_TYPE_MAP, ACCESS_REQUEST_STATUS_MAP } from '@/utils/constants'
 import { useDevice } from '@/composables/useDevice'
 import { useUserStore } from '@/stores/user'
@@ -506,6 +688,8 @@ import type {
   Project,
   SensitiveData,
   SensitiveDataCreateParams,
+  SensitiveDataGrant,
+  SensitiveGrantAccessLog,
   SensitiveAccessRequest,
 } from '@/types'
 
@@ -536,6 +720,7 @@ const submitting = ref(false)
 const optionsLoading = ref(false)
 const createOptionsLoading = ref(false)
 const subjectOptionsLoading = ref(false)
+const attachmentOptionsLoading = ref(false)
 
 const myDataList = ref<SensitiveData[]>([])
 const myRequestsList = ref<SensitiveAccessRequest[]>([])
@@ -544,6 +729,8 @@ const projectOptions = ref<Project[]>([])
 const sensitiveDataOptions = ref<SensitiveData[]>([])
 const teamOptions = ref<Team[]>([])
 const subjectOptions = ref<TeamMember[]>([])
+const attachmentOptions = ref<ManagedFileAsset[]>([])
+const createAttachmentFileList = ref<UploadUserFile[]>([])
 const downloadingRequestId = ref<number | null>(null)
 const myRequestsTotal = ref(0)
 const myRequestsPage = ref(1)
@@ -558,10 +745,32 @@ const createDialogVisible = ref(false)
 const approveDialogVisible = ref(false)
 const rejectDialogVisible = ref(false)
 const viewDialogVisible = ref(false)
+const grantDialogVisible = ref(false)
+const grantViewDialogVisible = ref(false)
 const applyFormRef = ref<FormInstance>()
 const createFormRef = ref<FormInstance>()
 
 const viewingRequest = ref<SensitiveAccessRequest | null>(null)
+const grantViewingData = ref<SensitiveData | null>(null)
+const grantTarget = ref<SensitiveData | null>(null)
+const grants = ref<SensitiveDataGrant[]>([])
+const grantAccessLogs = ref<SensitiveGrantAccessLog[]>([])
+const grantCandidates = ref<Array<{
+  id: number
+  name: string
+  email: string
+  school?: string
+  major?: string
+}>>([])
+const grantCandidatesLoading = ref(false)
+const grantSaving = ref(false)
+const grantForm = reactive({
+  granted_to: undefined as number | undefined,
+  can_view: true,
+  can_download: false,
+  purpose: '',
+  expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000) as Date | null,
+})
 
 // 申请表单
 const applyForm = reactive({
@@ -595,6 +804,9 @@ const createForm = reactive({
   team: undefined as number | undefined,
   subject_user: undefined as number | undefined,
   project: undefined as number | undefined,
+  attachment_mode: 'none' as 'none' | 'existing' | 'upload',
+  file_attachment: undefined as number | undefined,
+  attachment_upload: null as File | null,
 })
 
 const createRules: FormRules = {
@@ -602,7 +814,6 @@ const createRules: FormRules = {
   team: [{ required: true, message: '请选择所属小团队', trigger: 'change' }],
   subject_user: [{ required: true, message: '请选择资料本人', trigger: 'change' }],
   title: [{ required: true, message: '请输入资料标题', trigger: 'blur' }],
-  plaintext: [{ required: true, message: '请输入需要加密保存的资料明文', trigger: 'blur' }],
 }
 
 // 批准表单
@@ -897,6 +1108,37 @@ async function handleCreateTeamChange(teamId?: number): Promise<void> {
   await loadSubjectOptions(teamId)
 }
 
+async function handleSensitiveProjectChange(projectId?: number): Promise<void> {
+  createForm.file_attachment = undefined
+  attachmentOptions.value = []
+  if (!projectId) return
+  attachmentOptionsLoading.value = true
+  try {
+    attachmentOptions.value = await getFilesByProject(projectId) as ManagedFileAsset[]
+  } finally {
+    attachmentOptionsLoading.value = false
+  }
+}
+
+function handleAttachmentModeChange(): void {
+  createForm.file_attachment = undefined
+  createForm.attachment_upload = null
+  createAttachmentFileList.value = []
+  if (createForm.attachment_mode === 'existing') {
+    void handleSensitiveProjectChange(createForm.project)
+  }
+}
+
+function handleCreateAttachmentChange(file: UploadFile): void {
+  createForm.attachment_upload = file.raw || null
+  createAttachmentFileList.value = file.raw ? [file] : []
+}
+
+function handleCreateAttachmentRemove(): void {
+  createForm.attachment_upload = null
+  createAttachmentFileList.value = []
+}
+
 function handleCreate(): void {
   Object.assign(createForm, {
     data_type: 'id_card',
@@ -905,7 +1147,12 @@ function handleCreate(): void {
     team: undefined,
     subject_user: undefined,
     project: undefined,
+    attachment_mode: 'none',
+    file_attachment: undefined,
+    attachment_upload: null,
   })
+  attachmentOptions.value = []
+  createAttachmentFileList.value = []
   createDialogVisible.value = true
   void loadCreateOptions()
 }
@@ -914,6 +1161,14 @@ async function handleSubmitCreate(): Promise<void> {
   if (!createFormRef.value) return
   const valid = await createFormRef.value.validate().catch(() => false)
   if (!valid || !createForm.team || !createForm.subject_user) return
+  const hasAttachment = (
+    (createForm.attachment_mode === 'existing' && createForm.file_attachment)
+    || (createForm.attachment_mode === 'upload' && createForm.attachment_upload)
+  )
+  if (!createForm.plaintext.trim() && !hasAttachment) {
+    ElMessage.warning('资料明文与附件至少填写一项')
+    return
+  }
   submitting.value = true
   try {
     const payload: SensitiveDataCreateParams = {
@@ -924,9 +1179,17 @@ async function handleSubmitCreate(): Promise<void> {
       team: createForm.team,
       subject_user: createForm.subject_user,
       project: createForm.project || null,
+      file_attachment: createForm.attachment_mode === 'existing'
+        ? createForm.file_attachment || null
+        : null,
+      attachment_upload: createForm.attachment_mode === 'upload'
+        ? createForm.attachment_upload
+        : null,
     }
     await createSensitiveData(payload)
     createForm.plaintext = ''
+    createForm.attachment_upload = null
+    createAttachmentFileList.value = []
     createDialogVisible.value = false
     ElMessage.success('敏感资料已加密保存，目录中仅展示脱敏值')
     await loadMyData()
@@ -939,6 +1202,8 @@ async function handleSubmitCreate(): Promise<void> {
 
 function handleCloseCreate(): void {
   createForm.plaintext = ''
+  createForm.attachment_upload = null
+  createAttachmentFileList.value = []
   createFormRef.value?.resetFields()
 }
 
@@ -972,6 +1237,97 @@ function handleCloseApply(): void {
 function handleViewData(row: SensitiveAccessRequest): void {
   viewingRequest.value = row
   viewDialogVisible.value = true
+}
+
+function handleGrantView(row: SensitiveData): void {
+  if (!row.active_direct_grant?.can_view) return
+  grantViewingData.value = row
+  grantViewDialogVisible.value = true
+}
+
+async function handleGrantDownload(row: SensitiveData): Promise<void> {
+  const grant = row.active_direct_grant
+  if (!grant?.can_download) return
+  const blob = await downloadSensitiveAttachmentByGrant(row.id, grant.id)
+  downloadBlob(blob, row.file_attachment_name || `敏感资料附件_${row.id}`)
+  ElMessage.success('附件已依据单份授权通过受保护通道下载')
+}
+
+function disablePastDate(date: Date): boolean {
+  return date.getTime() < Date.now() - 24 * 60 * 60 * 1000
+}
+
+async function loadGrantCandidates(search = ''): Promise<void> {
+  if (!grantTarget.value) return
+  grantCandidatesLoading.value = true
+  try {
+    grantCandidates.value = await getSensitiveGrantCandidates(grantTarget.value.id, search)
+  } finally {
+    grantCandidatesLoading.value = false
+  }
+}
+
+async function refreshGrantWorkspace(): Promise<void> {
+  if (!grantTarget.value) return
+  const [grantRows, accessRows] = await Promise.all([
+    getSensitiveDataGrants(grantTarget.value.id),
+    getSensitiveGrantAccessLogs(grantTarget.value.id),
+  ])
+  grants.value = grantRows
+  grantAccessLogs.value = accessRows
+}
+
+async function openGrantDialog(row: SensitiveData): Promise<void> {
+  grantTarget.value = row
+  Object.assign(grantForm, {
+    granted_to: undefined,
+    can_view: true,
+    can_download: false,
+    purpose: '',
+    expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000),
+  })
+  grantCandidates.value = []
+  grants.value = []
+  grantAccessLogs.value = []
+  grantDialogVisible.value = true
+  await Promise.all([loadGrantCandidates(), refreshGrantWorkspace()])
+}
+
+async function saveGrant(): Promise<void> {
+  if (!grantTarget.value || !grantForm.granted_to) {
+    ElMessage.warning('请选择被授权同学')
+    return
+  }
+  if (!grantForm.can_view && !grantForm.can_download) {
+    ElMessage.warning('查看和下载权限至少选择一项')
+    return
+  }
+  if (!grantForm.purpose.trim() || !grantForm.expires_at) {
+    ElMessage.warning('请填写限定用途并设置到期时间')
+    return
+  }
+  grantSaving.value = true
+  try {
+    await saveSensitiveDataGrant(grantTarget.value.id, {
+      granted_to: grantForm.granted_to,
+      can_view: grantForm.can_view,
+      can_download: grantForm.can_download,
+      purpose: grantForm.purpose.trim(),
+      expires_at: grantForm.expires_at.toISOString(),
+    })
+    ElMessage.success('单份资料授权已保存')
+    await Promise.all([refreshGrantWorkspace(), loadMyData()])
+  } finally {
+    grantSaving.value = false
+  }
+}
+
+async function revokeGrant(grantId: number): Promise<void> {
+  if (!grantTarget.value) return
+  await ElMessageBox.confirm('确定立即撤销这份资料授权吗？', '撤销授权', { type: 'warning' })
+  await revokeSensitiveDataGrant(grantTarget.value.id, grantId)
+  ElMessage.success('授权已撤销')
+  await Promise.all([refreshGrantWorkspace(), loadMyData()])
 }
 
 function canDownloadAttachment(row: SensitiveAccessRequest): boolean {
@@ -1096,6 +1452,26 @@ onUnmounted(() => {
 </script>
 
 <style lang="scss" scoped>
+.attachment-control {
+  width: 100%;
+  margin-top: 10px;
+}
+
+.grant-form {
+  margin-top: 16px;
+}
+
+.grant-form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+@media screen and (max-width: 640px) {
+  .grant-form-grid {
+    grid-template-columns: 1fr;
+  }
+}
 .sensitive-center-page {
   padding-bottom: 32px;
 }

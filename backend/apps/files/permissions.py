@@ -17,6 +17,84 @@ from common.project_access import (
 )
 
 
+GLOBAL_FILE_MANAGER_ROLES = {'sys_admin', 'teacher'}
+
+
+def user_can_manage_team_file_scope(user, team):
+    """Only global teachers or explicit owner/co-lead/admin roles may write."""
+    if not user or not user.is_authenticated or not user.is_active or team is None:
+        return False
+    if getattr(user, 'global_role', '') in GLOBAL_FILE_MANAGER_ROLES:
+        return True
+    from apps.common.team_models import TeamMember
+
+    if team.owner_id == user.id:
+        return True
+    manager_roles = [
+        TeamMember.Role.OWNER,
+        TeamMember.Role.CO_LEAD,
+        TeamMember.Role.ADMIN,
+    ]
+    if TeamMember.objects.filter(
+        team=team,
+        user=user,
+        role__in=manager_roles,
+        status=TeamMember.Status.ACTIVE,
+    ).exists():
+        return True
+    parent = getattr(team, 'parent', None)
+    if not parent:
+        return False
+    return bool(
+        parent.owner_id == user.id
+        or TeamMember.objects.filter(
+            team=parent,
+            user=user,
+            role__in=manager_roles,
+            status=TeamMember.Status.ACTIVE,
+        ).exists()
+    )
+
+
+def user_can_access_team_file_scope(user, team):
+    if user_can_manage_team_file_scope(user, team):
+        return True
+    if not user or not user.is_authenticated or team is None:
+        return False
+    from apps.common.team_models import TeamMember
+
+    return TeamMember.objects.filter(
+        team=team,
+        user=user,
+        status__in=[TeamMember.Status.ACTIVE, TeamMember.Status.ON_LEAVE],
+    ).exists()
+
+
+def user_can_manage_competition_file_scope(user, competition):
+    if competition is None:
+        return False
+    if getattr(user, 'global_role', '') in GLOBAL_FILE_MANAGER_ROLES:
+        return bool(user and user.is_authenticated and user.is_active)
+    from apps.competitions.permissions import can_manage_competition
+
+    return can_manage_competition(user, competition)
+
+
+def user_can_access_competition_file_scope(user, competition):
+    if user_can_manage_competition_file_scope(user, competition):
+        return True
+    if not user or not user.is_authenticated or competition is None:
+        return False
+    from apps.competitions.models import CompetitionParticipant
+
+    return CompetitionParticipant.objects.filter(
+        competition=competition,
+        user=user,
+    ).exclude(
+        participation_status=CompetitionParticipant.ParticipationStatus.WITHDRAWN,
+    ).exists()
+
+
 def scope_file_organization_queryset(queryset, user):
     """先按根组织或显式项目关系收窄文件范围。
 
@@ -32,7 +110,7 @@ def scope_file_organization_queryset(queryset, user):
         or is_exited_member(user)
     ):
         return queryset.none()
-    if getattr(user, 'global_role', '') == 'sys_admin':
+    if getattr(user, 'global_role', '') in GLOBAL_FILE_MANAGER_ROLES:
         return queryset
 
     from apps.common.team_models import Team
@@ -53,20 +131,39 @@ def scope_file_organization_queryset(queryset, user):
             project__members__status='active',
         )
     )
+    from apps.competitions.models import CompetitionParticipant
+
+    direct_competition_access = Q(
+        competition_entry_id__in=CompetitionParticipant.objects.filter(
+            user=user,
+        ).exclude(
+            participation_status=CompetitionParticipant.ParticipationStatus.WITHDRAWN,
+        ).values('competition_id')
+    )
     user_root_ids = active_user_root_team_ids(user)
     if not user_root_ids:
-        return queryset.filter(direct_project_access).distinct()
+        return queryset.filter(
+            direct_project_access | direct_competition_access
+        ).distinct()
 
     same_root_project = (
         Q(project__teams__id__in=user_root_ids)
         | Q(project__teams__parent_id__in=user_root_ids)
+    )
+    same_root_team = (
+        Q(team_id__in=user_root_ids)
+        | Q(team__parent_id__in=user_root_ids)
     )
     legacy_single_root = Q(pk__in=[])
     if len(active_root_ids) == 1 and active_root_ids[0] in user_root_ids:
         legacy_single_root = Q(project__teams__isnull=True)
 
     return queryset.filter(
-        direct_project_access | same_root_project | legacy_single_root
+        direct_project_access
+        | direct_competition_access
+        | same_root_project
+        | same_root_team
+        | legacy_single_root
     ).distinct()
 
 
@@ -79,7 +176,7 @@ def user_can_manage_file_project(user, project):
         or is_exited_member(user)
     ):
         return False
-    if getattr(user, 'global_role', '') == 'sys_admin':
+    if getattr(user, 'global_role', '') in GLOBAL_FILE_MANAGER_ROLES:
         return True
 
     direct_project_access = bool(
@@ -99,6 +196,18 @@ def user_can_manage_file_project(user, project):
     return bool(project and project_can_manage(user, project))
 
 
+def user_can_manage_file_scope(user, *, project=None, team=None, competition_entry=None):
+    if team is not None and competition_entry is not None:
+        return False
+    if competition_entry is not None:
+        if project and competition_entry.project_id != getattr(project, 'id', project):
+            return False
+        return user_can_manage_competition_file_scope(user, competition_entry)
+    if team is not None:
+        return user_can_manage_team_file_scope(user, team)
+    return user_can_manage_file_project(user, project)
+
+
 def scope_file_queryset(queryset, user, *, include_sensitive=False):
     """Apply the same visibility rules used by file list and search APIs."""
     if (
@@ -111,26 +220,69 @@ def scope_file_queryset(queryset, user, *, include_sensitive=False):
     visible = scope_file_organization_queryset(queryset, user)
     global_role = getattr(user, 'global_role', '')
 
-    if global_role in ['sys_admin', 'teacher']:
+    if global_role in GLOBAL_FILE_MANAGER_ROLES:
         pass
-    elif is_external_collaborator(user):
-        visible = visible.filter(
-            project__members__user=user,
-            project__members__status='active',
-        )
     else:
+        from apps.common.team_models import TeamMember
+        from apps.competitions.models import CompetitionParticipant
+        from apps.projects.models import ProjectMember
+
+        team_manager_roles = [
+            TeamMember.Role.OWNER,
+            TeamMember.Role.CO_LEAD,
+            TeamMember.Role.ADMIN,
+        ]
+        team_scope = (
+            Q(
+                level='internal',
+                team__isnull=False,
+                team__teammember__user=user,
+                team__teammember__status__in=[
+                    TeamMember.Status.ACTIVE,
+                    TeamMember.Status.ON_LEAVE,
+                ],
+            )
+            | Q(level='internal', team__owner=user)
+            | Q(
+                level='internal',
+                team__parent__teammember__user=user,
+                team__parent__teammember__role__in=team_manager_roles,
+                team__parent__teammember__status=TeamMember.Status.ACTIVE,
+            )
+            | Q(level='internal', team__parent__owner=user)
+        )
+        active_competition_ids = CompetitionParticipant.objects.filter(
+            user=user,
+        ).exclude(
+            participation_status=CompetitionParticipant.ParticipationStatus.WITHDRAWN,
+        ).values('competition_id')
+        competition_scope = Q(
+            level='internal',
+            competition_entry_id__in=active_competition_ids,
+        ) | Q(level='internal', competition_entry__project__leader=user) | Q(
+            level='internal',
+            competition_entry__project__members__user=user,
+            competition_entry__project__members__status=ProjectMember.Status.ACTIVE,
+            competition_entry__project__members__role_in_project=(
+                ProjectMember.RoleInProject.LEADER
+            ),
+        )
+        project_scope = (
+            Q(level='internal', team__isnull=True, competition_entry__isnull=True)
+            & (
+                Q(project__isnull=True)
+                | Q(project__leader=user)
+                | Q(
+                    project__members__user=user,
+                    project__members__status=ProjectMember.Status.ACTIVE,
+                )
+            )
+        )
         visible = visible.filter(
             Q(level='public')
-            | Q(
-                level='internal',
-                project__isnull=True,
-            )
-            | Q(
-                level='internal',
-                project__members__user=user,
-                project__members__status='active',
-            )
-            | Q(level='internal', project__leader=user)
+            | team_scope
+            | competition_scope
+            | project_scope
         )
 
     if not include_sensitive:
@@ -156,14 +308,26 @@ def user_can_access_file(user, obj, *, allow_sensitive=False):
         )
     if user.global_role in ['sys_admin', 'teacher']:
         return True
-    if is_external_collaborator(user):
-        return bool(
-            obj.project_id
-            and has_active_project_membership(user, obj.project_id)
-        )
     if obj.level == 'public':
+        if is_external_collaborator(user):
+            return bool(
+                obj.project_id
+                and has_active_project_membership(user, obj.project_id)
+            )
         return True
     if obj.level == 'internal':
+        if obj.competition_entry_id:
+            return user_can_access_competition_file_scope(
+                user,
+                obj.competition_entry,
+            )
+        if obj.team_id:
+            return user_can_access_team_file_scope(user, obj.team)
+        if is_external_collaborator(user):
+            return bool(
+                obj.project_id
+                and has_active_project_membership(user, obj.project_id)
+            )
         if obj.project is None:
             return True
         if obj.project.leader_id == user.id:
@@ -198,7 +362,12 @@ class FileDownloadPermission(BasePermission):
             return user_can_access_file(request.user, obj, allow_sensitive=False)
 
         # 写操作需要项目负责人/老师/管理员权限
-        return user_can_manage_file_project(request.user, obj.project)
+        return user_can_manage_file_scope(
+            request.user,
+            project=obj.project,
+            team=obj.team,
+            competition_entry=obj.competition_entry,
+        )
 
 
 class FileUploadPermission(BasePermission):
@@ -220,35 +389,75 @@ class FileUploadPermission(BasePermission):
             if hasattr(request.data, 'get')
             else None
         )
-        if project_id in (None, ''):
-            return user_can_manage_file_project(request.user, None)
+        team_id = request.data.get('team') if hasattr(request.data, 'get') else None
+        competition_id = (
+            request.data.get('competition_entry')
+            if hasattr(request.data, 'get')
+            else None
+        )
+        if team_id and competition_id:
+            return False
         from apps.projects.models import Project
+        from apps.common.team_models import Team
+        from apps.competitions.models import Competition
 
         project = Project.objects.filter(pk=project_id).first()
-        return bool(
-            project
-            and user_can_manage_file_project(request.user, project)
+        team = Team.objects.filter(pk=team_id).first() if team_id else None
+        competition = (
+            Competition.objects.filter(pk=competition_id).first()
+            if competition_id
+            else None
+        )
+        if project_id not in (None, '') and project is None:
+            return False
+        if team_id and team is None:
+            return False
+        if competition_id and competition is None:
+            return False
+        return user_can_manage_file_scope(
+            request.user,
+            project=project,
+            team=team,
+            competition_entry=competition,
         )
 
     def has_object_permission(self, request, view, obj):
-        if not user_can_manage_file_project(request.user, obj.project):
-            return False
-        if (
-            request.method in ('PUT', 'PATCH')
-            and hasattr(request.data, 'get')
-            and 'project' in request.data
+        if not user_can_manage_file_scope(
+            request.user,
+            project=obj.project,
+            team=getattr(obj, 'team', None),
+            competition_entry=getattr(obj, 'competition_entry', None),
         ):
-            project_id = request.data.get('project')
-            if project_id in (None, ''):
-                target_project = None
-            else:
-                from apps.projects.models import Project
+            return False
+        if request.method in ('PUT', 'PATCH') and hasattr(request.data, 'get'):
+            from apps.projects.models import Project
+            from apps.common.team_models import Team
+            from apps.competitions.models import Competition
 
-                target_project = Project.objects.filter(pk=project_id).first()
-                if target_project is None:
-                    return False
-            return user_can_manage_file_project(
+            def resolve(field, model, current):
+                if field not in request.data:
+                    return current, True
+                value = request.data.get(field)
+                if value in (None, ''):
+                    return None, True
+                resolved = model.objects.filter(pk=value).first()
+                return resolved, resolved is not None
+
+            target_project, project_valid = resolve('project', Project, obj.project)
+            target_team, team_valid = resolve(
+                'team', Team, getattr(obj, 'team', None),
+            )
+            target_competition, competition_valid = resolve(
+                'competition_entry',
+                Competition,
+                getattr(obj, 'competition_entry', None),
+            )
+            if not (project_valid and team_valid and competition_valid):
+                return False
+            return user_can_manage_file_scope(
                 request.user,
-                target_project,
+                project=target_project,
+                team=target_team,
+                competition_entry=target_competition,
             )
         return True

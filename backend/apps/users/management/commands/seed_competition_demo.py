@@ -434,8 +434,8 @@ class Command(BaseCommand):
                                    is_staff=True, is_superuser=True, is_student=False, phone='13800000000')
         self.users['teacher1'] = make('teacher1@demo.com', 'teacher1', PASSWORDS['teacher'], '张启航', U.TEACHER,
                                       is_staff=True, is_student=False, phone='13800000001', major='创新创业教育')
-        self.users['teacher2'] = make('teacher2@demo.com', 'teacher2', PASSWORDS['teacher'], '李明澈', U.TEACHER,
-                                      is_staff=True, is_student=False, phone='13800000002', major='软件工程')
+        self.users['teacher2'] = make('teacher2@demo.com', 'teacher2', PASSWORDS['teacher'], '李明澈', U.MEMBER,
+                                      is_staff=False, is_student=False, phone='13800000002', major='软件工程')
         self.users['approver'] = make('approver@demo.com', 'approver', PASSWORDS['approver'], '秦若兰', U.SENS_APPROVER,
                                       is_staff=True, is_student=False, phone='13800000003', major='科研管理')
         for idx, m in enumerate(CORE_MEMBERS, 1):
@@ -827,7 +827,7 @@ class Command(BaseCommand):
             app = IntellectualPropertyApplication.objects.create(
                 title=f'{p.name} 核心系统软件/算法成果', application_code=f'IP-DEMO-2026-{idx:03d}', ip_type=ip_type,
                 related_project=p, status=status, main_writer=self.project_members[p.code][1], applicant_executor=self.users['leader6'],
-                material_manager=self.users['member6'], project_reviewer=p.leader, teacher_confirmer=self.users['teacher2'],
+                material_manager=self.users['member6'], project_reviewer=p.leader, teacher_confirmer=self.users['teacher1'],
                 start_date=date(2026, 4, 1), submit_date=date(2026, 6, 5) if idx >= 3 else None,
                 accepted_date=date(2026, 6, 18) if idx in (3, 6) else None,
                 authorized_date=date(2026, 6, 28) if idx == 6 else None, return_count=1 if idx in (4, 5) else 0,
@@ -1250,8 +1250,8 @@ class Command(BaseCommand):
         self.stdout.write(self.style.SUCCESS('\n========== 比赛型演示数据生成完成 =========='))
         self.stdout.write('账号：')
         self.stdout.write('  系统管理员：admin@demo.com / admin123456')
-        self.stdout.write('  指导老师1：teacher1@demo.com / teacher123456')
-        self.stdout.write('  指导老师2：teacher2@demo.com / teacher123456')
+        self.stdout.write('  操作老师：teacher1@demo.com / teacher123456')
+        self.stdout.write('  查看老师：teacher2@demo.com / teacher123456')
         self.stdout.write('  敏感审批：approver@demo.com / approver123456')
         self.stdout.write('  六个核心负责人：leader1~leader6@demo.com / leader123456')
         self.stdout.write('  普通协作成员：member1~member8@demo.com / member123456')

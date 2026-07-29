@@ -23,6 +23,17 @@ class Activity(models.Model):
         COMMENT_CREATED = 'comment_created', '发表评论'
         MEMBER_JOINED = 'member_joined', '成员加入'
         MEMBER_LEFT = 'member_left', '成员离开'
+        COMPETITION_CREATED = 'competition_created', '创建比赛参赛条目'
+        COMPETITION_UPDATED = 'competition_updated', '更新比赛参赛条目'
+        COMPETITION_AWARDED = 'competition_awarded', '登记比赛获奖'
+        FINANCE_EXPENSE = 'finance_expense', '登记或更新支出'
+        FINANCE_PAYMENT = 'finance_payment', '完成经费付款'
+        FINANCE_TRANSFER = 'finance_transfer', '登记内部资金转移'
+        FINANCE_INCOME = 'finance_income', '登记或更新收入'
+        IP_CREATED = 'ip_created', '创建知识产权成果'
+        IP_UPDATED = 'ip_updated', '更新知识产权成果'
+        IP_AUTHORIZED = 'ip_authorized', '知识产权成果授权'
+        ANNOUNCEMENT_PUBLISHED = 'announcement_published', '发布公告'
 
     # 动态类型
     activity_type = models.CharField(
@@ -43,6 +54,14 @@ class Activity(models.Model):
         null=True, blank=True,
         related_name='activities',
         verbose_name='项目',
+    )
+    organization = models.ForeignKey(
+        'common.Team',
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='activities',
+        verbose_name='所属实践团队',
     )
     # 目标类型（如 project / task / file 等）
     target_type = models.CharField('目标类型', max_length=50, default='')

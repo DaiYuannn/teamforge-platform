@@ -44,7 +44,7 @@ def make_announcement(db, make_user):
     ):
         counter[0] += 1
         author = author or make_user(
-            global_role='teacher',
+            global_role='member',
             email=f'ann_author{counter[0]}@test.com',
             name=f'公告作者{counter[0]}',
         )

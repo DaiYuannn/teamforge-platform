@@ -3,7 +3,7 @@
 """
 from rest_framework import serializers
 
-from .models import Competition, CompetitionParticipant
+from .models import Competition, CompetitionEvent, CompetitionParticipant
 from apps.contributions.models import Contribution
 from apps.projects.models import ProjectMember
 from apps.users.serializers import (
@@ -12,8 +12,10 @@ from apps.users.serializers import (
 )
 from common.project_access import (
     is_external_collaborator,
+    project_root_team_ids,
     project_can_manage,
     scope_project_queryset,
+    user_can_join_project,
 )
 from .permissions import can_manage_competition
 
@@ -224,9 +226,14 @@ class CompetitionParticipantSerializer(serializers.ModelSerializer):
                     status=ProjectMember.Status.ACTIVE,
                 ).exists()
             )
-            if not is_project_member:
+            is_organization_member = user_can_join_project(
+                user,
+                competition.project,
+                role='participant',
+            )
+            if not is_project_member and not is_organization_member:
                 raise serializers.ValidationError({
-                    'user': '参赛成员必须是所属项目的活动成员'
+                    'user': '参赛成员必须来自该项目所属的总团队'
                 })
         return attrs
 
@@ -236,6 +243,12 @@ class CompetitionSerializer(serializers.ModelSerializer):
     level_display = serializers.CharField(source='get_level_display', read_only=True)
     status_display = serializers.CharField(source='get_status_display', read_only=True)
     project_name = serializers.CharField(source='project.name', read_only=True)
+    event_name = serializers.CharField(source='event.name', read_only=True, default='')
+    event_edition = serializers.CharField(
+        source='event.edition',
+        read_only=True,
+        default='',
+    )
     participants = CompetitionParticipantSerializer(many=True, read_only=True)
     participant_count = serializers.SerializerMethodField()
     leader_names = serializers.SerializerMethodField()
@@ -249,7 +262,8 @@ class CompetitionSerializer(serializers.ModelSerializer):
     class Meta:
         model = Competition
         fields = (
-            'id', 'project', 'project_name', 'name', 'comp_type',
+            'id', 'event', 'event_name', 'event_edition', 'entry_name',
+            'project', 'project_name', 'name', 'comp_type',
             'level', 'level_display', 'organizer',
             'register_date', 'material_deadline', 'review_date', 'defense_date',
             'school_date', 'city_date', 'province_date', 'national_date', 'result_date',
@@ -271,6 +285,19 @@ class CompetitionSerializer(serializers.ModelSerializer):
             'project',
             getattr(self.instance, 'project', None),
         )
+        target_event = attrs.get(
+            'event',
+            getattr(self.instance, 'event', None),
+        )
+        if (
+            target_event
+            and target_project
+            and project_root_team_ids(target_project)
+            and target_event.organization_id not in project_root_team_ids(target_project)
+        ):
+            raise serializers.ValidationError({
+                'event': '比赛届次与目标项目不属于同一总团队'
+            })
         if (
             self.instance
             and target_project
@@ -389,6 +416,12 @@ class CompetitionListSerializer(serializers.ModelSerializer):
     level_display = serializers.CharField(source='get_level_display', read_only=True)
     status_display = serializers.CharField(source='get_status_display', read_only=True)
     project_name = serializers.CharField(source='project.name', read_only=True)
+    event_name = serializers.CharField(source='event.name', read_only=True, default='')
+    event_edition = serializers.CharField(
+        source='event.edition',
+        read_only=True,
+        default='',
+    )
     participant_count = serializers.SerializerMethodField()
     leader_names = serializers.SerializerMethodField()
     project_leader_names = serializers.SerializerMethodField()
@@ -398,7 +431,8 @@ class CompetitionListSerializer(serializers.ModelSerializer):
     class Meta:
         model = Competition
         fields = (
-            'id', 'project', 'project_name', 'name', 'comp_type',
+            'id', 'event', 'event_name', 'event_edition', 'entry_name',
+            'project', 'project_name', 'name', 'comp_type',
             'level', 'level_display', 'organizer', 'status', 'status_display',
             'is_promoted', 'is_awarded', 'award_level',
             'current_stage',
@@ -437,3 +471,17 @@ class CompetitionListSerializer(serializers.ModelSerializer):
             and request.user.is_authenticated
             and can_manage_competition(request.user, obj)
         )
+
+
+class CompetitionEventSerializer(serializers.ModelSerializer):
+    """Shared competition edition for the competition/project roster switcher."""
+
+    entry_count = serializers.IntegerField(read_only=True)
+
+    class Meta:
+        model = CompetitionEvent
+        fields = (
+            'id', 'organization', 'name', 'edition', 'organizer',
+            'entry_count', 'created_at', 'updated_at',
+        )
+        read_only_fields = fields

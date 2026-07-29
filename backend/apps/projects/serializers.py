@@ -258,6 +258,31 @@ def _project_team_details(project):
     return details
 
 
+def _competition_context(competition):
+    """Return one unambiguous edition + entry label for project summaries."""
+    event = getattr(competition, 'event', None)
+    event_name = getattr(event, 'name', '') or competition.name
+    event_edition = getattr(event, 'edition', '') or ''
+    entry_name = competition.entry_name or ''
+    event_label = (
+        f'{event_name}（{event_edition}）'
+        if event_edition
+        else event_name
+    )
+    display_name = (
+        f'{event_label} / {entry_name}'
+        if entry_name and entry_name != event_name
+        else event_label
+    )
+    return {
+        'event': competition.event_id,
+        'event_name': event_name,
+        'event_edition': event_edition,
+        'entry_name': entry_name,
+        'display_name': display_name,
+    }
+
+
 def _project_competition_summaries(project):
     """Summarize actual competition ownership rather than only counting rows."""
     prefetched_competitions = getattr(
@@ -268,7 +293,9 @@ def _project_competition_summaries(project):
     competitions = (
         prefetched_competitions
         if prefetched_competitions is not None
-        else project.competitions.prefetch_related('participants__user')
+        else project.competitions.select_related('event').prefetch_related(
+            'participants__user',
+        )
     )
     summaries = []
     for competition in competitions:
@@ -290,6 +317,7 @@ def _project_competition_summaries(project):
         summaries.append({
             'id': competition.id,
             'name': competition.name,
+            **_competition_context(competition),
             'status': competition.status,
             'status_display': competition.get_status_display(),
             'leader_names': [
@@ -402,9 +430,12 @@ def _project_member_work_summary(project, request=None):
     competitions = (
         prefetched_competitions
         if prefetched_competitions is not None
-        else project.competitions.prefetch_related('participants__user')
+        else project.competitions.select_related('event').prefetch_related(
+            'participants__user',
+        )
     )
     for competition in competitions:
+        competition_display_name = _competition_context(competition)['display_name']
         participants = getattr(
             competition,
             '_prefetched_objects_cache',
@@ -419,10 +450,10 @@ def _project_member_work_summary(project, request=None):
             ):
                 continue
             summary = summaries[participant.user_id]
-            summary['competition_names'].append(competition.name)
+            summary['competition_names'].append(competition_display_name)
             if participant.responsibility:
                 summary['competition_responsibilities'].append({
-                    'competition_name': competition.name,
+                    'competition_name': competition_display_name,
                     'responsibility': participant.responsibility,
                 })
     return list(summaries.values())

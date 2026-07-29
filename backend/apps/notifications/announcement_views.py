@@ -6,18 +6,27 @@
 - 创建/更新/删除仅老师/管理员可操作
 - public 接口无需登录，返回公开（is_public=True）的已发布公告
 """
+from pathlib import Path
+
+from django.conf import settings
 from django.utils import timezone
 from django.db.models import Q
+from django.shortcuts import get_object_or_404
 from rest_framework import status
 from rest_framework.decorators import action
+from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.permissions import BasePermission
 from rest_framework.viewsets import ModelViewSet
 
+from common.storage import protected_media_response
 from common.response import success_response
 from common.mixins import MultiSerializerMixin, MultiPermissionMixin
-from .models import Announcement
-from .serializers import AnnouncementSerializer
+from .models import Announcement, AnnouncementAttachment
+from .serializers import (
+    AnnouncementAttachmentSerializer,
+    AnnouncementSerializer,
+)
 from .announcement_access import (
     can_manage_announcement,
     can_manage_announcements,
@@ -44,7 +53,11 @@ class AnnouncementViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewS
     queryset = (
         Announcement.objects
         .select_related('author', 'organization')
-        .prefetch_related('target_teams', 'target_projects')
+        .prefetch_related(
+            'target_teams',
+            'target_projects',
+            'attachments__uploaded_by',
+        )
         .all()
     )
 
@@ -56,6 +69,9 @@ class AnnouncementViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewS
         'partial_update': AnnouncementSerializer,
         'pin': AnnouncementSerializer,
         'public': AnnouncementSerializer,
+        'upload_attachment': AnnouncementAttachmentSerializer,
+        'delete_attachment': AnnouncementAttachmentSerializer,
+        'download_attachment': AnnouncementAttachmentSerializer,
     }
 
     permission_classes_by_action = {
@@ -67,6 +83,9 @@ class AnnouncementViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewS
         'destroy': [IsAnnouncementManager],
         'pin': [IsAnnouncementManager],
         'public': [AllowAny],
+        'upload_attachment': [IsAnnouncementManager],
+        'delete_attachment': [IsAnnouncementManager],
+        'download_attachment': [AllowAny],
     }
 
     filterset_fields = [
@@ -188,3 +207,110 @@ class AnnouncementViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewS
             return self.get_paginated_response(serializer.data)
         serializer = self.get_serializer(queryset, many=True)
         return success_response(serializer.data)
+
+    @action(detail=True, methods=['post'], url_path='attachments')
+    def upload_attachment(self, request, pk=None):
+        """直接向公告上传附件，附件沿用公告可见范围。"""
+        announcement = self.get_object()
+        self.check_object_permissions(request, announcement)
+        upload = request.FILES.get('file')
+        if upload is None:
+            raise ValidationError({'file': '请选择要上传的附件'})
+
+        max_size = int(getattr(
+            settings,
+            'ANNOUNCEMENT_ATTACHMENT_MAX_SIZE',
+            200 * 1024 * 1024,
+        ))
+        if upload.size > max_size:
+            raise ValidationError({
+                'file': f'公告附件不能超过 {max_size // 1024 // 1024} MB'
+            })
+        if announcement.attachments.count() >= 20:
+            raise ValidationError({'file': '一条公告最多上传 20 个附件'})
+
+        original_name = Path(str(upload.name or '')).name.strip()
+        if not original_name or original_name in {'.', '..'}:
+            raise ValidationError({'file': '附件名称无效'})
+        forbidden_extensions = {
+            '.bat', '.cmd', '.com', '.cpl', '.exe', '.hta', '.js', '.jse',
+            '.lnk', '.msi', '.msp', '.pif', '.ps1', '.reg', '.scr', '.vbe',
+            '.vbs', '.wsf', '.wsh',
+        }
+        if Path(original_name).suffix.casefold() in forbidden_extensions:
+            raise ValidationError({'file': '不支持上传可执行脚本或程序文件'})
+
+        attachment = AnnouncementAttachment.objects.create(
+            announcement=announcement,
+            file=upload,
+            name=original_name[:255],
+            size=upload.size,
+            content_type=str(
+                getattr(upload, 'content_type', '')
+                or 'application/octet-stream'
+            )[:100],
+            uploaded_by=request.user,
+        )
+        return success_response(
+            AnnouncementAttachmentSerializer(attachment).data,
+            message='公告附件上传成功',
+            http_status=status.HTTP_201_CREATED,
+        )
+
+    @action(
+        detail=True,
+        methods=['delete'],
+        url_path=r'attachments/(?P<attachment_id>[^/.]+)',
+    )
+    def delete_attachment(self, request, pk=None, attachment_id=None):
+        """删除公告附件。"""
+        announcement = self.get_object()
+        self.check_object_permissions(request, announcement)
+        attachment = get_object_or_404(
+            AnnouncementAttachment,
+            pk=attachment_id,
+            announcement=announcement,
+        )
+        storage = attachment.file.storage
+        stored_name = attachment.file.name
+        attachment.delete()
+        if stored_name:
+            storage.delete(stored_name)
+        return success_response(message='公告附件已删除')
+
+    @action(
+        detail=True,
+        methods=['get'],
+        url_path=r'attachments/(?P<attachment_id>[^/.]+)/download',
+    )
+    def download_attachment(self, request, pk=None, attachment_id=None):
+        """按公告范围校验后下载附件，公开公告允许匿名访问。"""
+        base_queryset = (
+            Announcement.objects
+            .select_related('organization')
+            .prefetch_related('target_teams', 'target_projects')
+        )
+        if request.user.is_authenticated:
+            queryset = scope_announcements_for_user(
+                base_queryset,
+                request.user,
+                include_manageable=can_manage_announcements(request.user),
+            )
+        else:
+            queryset = base_queryset.filter(
+                status=Announcement.Status.PUBLISHED,
+            ).filter(
+                Q(audience=Announcement.Audience.PUBLIC)
+                | Q(is_public=True)
+            )
+        announcement = get_object_or_404(queryset, pk=pk)
+        attachment = get_object_or_404(
+            AnnouncementAttachment,
+            pk=attachment_id,
+            announcement=announcement,
+        )
+        return protected_media_response(
+            attachment.file.name,
+            as_attachment=True,
+            download_name=attachment.name,
+        )

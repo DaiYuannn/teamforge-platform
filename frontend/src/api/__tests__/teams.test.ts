@@ -11,7 +11,7 @@ vi.mock('@/api/request', () => ({
   del: vi.fn(),
 }))
 
-import { getTeamMembers } from '@/api/teams'
+import { getTeamCandidates, getTeamMembers } from '@/api/teams'
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -36,6 +36,22 @@ describe('team member query API', () => {
       role: 'co_lead',
       school: '示例大学',
       status: 'active',
+    })
+  })
+
+  it('combines pinyin fragments with school, source role and member status', async () => {
+    await getTeamCandidates(7, {
+      search: 'LYC',
+      school: '示例',
+      team_role: 'member',
+      membership_status: 'active',
+    })
+
+    expect(getMock).toHaveBeenCalledWith('/teams/7/candidates/', {
+      search: 'LYC',
+      school: '示例',
+      team_role: 'member',
+      membership_status: 'active',
     })
   })
 })

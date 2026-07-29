@@ -57,7 +57,7 @@ export const useUserStore = defineStore('user', () => {
   const isLoggedIn = computed(() => !!token.value)
   /** 是否为系统管理员 */
   const isAdmin = computed(() => role.value === 'sys_admin')
-  /** 是否为指导老师 */
+  /** 是否为小团队唯一的全局操作老师 */
   const isTeacher = computed(() => role.value === 'teacher')
   /** 是否为项目负责人（老师或管理员均可担任） */
   const isProjectLeader = computed(() => role.value === 'teacher' || role.value === 'sys_admin')

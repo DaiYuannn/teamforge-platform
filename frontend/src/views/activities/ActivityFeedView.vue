@@ -88,6 +88,10 @@
           <el-option label="上传文件" value="file_uploaded" />
           <el-option label="发表评论" value="comment_created" />
           <el-option label="成员加入" value="member_joined" />
+          <el-option label="比赛动态" value="competition" />
+          <el-option label="经费动态" value="finance" />
+          <el-option label="知识产权动态" value="intellectual_property" />
+          <el-option label="发布公告" value="announcement_published" />
         </el-select>
       </div>
 
@@ -139,7 +143,19 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { Folder, Plus, Edit, Check, Upload, ChatDotRound, User } from '@element-plus/icons-vue'
+import {
+  Bell,
+  Check,
+  ChatDotRound,
+  Coin,
+  Document,
+  Edit,
+  Folder,
+  Medal,
+  Plus,
+  Upload,
+  User,
+} from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { get } from '@/api/request'
 import { useDevice } from '@/composables/useDevice'
@@ -188,6 +204,16 @@ function getIconName(type: string): any {
     comment_created: ChatDotRound,
     member_joined: User,
     member_left: User,
+    competition_created: Medal,
+    competition_updated: Medal,
+    competition_awarded: Medal,
+    finance_expense: Coin,
+    finance_payment: Coin,
+    finance_income: Coin,
+    ip_created: Document,
+    ip_updated: Document,
+    ip_authorized: Document,
+    announcement_published: Bell,
   }
   return map[type] || Edit
 }
@@ -197,6 +223,9 @@ function getIconColor(type: string): string {
   if (type.includes('completed')) return 'var(--color-primary)'
   if (type.includes('uploaded')) return 'var(--color-warning)'
   if (type.includes('comment')) return 'var(--color-info)'
+  if (type.includes('competition')) return 'var(--color-warning)'
+  if (type.includes('finance')) return 'var(--color-success)'
+  if (type.includes('ip_')) return 'var(--color-primary)'
   return 'var(--color-primary)'
 }
 

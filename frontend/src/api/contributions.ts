@@ -96,7 +96,7 @@ export const generateRanking = (projectId: number, period?: string) =>
 /** 更新排名（拖拽或输入修改） */
 export const updateRank = (id: number, data: any) => request.patch(`${BASE}/rankings/${id}/update_rank/`, data)
 
-/** 确认排序（老师） */
+/** 确认并公开排序（项目负责人或操作老师） */
 export const confirmRanking = (projectId: number, period?: string) =>
   request.post(`${BASE}/rankings/confirm/`, { project: projectId, period })
 
@@ -117,5 +117,9 @@ export const createObjection = (data: any) => request.post(`${BASE}/objections/`
 /** 负责人初审异议 */
 export const leaderReviewObjection = (id: number, data: any) => request.patch(`${BASE}/objections/${id}/leader_review/`, { ...data, action: 'leader_review' })
 
-/** 老师确认异议 */
-export const teacherConfirmObjection = (id: number, data: any) => request.patch(`${BASE}/objections/${id}/teacher_confirm/`, { ...data, action: 'teacher_confirm' })
+/** 最终复核异议；后端保留 teacher_confirm 旧路径和动作名以兼容历史数据。 */
+export const finalReviewObjection = (id: number, data: any) =>
+  request.patch(`${BASE}/objections/${id}/teacher_confirm/`, { ...data, action: 'teacher_confirm' })
+
+/** @deprecated 请使用 finalReviewObjection。 */
+export const teacherConfirmObjection = finalReviewObjection

@@ -325,10 +325,10 @@ class RankingService:
     @transaction.atomic
     def confirm_ranking(ranking_ids, teacher):
         """
-        老师确认排序
+        项目负责人或操作老师确认并公开排序。
         - 更新状态为 confirmed, is_public=True（确认后不可改）
         :param ranking_ids: 排名记录ID列表
-        :param teacher: 操作人（老师）
+        :param teacher: 操作人（保留历史参数名）
         :return: (success: bool, data_or_message) data 为确认的记录数量
         """
         rankings = MemberRanking.objects.filter(
@@ -355,7 +355,7 @@ class RankingService:
             user=teacher,
             action='确认排名',
             obj=None,
-            detail=f'老师确认{confirmed_count}条排名记录',
+            detail=f'负责人确认并公开{confirmed_count}条排名记录',
         )
 
         return True, confirmed_count

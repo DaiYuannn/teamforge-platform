@@ -8,6 +8,45 @@ from drf_spectacular.utils import extend_schema_field
 from .models import User, UserPreference, UserLifecycleEvent
 
 
+def _validate_operating_teacher_slot(attrs, *, instance=None):
+    """Keep the small-team permission model to one active operating teacher.
+
+    ``global_role=teacher`` is the sole business-operator teacher.  Additional
+    teachers stay ``global_role=member`` and receive the team-scoped,
+    read-only ``TeamMember.role=teacher`` identity.
+    """
+    role = attrs.get(
+        'global_role',
+        getattr(instance, 'global_role', User.GlobalRole.MEMBER),
+    )
+    is_active = attrs.get('is_active', getattr(instance, 'is_active', True))
+    membership_status = attrs.get(
+        'membership_status',
+        getattr(instance, 'membership_status', User.MembershipStatus.ACTIVE),
+    )
+    if (
+        role != User.GlobalRole.TEACHER
+        or not is_active
+        or membership_status == User.MembershipStatus.EXITED
+    ):
+        return attrs
+
+    conflicts = User.objects.filter(
+        global_role=User.GlobalRole.TEACHER,
+        is_active=True,
+    ).exclude(membership_status=User.MembershipStatus.EXITED)
+    if instance is not None and instance.pk:
+        conflicts = conflicts.exclude(pk=instance.pk)
+    if conflicts.exists():
+        raise serializers.ValidationError({
+            'global_role': (
+                '小团队只能设置一位“操作老师”。其他老师请保留普通成员身份，'
+                '并在团队组织中设置为“查看老师（只读）”。'
+            ),
+        })
+    return attrs
+
+
 def _serialize_preferences(user):
     try:
         preference = user.preference
@@ -170,13 +209,18 @@ class UserCreateSerializer(serializers.ModelSerializer):
             'password', 'password_confirm',
         )
         read_only_fields = ('id',)
+        extra_kwargs = {
+            # The conditional database constraint is enforced with a clearer
+            # role-model message in validate(), not DRF's generic unique text.
+            'global_role': {'validators': []},
+        }
 
     def validate(self, attrs):
         """校验两次密码一致"""
         if attrs.get('password') != attrs.get('password_confirm'):
             raise serializers.ValidationError({'password_confirm': '两次输入的密码不一致'})
         attrs.pop('password_confirm', None)
-        return attrs
+        return _validate_operating_teacher_slot(attrs)
 
     def create(self, validated_data):
         """创建用户"""
@@ -200,6 +244,12 @@ class UserUpdateSerializer(serializers.ModelSerializer):
             'is_active', 'is_staff',
         )
         read_only_fields = ('id',)
+        extra_kwargs = {
+            'global_role': {'validators': []},
+        }
+
+    def validate(self, attrs):
+        return _validate_operating_teacher_slot(attrs, instance=self.instance)
 
 
 class MyProfileSerializer(serializers.ModelSerializer):

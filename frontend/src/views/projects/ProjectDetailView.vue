@@ -354,7 +354,7 @@
                 class="ranking-period"
               />
               <el-button
-                v-if="isProjectLeader"
+                v-if="canManageProjectWorkflow"
                 type="primary"
                 :icon="Sort"
                 @click="handleGenerateRanking"
@@ -362,11 +362,11 @@
                 生成排序
               </el-button>
               <el-button
-                v-permission="['teacher', 'sys_admin']"
+                v-if="canManageProjectWorkflow"
                 type="success"
                 @click="handleConfirmRanking"
               >
-                确认排序
+                负责人确认并公开
               </el-button>
               <el-button :icon="Download" @click="handleExportReport">导出报告</el-button>
             </div>
@@ -397,7 +397,7 @@
             <el-table-column label="排名" width="100">
               <template #default="{ row }">
                 <el-input-number
-                  v-if="isProjectLeader && row.status !== 'confirmed'"
+                  v-if="canManageProjectWorkflow && row.status !== 'confirmed'"
                   v-model="row.rank"
                   :min="1"
                   size="small"
@@ -463,7 +463,7 @@
             <el-table-column label="操作" width="140">
               <template #default="{ row }">
                 <el-button
-                  v-if="isProjectLeader && row.status === 'pending'"
+                  v-if="canInitiallyReviewObjection(row as RankingObjection)"
                   type="primary"
                   link
                   @click="handleReviewObjection(row as any, 'leader')"
@@ -471,13 +471,12 @@
                   负责人初审
                 </el-button>
                 <el-button
-                  v-permission="['teacher', 'sys_admin']"
-                  v-if="row.status === 'leader_reviewed'"
+                  v-if="canFinalizeObjection(row as RankingObjection)"
                   type="success"
                   link
-                  @click="handleReviewObjection(row as any, 'teacher')"
+                  @click="handleReviewObjection(row as any, 'final')"
                 >
-                  老师确认
+                  负责人复核
                 </el-button>
               </template>
             </el-table-column>
@@ -588,7 +587,7 @@
     </el-dialog>
 
     <!-- 异议处理弹窗 -->
-    <el-dialog v-model="reviewObjectionVisible" :title="reviewMode === 'leader' ? '负责人初审' : '老师确认'" width="500px">
+    <el-dialog v-model="reviewObjectionVisible" :title="reviewMode === 'leader' ? '负责人初审' : '负责人最终复核'" width="500px">
       <el-descriptions :column="1" border>
         <el-descriptions-item label="异议对象">{{ currentObjection?.ranking_user_name || '-' }}</el-descriptions-item>
         <el-descriptions-item label="异议内容">{{ currentObjection?.content }}</el-descriptions-item>
@@ -601,8 +600,8 @@
           <el-form-item label="负责人意见">
             <span>{{ currentObjection?.leader_opinion || '暂无' }}</span>
           </el-form-item>
-          <el-form-item label="老师意见">
-            <el-input v-model="reviewObjectionForm.teacher_opinion" type="textarea" :rows="3" placeholder="请输入确认意见" />
+          <el-form-item label="复核意见">
+            <el-input v-model="reviewObjectionForm.teacher_opinion" type="textarea" :rows="3" placeholder="请输入最终复核意见" />
           </el-form-item>
           <el-form-item label="处理决定">
             <el-radio-group v-model="reviewObjectionForm.final_status">
@@ -824,7 +823,7 @@ import {
   getObjections,
   createObjection,
   leaderReviewObjection,
-  teacherConfirmObjection,
+  finalReviewObjection,
 } from '@/api/contributions'
 import { exportProjectReport } from '@/api/exports'
 import { useUserStore } from '@/stores/user'
@@ -1071,7 +1070,7 @@ const objectionRules: FormRules = {
 
 // 异议处理状态
 const reviewObjectionVisible = ref(false)
-const reviewMode = ref<'leader' | 'teacher'>('leader')
+const reviewMode = ref<'leader' | 'final'>('leader')
 const currentObjection = ref<RankingObjection | null>(null)
 const reviewObjectionForm = reactive({
   leader_opinion: '',
@@ -1104,6 +1103,26 @@ const canManageProjectWorkflow = computed(() =>
   || userStore.isTeacher
   || userStore.isAdmin
 )
+function canInitiallyReviewObjection(row: RankingObjection): boolean {
+  const currentUserId = userStore.userInfo?.id
+  return Boolean(
+    canManageProjectWorkflow.value
+    && row.status === 'pending'
+    && currentUserId
+    && row.objector !== currentUserId,
+  )
+}
+
+function canFinalizeObjection(row: RankingObjection): boolean {
+  const currentUserId = userStore.userInfo?.id
+  return Boolean(
+    canManageProjectWorkflow.value
+    && row.status === 'leader_reviewed'
+    && currentUserId
+    && row.objector !== currentUserId
+    && row.leader_reviewer !== currentUserId,
+  )
+}
 const leaderUpdateCadence = computed(() =>
   getLeaderUpdateCadence(
     project.value?.last_leader_update,
@@ -1395,7 +1414,7 @@ async function handleSubmitObjection(): Promise<void> {
 }
 
 // 打开异议处理弹窗
-function handleReviewObjection(row: any, mode: 'leader' | 'teacher'): void {
+function handleReviewObjection(row: RankingObjection, mode: 'leader' | 'final'): void {
   currentObjection.value = row as RankingObjection
   reviewMode.value = mode
   reviewObjectionForm.leader_opinion = ''
@@ -1447,7 +1466,7 @@ async function handleConfirmReviewObjection(): Promise<void> {
     if (reviewMode.value === 'leader') {
       await leaderReviewObjection(currentObjection.value.id, data)
     } else {
-      await teacherConfirmObjection(currentObjection.value.id, data)
+      await finalReviewObjection(currentObjection.value.id, data)
     }
     ElMessage.success('处理成功')
     reviewObjectionVisible.value = false

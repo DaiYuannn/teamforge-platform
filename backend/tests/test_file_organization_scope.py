@@ -187,7 +187,7 @@ def test_share_management_honors_file_scope_but_token_access_stays_explicit(
 
 
 @pytest.mark.django_db
-def test_teacher_file_writes_are_root_scoped_but_sys_admin_stays_platform_level(
+def test_operation_teacher_is_platform_level_but_team_teacher_stays_read_only(
     api_client,
     make_user,
 ):
@@ -227,26 +227,26 @@ def test_teacher_file_writes_are_root_scoped_but_sys_admin_stays_platform_level(
         FILES_URL,
         {
             'project': project_b.id,
-            'name': 'blocked-cross-root-upload.txt',
+            'name': 'allowed-cross-root-upload.txt',
             'file': SimpleUploadedFile(
-                'blocked-cross-root-upload.txt',
-                b'blocked',
+                'allowed-cross-root-upload.txt',
+                b'allowed',
                 content_type='text/plain',
             ),
             'level': FileAsset.Level.PUBLIC,
         },
         format='multipart',
     )
-    assert cross_root_upload.status_code == 403, cross_root_upload.json()
+    assert cross_root_upload.status_code == 201, cross_root_upload.json()
 
     cross_root_rebind = api_client.patch(
         f'{FILES_URL}{existing_a.id}/',
         {'project': project_b.id},
         format='json',
     )
-    assert cross_root_rebind.status_code == 403, cross_root_rebind.json()
+    assert cross_root_rebind.status_code == 200, cross_root_rebind.json()
     existing_a.refresh_from_db()
-    assert existing_a.project_id == project_a.id
+    assert existing_a.project_id == project_b.id
 
     same_root_upload = api_client.post(
         FILES_URL,
@@ -263,6 +263,30 @@ def test_teacher_file_writes_are_root_scoped_but_sys_admin_stays_platform_level(
         format='multipart',
     )
     assert same_root_upload.status_code == 201, same_root_upload.json()
+
+    view_only_teacher = make_user(email='file-view-only-teacher@test.com')
+    TeamMember.objects.create(
+        team=root_a,
+        user=view_only_teacher,
+        role=TeamMember.Role.TEACHER,
+    )
+    api_client.force_authenticate(user=view_only_teacher)
+    denied_view_only_upload = api_client.post(
+        FILES_URL,
+        {
+            'project': project_a.id,
+            'team': root_a.id,
+            'name': 'view-only-teacher-cannot-upload.txt',
+            'file': SimpleUploadedFile(
+                'view-only-teacher-cannot-upload.txt',
+                b'read-only',
+                content_type='text/plain',
+            ),
+            'level': FileAsset.Level.INTERNAL,
+        },
+        format='multipart',
+    )
+    assert denied_view_only_upload.status_code == 403, denied_view_only_upload.json()
 
     sys_admin = make_user(
         email='file-platform-admin@test.com',

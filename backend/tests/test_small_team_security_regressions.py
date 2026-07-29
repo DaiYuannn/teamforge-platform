@@ -887,7 +887,7 @@ def test_contribution_cannot_bind_existing_file_asset(
 
 
 @pytest.mark.django_db
-def test_ranking_objection_notifies_only_same_root_teachers(
+def test_ranking_objection_notifies_operating_teacher_not_viewing_teachers(
     monkeypatch,
     make_user,
 ):
@@ -899,18 +899,25 @@ def test_ranking_objection_notifies_only_same_root_teachers(
     )
     other_root_teacher = make_user(
         email='objection-other-teacher@security.test',
-        global_role=User.GlobalRole.TEACHER,
+    )
+    other_root_owner = make_user(
+        email='objection-other-owner@security.test',
     )
     root_a = make_root_team('Objection scope A', 'SEC-OBJ-A', leader)
     root_b = make_root_team(
         'Objection scope B',
         'SEC-OBJ-B',
-        other_root_teacher,
+        other_root_owner,
     )
     TeamMember.objects.create(team=root_a, user=objector)
     TeamMember.objects.create(
         team=root_a,
         user=same_root_teacher,
+        role=TeamMember.Role.TEACHER,
+    )
+    TeamMember.objects.create(
+        team=root_b,
+        user=other_root_teacher,
         role=TeamMember.Role.TEACHER,
     )
     project = make_scoped_project(
@@ -955,4 +962,4 @@ def test_ranking_objection_notifies_only_same_root_teachers(
     assert leader.id in recipient_ids
     assert same_root_teacher.id in recipient_ids
     assert other_root_teacher.id not in recipient_ids
-    assert root_b.owner_id == other_root_teacher.id
+    assert root_b.owner_id == other_root_owner.id

@@ -6,7 +6,7 @@ from rest_framework import serializers
 from common.project_access import active_user_root_team_ids
 from apps.common.team_models import Team
 
-from .models import Notification, Announcement
+from .models import Notification, Announcement, AnnouncementAttachment
 from .announcement_access import (
     announcement_management_scope,
     announcement_is_manageable_from_scope,
@@ -46,6 +46,31 @@ class NotificationListSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
+class AnnouncementAttachmentSerializer(serializers.ModelSerializer):
+    """公告附件只读元数据。"""
+
+    uploaded_by_name = serializers.CharField(
+        source='uploaded_by.name',
+        read_only=True,
+        default='',
+    )
+    download_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = AnnouncementAttachment
+        fields = (
+            'id', 'name', 'size', 'content_type',
+            'uploaded_by', 'uploaded_by_name', 'created_at', 'download_url',
+        )
+        read_only_fields = fields
+
+    def get_download_url(self, obj):
+        return (
+            f'/api/v1/notifications/announcements/'
+            f'{obj.announcement_id}/attachments/{obj.id}/download/'
+        )
+
+
 class AnnouncementSerializer(serializers.ModelSerializer):
     """公告序列化器"""
     # 类别显示
@@ -79,11 +104,14 @@ class AnnouncementSerializer(serializers.ModelSerializer):
         slug_field='name',
     )
     can_manage = serializers.SerializerMethodField()
+    attachments = AnnouncementAttachmentSerializer(many=True, read_only=True)
+    attachment_count = serializers.SerializerMethodField()
 
     class Meta:
         model = Announcement
         fields = (
             'id', 'title', 'content', 'resource_links',
+            'attachments', 'attachment_count',
             'category', 'category_display',
             'status', 'status_display',
             'audience', 'audience_display',
@@ -97,6 +125,7 @@ class AnnouncementSerializer(serializers.ModelSerializer):
         read_only_fields = (
             'id', 'category_display', 'status_display', 'audience_display',
             'organization_name', 'target_team_names', 'target_project_names',
+            'attachments', 'attachment_count',
             'can_manage', 'author', 'author_name', 'published_at',
             'created_at', 'updated_at',
         )
@@ -115,6 +144,12 @@ class AnnouncementSerializer(serializers.ModelSerializer):
             request.user,
             scope,
         )
+
+    def get_attachment_count(self, obj):
+        prefetched = getattr(obj, '_prefetched_objects_cache', {})
+        if 'attachments' in prefetched:
+            return len(prefetched['attachments'])
+        return obj.attachments.count()
 
     def validate(self, attrs):
         attrs = super().validate(attrs)

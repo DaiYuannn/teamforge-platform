@@ -250,6 +250,22 @@
             </el-button>
           </div>
         </el-form-item>
+        <el-form-item label="公告附件">
+          <el-upload
+            v-model:file-list="attachmentFileList"
+            drag
+            multiple
+            :auto-upload="false"
+            :limit="20"
+            :on-exceed="handleAttachmentExceed"
+            accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.md,.csv,.zip,.rar,.7z"
+          >
+            <div class="attachment-upload-copy">
+              <strong>拖入或选择公告附件</strong>
+              <span>可上传会议回放、模板、图片、PDF、Office 文档或压缩包，最多 20 个</span>
+            </div>
+          </el-upload>
+        </el-form-item>
         <el-form-item label="状态">
           <el-radio-group v-model="form.status">
             <el-radio value="draft">草稿</el-radio>
@@ -289,6 +305,26 @@
             {{ resource.title }}
           </a>
         </section>
+        <section v-if="selectedAnnouncement.attachments?.length" class="announcement-attachments">
+          <h3>公告附件</h3>
+          <article
+            v-for="attachment in selectedAnnouncement.attachments"
+            :key="attachment.id"
+          >
+            <button type="button" @click="handleDownloadAttachment(attachment)">
+              <span>{{ attachment.name }}</span>
+              <small>{{ formatFileSize(attachment.size) }}</small>
+            </button>
+            <el-button
+              v-if="selectedAnnouncement.can_manage"
+              text
+              type="danger"
+              :icon="Delete"
+              aria-label="删除公告附件"
+              @click="handleDeleteAttachment(attachment)"
+            />
+          </article>
+        </section>
       </template>
     </el-drawer>
   </div>
@@ -296,15 +332,21 @@
 
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted } from 'vue'
-import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
+import {
+  ElMessage,
+  ElMessageBox,
+  type FormInstance,
+  type FormRules,
+  type UploadUserFile,
+} from 'element-plus'
 import { Bottom, Delete, Plus, Top } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { useUserStore } from '@/stores/user'
-import { get, post, del } from '@/api/request'
+import { get, post, del, download, upload } from '@/api/request'
 import { getTeams, type Team } from '@/api/teams'
 import { getProjects } from '@/api/projects'
 import type { Project } from '@/types'
-import { formatDate } from '@/utils/format'
+import { downloadBlob, formatDate, formatFileSize } from '@/utils/format'
 import { useDevice } from '@/composables/useDevice'
 
 const userStore = useUserStore()
@@ -358,6 +400,7 @@ const canCreate = computed(() =>
 
 const showDialog = ref(false)
 const submitting = ref(false)
+const attachmentFileList = ref<UploadUserFile[]>([])
 const formRef = ref<FormInstance>()
 const form = reactive({
   title: '',
@@ -526,8 +569,27 @@ async function handleSubmit(): Promise<void> {
   try {
     await formRef.value.validate()
     submitting.value = true
-    await post('/notifications/announcements/', form)
+    const created = await post<any>('/notifications/announcements/', form)
+    const attachmentFailures: string[] = []
+    for (const item of attachmentFileList.value) {
+      if (!item.raw) continue
+      const formData = new FormData()
+      formData.append('file', item.raw)
+      try {
+        await upload(
+          `/notifications/announcements/${created.id}/attachments/`,
+          formData,
+        )
+      } catch {
+        attachmentFailures.push(item.name)
+      }
+    }
     ElMessage.success('公告发布成功')
+    if (attachmentFailures.length) {
+      ElMessage.warning(
+        `公告已保存，但以下附件上传失败：${attachmentFailures.join('、')}`,
+      )
+    }
     showDialog.value = false
     form.title = ''
     form.content = ''
@@ -537,12 +599,17 @@ async function handleSubmit(): Promise<void> {
     form.target_teams.splice(0)
     form.target_projects.splice(0)
     form.resource_links.splice(0)
+    attachmentFileList.value = []
     loadData()
   } catch {
     // handled
   } finally {
     submitting.value = false
   }
+}
+
+function handleAttachmentExceed(): void {
+  ElMessage.warning('一条公告最多添加 20 个附件')
 }
 
 async function openDetail(row: any): Promise<void> {
@@ -575,6 +642,41 @@ async function handleDelete(row: any): Promise<void> {
     loadData()
   } catch {
     // cancelled or error
+  }
+}
+
+async function handleDownloadAttachment(attachment: any): Promise<void> {
+  if (!selectedAnnouncement.value) return
+  try {
+    const blob = await download(
+      `/notifications/announcements/${selectedAnnouncement.value.id}`
+      + `/attachments/${attachment.id}/download/`,
+    )
+    downloadBlob(blob, attachment.name || `公告附件_${attachment.id}`)
+  } catch {
+    // handled by request interceptor
+  }
+}
+
+async function handleDeleteAttachment(attachment: any): Promise<void> {
+  if (!selectedAnnouncement.value) return
+  try {
+    await ElMessageBox.confirm(
+      `确定删除附件“${attachment.name}”吗？`,
+      '删除公告附件',
+      { type: 'warning' },
+    )
+    await del(
+      `/notifications/announcements/${selectedAnnouncement.value.id}`
+      + `/attachments/${attachment.id}/`,
+    )
+    selectedAnnouncement.value = await get<any>(
+      `/notifications/announcements/${selectedAnnouncement.value.id}/`,
+    )
+    loadData()
+    ElMessage.success('附件已删除')
+  } catch {
+    // cancelled or handled
   }
 }
 
@@ -705,6 +807,67 @@ onMounted(() => {
   color: var(--color-primary);
   text-decoration: none;
   overflow-wrap: anywhere;
+}
+
+.attachment-upload-copy {
+  display: flex;
+  padding: 8px 12px;
+  flex-direction: column;
+  gap: 6px;
+
+  span {
+    color: var(--color-text-muted);
+    font-size: 12px;
+  }
+}
+
+.announcement-attachments {
+  margin-top: 22px;
+
+  h3 {
+    margin: 0 0 10px;
+    font-size: 14px;
+  }
+
+  article {
+    display: flex;
+    min-height: 44px;
+    padding: 6px 8px 6px 12px;
+    align-items: center;
+    gap: 8px;
+    border: 1px solid var(--color-border-light);
+    border-radius: var(--radius-sm);
+
+    & + article {
+      margin-top: 8px;
+    }
+
+    > button:first-child {
+      display: flex;
+      min-width: 0;
+      padding: 4px 0;
+      flex: 1;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      color: var(--color-primary);
+      text-align: left;
+      background: transparent;
+      border: 0;
+      cursor: pointer;
+
+      span {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      small {
+        flex: 0 0 auto;
+        color: var(--color-text-muted);
+      }
+    }
+  }
 }
 
 .mobile-list {

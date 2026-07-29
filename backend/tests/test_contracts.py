@@ -51,7 +51,7 @@ class TestUserContract:
         user = make_user(global_role='sys_admin')
         assert user.get_global_role_display() == '系统管理员'
         user2 = make_user(global_role='teacher', email='t2@test.com')
-        assert user2.get_global_role_display() == '老师'
+        assert user2.get_global_role_display() == '操作老师'
 
 
 # ========== 文件字段契约 ==========

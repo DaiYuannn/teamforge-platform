@@ -24,6 +24,8 @@ def make_expense(project, amount, expense_date, category='other', **extra):
         'amount': amount,
         'expense_date': expense_date,
         'category': category,
+        # 趋势图只统计已经形成实际团队支出的记录。
+        'reimbursement_status': FinanceExpense.ReimbursementStatus.NOT_REQUIRED,
     }
     defaults.update(extra)
     return FinanceExpense.objects.create(project=project, **defaults)

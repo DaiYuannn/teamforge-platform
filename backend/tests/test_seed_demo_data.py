@@ -226,7 +226,21 @@ def test_seed_demo_data_scale_lifecycle_assets_and_safe_clean(settings, tmp_path
     assert User.objects.filter(
         email__in=owned_emails,
         global_role=User.GlobalRole.MEMBER,
-    ).count() == 56
+    ).count() == 58
+    assert User.objects.filter(
+        email__in=owned_emails,
+        global_role=User.GlobalRole.TEACHER,
+    ).count() == 0
+    assert User.objects.filter(
+        global_role=User.GlobalRole.TEACHER,
+        is_active=True,
+    ).count() == 1
+    assert User.objects.get(email='teacher1@demo.com').global_role == (
+        User.GlobalRole.MEMBER
+    )
+    assert User.objects.get(email='teacher2@demo.com').global_role == (
+        User.GlobalRole.MEMBER
+    )
     assert set(
         User.objects.filter(email__in=owned_emails).values_list(
             'membership_status', flat=True
@@ -643,7 +657,7 @@ def test_seed_demo_data_scale_lifecycle_assets_and_safe_clean(settings, tmp_path
             Path('imports') / DEMO_IMPORT_DIRNAME
         )
     )
-    assert demo_imports.count() == 7
+    assert demo_imports.count() == 8
     assert set(demo_imports.values_list('module', flat=True)) == set(
         ImportTask.Module.values
     )
@@ -781,7 +795,7 @@ def test_seed_demo_data_scale_lifecycle_assets_and_safe_clean(settings, tmp_path
     ).count() == 97
     assert ImportTask.objects.filter(
         file_path__contains=str(Path('imports') / DEMO_IMPORT_DIRNAME)
-    ).count() == 7
+    ).count() == 8
     regenerated_team = Team.objects.get(code=DEMO_TEAM_CODE)
     assert TeamMember.objects.filter(team=regenerated_team).count() == 60
     assert TeamMembershipEvent.objects.filter(

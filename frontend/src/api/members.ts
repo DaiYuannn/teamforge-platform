@@ -19,9 +19,37 @@ export interface MemberQueryParams extends PaginationParams {
   is_active?: boolean
 }
 
+/**
+ * 自由文本仅做首尾空白清理，保持用户原始大小写并交由后端进行片段匹配。
+ * 空筛选不进入查询字符串，避免被解释成严格的空值条件。
+ */
+export function normalizeMemberQueryParams(
+  params: MemberQueryParams,
+): MemberQueryParams {
+  const normalized: MemberQueryParams = {}
+  const target = normalized as Record<string, unknown>
+
+  Object.entries(params).forEach(([key, value]) => {
+    if (value === undefined || value === null || value === '') return
+    if (typeof value === 'string') {
+      const trimmed = value.trim()
+      if (trimmed) {
+        target[key] = trimmed
+      }
+      return
+    }
+    target[key] = value
+  })
+
+  return normalized
+}
+
 /** 获取成员列表 */
 export function getMembers(params: MemberQueryParams): Promise<PaginatedResponse<Member>> {
-  return get<PaginatedResponse<Member>>('/members/', params)
+  return get<PaginatedResponse<Member>>(
+    '/members/',
+    normalizeMemberQueryParams(params),
+  )
 }
 
 /** 获取成员详情 */

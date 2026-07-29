@@ -4,8 +4,43 @@
 """
 from django.db import models
 from django.conf import settings
+from django.utils import timezone
 
 from apps.projects.models import Project
+
+
+class CompetitionEvent(models.Model):
+    """A shared competition edition that can contain multiple project entries."""
+
+    organization = models.ForeignKey(
+        'common.Team',
+        on_delete=models.SET_NULL,
+        related_name='competition_events',
+        verbose_name='所属总团队',
+        null=True,
+        blank=True,
+    )
+    name = models.CharField('比赛名称', max_length=200)
+    edition = models.CharField('届次 / 年份', max_length=50, blank=True, default='')
+    organizer = models.CharField('主办单位', max_length=200, blank=True, default='')
+    created_at = models.DateTimeField('创建时间', auto_now_add=True)
+    updated_at = models.DateTimeField('更新时间', auto_now=True)
+
+    class Meta:
+        db_table = 'competition_events'
+        verbose_name = '比赛届次'
+        verbose_name_plural = verbose_name
+        ordering = ['-edition', 'name', '-created_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=('organization', 'name', 'edition', 'organizer'),
+                condition=models.Q(organization__isnull=False),
+                name='uniq_comp_event_org_name_edition_org',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.name} {self.edition}'.strip()
 
 
 class Competition(models.Model):
@@ -33,6 +68,20 @@ class Competition(models.Model):
         on_delete=models.CASCADE,
         related_name='competitions',
         verbose_name='所属项目',
+    )
+    event = models.ForeignKey(
+        CompetitionEvent,
+        on_delete=models.PROTECT,
+        related_name='entries',
+        verbose_name='比赛届次',
+        null=True,
+        blank=True,
+    )
+    entry_name = models.CharField(
+        '参赛队 / 报名队名称',
+        max_length=200,
+        blank=True,
+        default='',
     )
     participant_users = models.ManyToManyField(
         settings.AUTH_USER_MODEL,
@@ -106,6 +155,44 @@ class Competition(models.Model):
 
     def __str__(self):
         return f'{self.project.name} - {self.name}({self.get_level_display()})'
+
+    def save(self, *args, **kwargs):
+        if not self.event_id and self.name:
+            organization_id = next((
+                parent_id or team_id
+                for team_id, parent_id in self.project.teams.values_list(
+                    'id',
+                    'parent_id',
+                )
+            ), None)
+            edition_date = next((
+                value for value in (
+                    self.register_date,
+                    self.school_date,
+                    self.city_date,
+                    self.province_date,
+                    self.national_date,
+                    self.result_date,
+                )
+                if value
+            ), None)
+            edition_year = getattr(edition_date, 'year', None)
+            if edition_date and edition_year is None:
+                raw_year = str(edition_date).strip()[:4]
+                edition_year = (
+                    int(raw_year)
+                    if raw_year.isdigit()
+                    else None
+                )
+            edition = str(edition_year or timezone.localdate().year)
+            event, _ = CompetitionEvent.objects.get_or_create(
+                organization_id=organization_id,
+                name=self.name.strip(),
+                edition=edition,
+                organizer=self.organizer.strip(),
+            )
+            self.event = event
+        super().save(*args, **kwargs)
 
 
 class CompetitionParticipant(models.Model):

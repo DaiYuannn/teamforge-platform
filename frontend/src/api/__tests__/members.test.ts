@@ -11,7 +11,7 @@ vi.mock('@/api/request', () => ({
   del: vi.fn(),
 }))
 
-import { getMembers } from '@/api/members'
+import { getMembers, normalizeMemberQueryParams } from '@/api/members'
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -36,6 +36,40 @@ describe('member directory query API', () => {
       team_role: 'co_lead',
       school: '示例大学',
       membership_status: 'active',
+    })
+  })
+
+  it('keeps free-text fragments and their case while trimming empty filters', async () => {
+    await getMembers({
+      page: 1,
+      page_size: 20,
+      search: '  LYC  ',
+      grade: ' 2024 ',
+      school: ' 示例 ',
+      major: ' 计算机 ',
+      team_role: undefined,
+      membership_status: '',
+    })
+
+    expect(getMock).toHaveBeenCalledWith('/members/', {
+      page: 1,
+      page_size: 20,
+      search: 'LYC',
+      grade: '2024',
+      school: '示例',
+      major: '计算机',
+    })
+  })
+
+  it('does not lowercase or convert fragment queries into exact-match values', () => {
+    expect(normalizeMemberQueryParams({
+      search: 'ZhangSan',
+      school: 'University',
+      major: 'Computer',
+    })).toEqual({
+      search: 'ZhangSan',
+      school: 'University',
+      major: 'Computer',
     })
   })
 })

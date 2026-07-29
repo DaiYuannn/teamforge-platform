@@ -310,13 +310,25 @@
             <EmptyState v-else text="暂无知识产权申请" icon="Document" :illustration="false" :compact="true" accent="#176B73" />
           </el-tab-pane>
 
-          <el-tab-pane label="团队投入" name="team">
-            <div class="tab-action"><el-button link type="primary" @click="goTo('/members/team-schedule')">团队工时<el-icon><ArrowRight /></el-icon></el-button></div>
-            <dl class="work-status-list">
-              <div><span data-tone="success"><el-icon><CircleCheckFilled /></el-icon></span><dt>可投入</dt><dd>{{ workStatus.available }}</dd></div>
-              <div><span data-tone="warning"><el-icon><WarningFilled /></el-icon></span><dt>已饱和</dt><dd>{{ workStatus.saturated }}</dd></div>
-              <div><span data-tone="neutral"><el-icon><RemoveFilled /></el-icon></span><dt>暂不可投入</dt><dd>{{ workStatus.leave }}</dd></div>
-            </dl>
+          <el-tab-pane label="有效工作量" name="team">
+            <div class="tab-action"><el-button link type="primary" @click="goTo('/members/team-schedule')">进入团队有效工作量<el-icon><ArrowRight /></el-icon></el-button></div>
+            <div class="workload-guide">
+              <div>
+                <span data-tone="success"><el-icon><CircleCheckFilled /></el-icon></span>
+                <strong>比赛与项目</strong>
+                <p>先选择比赛届次和项目参赛条目，避免多个队伍的数据混在一起。</p>
+              </div>
+              <div>
+                <span data-tone="warning"><el-icon><WarningFilled /></el-icon></span>
+                <strong>任务与 DDL</strong>
+                <p>登记交付任务、截止日期和参考说明，不用补录精细个人工时。</p>
+              </div>
+              <div>
+                <span data-tone="neutral"><el-icon><RemoveFilled /></el-icon></span>
+                <strong>占比与异议</strong>
+                <p>组内查看已发布占比，并对具体分配提出和处理异议。</p>
+              </div>
+            </div>
           </el-tab-pane>
 
           <el-tab-pane label="贡献动态" name="contributions">
@@ -359,14 +371,13 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import * as echarts from 'echarts'
 import { ElMessage } from 'element-plus'
 import { Brush, Calendar, Stamp, TrendCharts, WarningFilled } from '@element-plus/icons-vue'
 import { getDashboardData } from '@/api/dashboard'
 import { getCustomDashboards, type CustomDashboard } from '@/api/analytics'
-import { getAllLatestSchedules } from '@/api/members'
 import { getContributions } from '@/api/contributions'
 import { getIPApplications } from '@/api/intellectualProperty'
 import { getNotifications } from '@/api/notifications'
@@ -390,7 +401,7 @@ import {
   normalizePrimaryColor,
 } from '@/utils/theme'
 
-type SectionKey = 'dashboard' | 'workStatus' | 'contributions' | 'ip' | 'notifications' | 'todos'
+type SectionKey = 'dashboard' | 'contributions' | 'ip' | 'notifications' | 'todos'
 type ChartMode = 'project' | 'task'
 type BusinessTab = 'finance' | 'ip' | 'team' | 'contributions' | 'notifications' | 'competitions'
 interface RiskItem { type: string; message: string; project_id?: number; task_id?: number; competition_id?: number; last_update?: string; deadline?: string | null; defense_date?: string | null }
@@ -429,19 +440,19 @@ const themeDraftColor = ref(userStore.primaryColor)
 const themeColorOptions = PRIMARY_COLOR_OPTIONS
 const predefinedThemeColors = PRIMARY_COLOR_OPTIONS.map((option) => option.value)
 const normalizedThemeDraft = computed(() => normalizePrimaryColor(themeDraftColor.value))
-const workStatus = reactive({ available: 0, saturated: 0, leave: 0 })
 const overviewChartRef = ref<HTMLElement>()
 let overviewChart: echarts.ECharts | null = null
 let chartResizeObserver: ResizeObserver | null = null
 
 const sectionLabels: Record<SectionKey, string> = {
-  dashboard: '项目与任务概览', workStatus: '团队投入状态', contributions: '贡献动态',
+  dashboard: '项目与任务概览', contributions: '贡献动态',
   ip: '知识产权进展', notifications: '近期通知', todos: '待办事项',
 }
 const todoLabels: Record<string, string> = {
   task: '任务',
   overdue_task: '逾期任务',
   approval: '敏感审批',
+  workflow_approval: '流程审批',
   contribution_review: '贡献审核',
   ip_todo: '知识产权',
   finance_review: '报销审核',
@@ -474,14 +485,14 @@ const staleProjectCount = computed(() => new Set(riskItems.value.filter((item) =
 const healthyActiveProjectCount = computed(() => Math.max(0, activeProjectCount.value - staleProjectCount.value))
 const projectHealthRate = computed(() => activeProjectCount.value ? Math.round(healthyActiveProjectCount.value / activeProjectCount.value * 100) : 0)
 const projectHealthText = computed(() => activeProjectCount.value ? `${healthyActiveProjectCount.value} / ${activeProjectCount.value} 个项目近 11 日有更新` : '暂无进行中项目')
-const pendingApprovalCount = computed(() => myTodos.value.filter((todo) => ['approval', 'contribution_review', 'ip_todo', 'finance_review', 'finance_payment'].includes(todo.type)).length)
+const pendingApprovalCount = computed(() => myTodos.value.filter((todo) => ['approval', 'workflow_approval', 'contribution_review', 'ip_todo', 'finance_review', 'finance_payment'].includes(todo.type)).length)
 const todayTodos = computed(() => [...myTodos.value].sort((a, b) => dateValue(a.due_date) - dateValue(b.due_date)).slice(0, 5))
 const todayTodoCount = computed(() => myTodos.value.length)
 const ipTodoCount = computed(() => myTodos.value.filter((todo) => todo.type === 'ip_todo').length)
 const signalItems = computed(() => [
   { label: '今日待办', value: todayTodoCount.value, detail: `${upcomingDeadlineCount.value} 个任务将在 3 日内到期`, tone: 'primary', icon: Calendar },
   { label: '逾期 / 风险', value: riskCount.value, detail: `其中 ${overdueTaskCount.value} 个任务已逾期`, tone: 'danger', icon: WarningFilled },
-  { label: '待审批', value: pendingApprovalCount.value, detail: '贡献、敏感资料与知识产权事项', tone: 'warning', icon: Stamp },
+  { label: '待审批', value: pendingApprovalCount.value, detail: '流程、贡献、敏感资料与知识产权事项', tone: 'warning', icon: Stamp },
   { label: '项目健康', value: `${projectHealthRate.value}%`, detail: projectHealthText.value, tone: 'success', icon: TrendCharts },
 ])
 
@@ -516,8 +527,8 @@ function isToday(value: string | null | undefined): boolean { return dateKey(val
 function dateValue(value: string | null | undefined): number { const parsed = value ? new Date(value).getTime() : NaN; return Number.isNaN(parsed) ? Number.MAX_SAFE_INTEGER : parsed }
 function todoDeadlineText(value: string | null | undefined): string { if (!value) return '无截止时间'; if (isToday(value)) return '今天'; return dateValue(value) < Date.now() ? `已逾期 · ${formatDate(value)}` : formatDate(value) }
 function todoTypeLabel(type: string): string { return todoLabels[type] || type }
-function todoTagType(type: string): any { return ({ overdue_task: 'danger', approval: 'warning', contribution_review: 'success', ip_todo: 'warning', finance_review: 'warning', finance_payment: 'primary', task: 'primary' } as Record<string, string>)[type] || 'info' }
-function todoTone(type: string): string { if (type === 'overdue_task') return 'danger'; if (['approval', 'ip_todo', 'finance_review'].includes(type)) return 'warning'; if (type === 'contribution_review') return 'success'; return 'primary' }
+function todoTagType(type: string): any { return ({ overdue_task: 'danger', approval: 'warning', workflow_approval: 'warning', contribution_review: 'success', ip_todo: 'warning', finance_review: 'warning', finance_payment: 'primary', task: 'primary' } as Record<string, string>)[type] || 'info' }
+function todoTone(type: string): string { if (type === 'overdue_task') return 'danger'; if (['approval', 'workflow_approval', 'ip_todo', 'finance_review'].includes(type)) return 'warning'; if (type === 'contribution_review') return 'success'; return 'primary' }
 function riskTypeLabel(type: string): string { return riskLabels[type] || '提醒' }
 function riskTagType(type: string): any { return type === 'overdue_task' ? 'danger' : ['stale_project', 'upcoming_competition'].includes(type) ? 'warning' : 'info' }
 function riskTone(type: string): string { return type === 'overdue_task' ? 'danger' : ['stale_project', 'upcoming_competition'].includes(type) ? 'warning' : 'neutral' }
@@ -615,19 +626,13 @@ async function loadDashboard(): Promise<void> {
       : undefined,
   )
 }
-async function loadWorkStatus(): Promise<void> {
-  const list = extractList(await getAllLatestSchedules())
-  workStatus.available = list.filter((item: any) => !item.is_saturated && toAmount(item.available_hours ?? item.work_hours) > 0).length
-  workStatus.saturated = list.filter((item: any) => item.is_saturated).length
-  workStatus.leave = list.filter((item: any) => !item.is_saturated && toAmount(item.available_hours ?? item.work_hours) <= 0).length
-}
 async function loadRecentContributions(): Promise<void> { recentContributions.value = extractList(await getContributions({ page: 1, page_size: 5 })) as Contribution[] }
 async function loadIPApplications(): Promise<void> { ipApplications.value = extractList(await getIPApplications({ page: 1, page_size: 5 })) }
 async function loadNotifications(): Promise<void> { recentNotifications.value = extractList(await getNotifications({ page: 1, page_size: 5 })) }
 async function loadMyTodos(): Promise<void> { myTodos.value = (await getUnifiedTodos()).results || [] }
 async function loadAll(): Promise<void> {
   if (!initialLoading.value) isRefreshing.value = true
-  const operations: Array<[SectionKey, () => Promise<void>]> = [['dashboard', loadDashboard], ['workStatus', loadWorkStatus], ['contributions', loadRecentContributions], ['ip', loadIPApplications], ['notifications', loadNotifications], ['todos', loadMyTodos]]
+  const operations: Array<[SectionKey, () => Promise<void>]> = [['dashboard', loadDashboard], ['contributions', loadRecentContributions], ['ip', loadIPApplications], ['notifications', loadNotifications], ['todos', loadMyTodos]]
   const results = await Promise.allSettled(operations.map(([, loader]) => loader()))
   loadErrors.value = new Set(results.flatMap((result, index) => result.status === 'rejected' ? [operations[index][0]] : []))
   initialLoading.value = false
@@ -797,7 +802,7 @@ onUnmounted(() => { window.removeEventListener('resize', renderChart); chartResi
 .delivery-layout { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 20px; min-height: 280px; }
 .chart-region { min-width: 0; }
 .overview-chart { width: 100%; height: 270px; }
-.delivery-facts, .finance-summary, .work-status-list, .mobile-finance-list dl { margin: 0; }
+.delivery-facts, .finance-summary, .mobile-finance-list dl { margin: 0; }
 .delivery-facts {
   display: grid; align-content: center; grid-template-columns: repeat(2, minmax(0, 1fr)); border-left: 1px solid var(--color-border, #dce3e0);
   div { min-width: 0; padding: 16px; } dt { color: var(--color-text-secondary, #5f6c67); font-size: 12px; } dd { margin: 6px 0 0; font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
@@ -818,11 +823,12 @@ button.business-row { display: grid; grid-template-columns: minmax(0, 1fr) minma
 .ip-progress { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .activity-row { display: grid; grid-template-columns: 8px minmax(0, 1fr) auto; align-items: center; gap: 10px; }
 .activity-dot { width: 7px; height: 7px; background: var(--primary-color, #176b73); border-radius: 50%; }
-.work-status-list {
+.workload-guide {
   display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border: 1px solid var(--color-border, #dce3e0); border-radius: 6px; overflow: hidden;
-  > div { display: grid; justify-items: center; min-width: 0; padding: 22px 8px; & + div { border-left: 1px solid var(--color-border, #dce3e0); } }
+  > div { display: grid; justify-items: start; align-content: start; min-width: 0; padding: 18px 16px; & + div { border-left: 1px solid var(--color-border, #dce3e0); } }
   span { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; color: var(--color-text-tertiary, #7c8984); background: rgba(124, 137, 132, 0.1); border-radius: 6px; &[data-tone='success'] { color: var(--color-success, #237a55); background: rgba(35, 122, 85, 0.1); } &[data-tone='warning'] { color: var(--color-warning, #a66116); background: rgba(166, 97, 22, 0.1); } }
-  dt { margin-top: 8px; color: var(--color-text-secondary, #5f6c67); font-size: 12px; } dd { margin: 4px 0 0; font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  strong { margin-top: 10px; color: var(--color-text-primary, #18221f); font-size: 13px; }
+  p { margin-top: 5px; color: var(--color-text-secondary, #5f6c67); font-size: 12px; line-height: 1.55; }
 }
 
 @media screen and (max-width: 1180px) {
@@ -845,11 +851,11 @@ button.business-row { display: grid; grid-template-columns: minmax(0, 1fr) minma
   .activity-row { grid-template-columns: 8px minmax(0, 1fr); .row-meta { grid-column: 2; align-items: center; flex-direction: row; } }
 }
 @media screen and (max-width: 520px) {
-  .signal-grid, .queue-links, .finance-summary, .work-status-list { grid-template-columns: minmax(0, 1fr); }
+  .signal-grid, .queue-links, .finance-summary, .workload-guide { grid-template-columns: minmax(0, 1fr); }
   .signal-card { min-height: 106px; }
-  .queue-links button + button, .finance-summary div + div, .work-status-list > div + div { border-top: 1px solid var(--color-border, #dce3e0); border-left: 0; }
+  .queue-links button + button, .finance-summary div + div, .workload-guide > div + div { border-top: 1px solid var(--color-border, #dce3e0); border-left: 0; }
   .finance-summary div { padding: 9px 14px; }
   .delivery-facts { grid-template-columns: minmax(0, 1fr); div { display: flex; align-items: center; justify-content: space-between; padding: 10px 6px; border-bottom: 1px solid var(--color-border-light, #e8edeb); } dd { margin: 0; font-size: 18px; } }
-  .work-status-list > div { grid-template-columns: 32px minmax(0, 1fr) auto; align-items: center; justify-items: start; gap: 10px; padding: 10px 12px; } .work-status-list dt, .work-status-list dd { margin: 0; } .work-status-list dd { font-size: 18px; }
+  .workload-guide > div { grid-template-columns: 32px minmax(0, 1fr); align-items: center; gap: 0 10px; padding: 12px; } .workload-guide strong { margin-top: 0; } .workload-guide p { grid-column: 2; }
 }
 </style>

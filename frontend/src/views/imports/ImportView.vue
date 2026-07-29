@@ -40,8 +40,10 @@
       <!-- 步骤2：上传文件 -->
       <div v-if="currentStep === 1" class="step-content">
         <el-alert
-          title="这里仅导入结构化表格数据"
-          description="证件照、PPT、计划书等资料不解析成数据行，请按资料敏感程度分别上传。"
+          :title="selectedModule === 'materials' ? 'ZIP 资料包会先安全预览，再分流确认导入' : '这里仅导入结构化表格数据'"
+          :description="selectedModule === 'materials'
+            ? '压缩包根目录必须包含 manifest.json；系统会校验路径穿越、软链接、压缩炸弹、危险扩展名和每项权限。'
+            : '证件照、PPT、计划书等资料不解析成数据行，请选择 ZIP 资料包或按资料敏感程度分别上传。'"
           type="info"
           :closable="false"
           show-icon
@@ -54,8 +56,8 @@
         </el-alert>
         <div class="template-guide">
           <div>
-            <strong>{{ IMPORT_MODULE_MAP[selectedModule] }}导入模板</strong>
-            <span>跨表关联请使用项目编号和成员邮箱，避免数据库 ID 变化造成错位。</span>
+            <strong>{{ selectedModule === 'materials' ? '资料包清单模板' : `${IMPORT_MODULE_MAP[selectedModule]}导入模板` }}</strong>
+            <span>{{ selectedModule === 'materials' ? '清单使用项目编号、团队编号和成员邮箱建立稳定关联。' : '跨表关联请使用项目编号和成员邮箱，避免数据库 ID 变化造成错位。' }}</span>
           </div>
           <el-button :loading="templateDownloading" @click="handleDownloadTemplate">下载模板</el-button>
         </div>
@@ -64,13 +66,13 @@
           :auto-upload="false"
           :on-change="handleFileChange"
           :limit="1"
-          accept=".xlsx,.xlsm,.csv"
+          :accept="selectedModule === 'materials' ? '.zip' : '.xlsx,.xlsm,.csv'"
           drag
         >
           <el-icon class="el-icon--upload"><UploadFilled /></el-icon>
           <div class="el-upload__text">将文件拖到此处，或<em>点击上传</em></div>
           <template #tip>
-            <div class="el-upload__tip">支持 Excel (.xlsx、.xlsm) 和 CSV 文件</div>
+            <div class="el-upload__tip">{{ selectedModule === 'materials' ? '支持 ZIP + 根目录 manifest.json' : '支持 Excel (.xlsx、.xlsm) 和 CSV 文件' }}</div>
           </template>
         </el-upload>
         <div class="step-actions">
@@ -82,7 +84,7 @@
       </div>
 
       <!-- 步骤3：字段映射 -->
-      <div v-if="currentStep === 2" class="step-content">
+      <div v-if="currentStep === 2 && selectedModule !== 'materials'" class="step-content">
         <p class="step-hint">请确认源文件字段与系统字段的映射关系：</p>
         <div class="table-scroll">
         <el-table :data="mappingRows" size="small" class="mapping-table">
@@ -234,6 +236,7 @@ import {
   rollbackImport,
   getImportTasks,
   downloadImportTemplate,
+  previewMaterialArchive,
 } from '@/api/imports'
 import { IMPORT_MODULE_MAP, IMPORT_TASK_STATUS_MAP } from '@/utils/constants'
 import { downloadBlob, formatDateTime } from '@/utils/format'
@@ -289,18 +292,24 @@ function handleFileChange(file: UploadFile): void {
 // 预览数据
 async function handlePreview(): Promise<void> {
   if (!selectedFile.value) return
+  if (selectedModule.value === 'materials' && !selectedTeamId.value) {
+    ElMessage.warning('导入资料包前请选择所属总团队')
+    return
+  }
   previewing.value = true
   try {
-    const result = await previewImport(
-      selectedFile.value,
-      selectedModule.value,
-      undefined,
-      selectedTeamId.value,
-    )
+    const result = selectedModule.value === 'materials'
+      ? await previewMaterialArchive(selectedFile.value, selectedTeamId.value as number)
+      : await previewImport(
+        selectedFile.value,
+        selectedModule.value,
+        undefined,
+        selectedTeamId.value,
+      )
     previewData.value = result
     // 初始化映射行（后端返回 field_mapping: { sourceField: targetField }）
     const mapping = result.field_mapping || {}
-    mappingRows.value = result.headers.map((sourceField) => ({
+    mappingRows.value = (result.headers || []).map((sourceField) => ({
       sourceField,
       targetField: mapping[sourceField] || '',
     }))
@@ -309,6 +318,14 @@ async function handlePreview(): Promise<void> {
     const rawRows = result.preview_rows || []
     const errorDetails = result.error_details || {}
     previewRows.value = rawRows.map((row: any, idx: number) => {
+      if (selectedModule.value === 'materials') {
+        return {
+          row_index: row.row_index || idx + 1,
+          data: row,
+          valid: Boolean(row.valid),
+          error: Array.isArray(row.errors) ? row.errors.join('；') : '',
+        }
+      }
       const rowIndex = idx + 1
       const errorInfo = errorDetails[String(rowIndex)] || errorDetails[rowIndex]
       return {
@@ -318,7 +335,7 @@ async function handlePreview(): Promise<void> {
         error: errorInfo ? (typeof errorInfo === 'string' ? errorInfo : JSON.stringify(errorInfo)) : '',
       }
     })
-    currentStep.value = 2
+    currentStep.value = selectedModule.value === 'materials' ? 3 : 2
   } catch {
     // 已处理
   } finally {
@@ -407,6 +424,36 @@ function handleReset(): void {
 async function handleDownloadTemplate(): Promise<void> {
   templateDownloading.value = true
   try {
+    if (selectedModule.value === 'materials') {
+      const example = {
+        version: 1,
+        items: [
+          {
+            path: '普通资料/答辩PPT.pptx',
+            project_code: 'PROJECT-001',
+            level: 'internal',
+            visibility: 'competition',
+            competition_entry_id: 1,
+            title: '比赛答辩PPT',
+          },
+          {
+            path: '敏感资料/张三身份证.jpg',
+            project_code: 'PROJECT-001',
+            team_code: 'TEAM-001',
+            level: 'sensitive',
+            visibility: 'team',
+            data_type: 'id_card',
+            subject_email: 'member@example.com',
+            title: '张三身份证扫描件',
+          },
+        ],
+      }
+      downloadBlob(
+        new Blob([JSON.stringify(example, null, 2)], { type: 'application/json;charset=utf-8' }),
+        'manifest.json',
+      )
+      return
+    }
     const blob = await downloadImportTemplate(selectedModule.value)
     downloadBlob(blob, `${IMPORT_MODULE_MAP[selectedModule.value]}导入模板.xlsx`)
   } catch {

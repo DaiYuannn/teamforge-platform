@@ -109,7 +109,7 @@ def test_member_directory_defaults_to_team_role_priority_and_name(
         )
         for row in rows
     ]
-    assert rows[0]['team_role_display'] == '指导老师'
+    assert rows[0]['team_role_display'] == '查看老师（只读）'
 
 
 @pytest.mark.api

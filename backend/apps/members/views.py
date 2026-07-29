@@ -20,10 +20,12 @@ from django.db.models import (
     Value,
     When,
 )
+from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.utils import OpenApiParameter, extend_schema, inline_serializer
 from rest_framework import serializers
 from rest_framework import status
 from rest_framework.decorators import action
+from rest_framework.filters import OrderingFilter
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet, ReadOnlyModelViewSet
 from rest_framework.views import APIView
@@ -39,6 +41,10 @@ from common.project_access import (
 from common.schema import success_response_schema
 from apps.users.models import User
 from apps.users.serializers import ExternalCollaboratorUserSerializer
+from apps.competitions.member_search import (
+    member_matches_search,
+    normalize_search_text,
+)
 from .models import SkillTag, MemberSkill, FlexibleWorkSchedule
 from .periods import get_half_month_period
 from .serializers import (
@@ -71,10 +77,200 @@ class MemberViewSet(MultiSerializerMixin, ReadOnlyModelViewSet):
 
     filterset_fields = [
         'global_role', 'membership_status', 'is_active', 'is_student',
-        'school', 'grade', 'major',
     ]
-    search_fields = ['username', 'name', 'email', 'phone']
+    # SearchFilter cannot preserve pinyin matches because it applies a second
+    # database-only search after our member matcher. Keep exact dropdown
+    # filtering through DjangoFilterBackend and handle text search below.
+    filter_backends = [DjangoFilterBackend, OrderingFilter]
     ordering_fields = ['date_joined', 'name']
+
+    @staticmethod
+    def _first_query_value(query_params, *names):
+        for name in names:
+            value = normalize_search_text(query_params.get(name, ''))
+            if value:
+                return value
+        return ''
+
+    def _apply_member_field_text_filters(self, queryset):
+        """Apply partial text matching to free-text directory fields."""
+        query_params = self.request.query_params
+        for field_name in ('school', 'grade', 'major'):
+            value = self._first_query_value(
+                query_params,
+                field_name,
+                f'{field_name}_search',
+                f'{field_name}_text',
+            )
+            if value:
+                queryset = queryset.filter(
+                    **{f'{field_name}__icontains': value},
+                )
+
+            exact_value = self._first_query_value(
+                query_params,
+                f'{field_name}_exact',
+            )
+            if exact_value:
+                queryset = queryset.filter(
+                    **{f'{field_name}__iexact': exact_value},
+                )
+        return queryset
+
+    @staticmethod
+    def _member_text_values(member, *, team_id=None):
+        """Build general, role-only, and status-only searchable values."""
+        from apps.common.team_models import TeamMember
+
+        role_labels = dict(TeamMember.Role.choices)
+        memberships = list(getattr(
+            member,
+            'prefetched_current_team_memberships',
+            [],
+        ))
+        owned_teams = list(getattr(
+            member,
+            'prefetched_context_owned_teams',
+            [],
+        ))
+        role_values = [
+            member.global_role,
+            member.get_global_role_display(),
+        ]
+        status_values = [
+            member.membership_status,
+            member.get_membership_status_display(),
+            '启用' if member.is_active else '停用',
+            'active' if member.is_active else 'inactive',
+        ]
+        if team_id is not None:
+            memberships = [
+                membership
+                for membership in memberships
+                if membership.team_id == team_id
+            ]
+            owned_teams = [
+                team for team in owned_teams if team.id == team_id
+            ]
+
+        role_priority = getattr(member, '_team_role_priority', None)
+        if role_priority is not None:
+            try:
+                team_role = TEAM_MEMBER_ROLE_PRIORITY[int(role_priority)]
+            except (IndexError, TypeError, ValueError):
+                team_role = ''
+            if team_role:
+                role_values.extend([
+                    team_role,
+                    role_labels.get(team_role, ''),
+                ])
+
+        association_values = []
+        for membership in memberships:
+            role_values.extend([
+                membership.role,
+                membership.get_role_display(),
+            ])
+            status_values.extend([
+                membership.status,
+                membership.get_status_display(),
+            ])
+            association_values.extend([
+                membership.team.name,
+                (
+                    membership.team.parent.name
+                    if membership.team.parent
+                    else ''
+                ),
+            ])
+        for team in owned_teams:
+            association_values.extend([
+                team.name,
+                (
+                    team.parent.name
+                    if team_id is None and team.parent
+                    else ''
+                ),
+            ])
+
+        general_values = [
+            member.name,
+            member.username,
+            member.phone,
+            member.email,
+            member.school,
+            member.major,
+            member.grade,
+            *role_values,
+            *status_values,
+            *association_values,
+        ]
+        return general_values, role_values, status_values
+
+    def _apply_member_text_search(self, queryset):
+        """Apply normalized substring, Chinese-name pinyin, and initials search."""
+        query_params = self.request.query_params
+        keyword = self._first_query_value(
+            query_params,
+            'search',
+            'keyword',
+            'q',
+        )
+        role_text = self._first_query_value(
+            query_params,
+            'role_search',
+            'role_text',
+            'team_role_search',
+            'global_role_search',
+        )
+        status_text = self._first_query_value(
+            query_params,
+            'status_search',
+            'status_text',
+            'membership_status_search',
+        )
+        if not any((keyword, role_text, status_text)):
+            return queryset
+
+        raw_team_id = query_params.get('team')
+        try:
+            team_id = (
+                int(raw_team_id)
+                if raw_team_id not in (None, '')
+                else None
+            )
+        except (TypeError, ValueError):
+            team_id = None
+        matching_ids = []
+        for member in queryset:
+            general_values, role_values, status_values = (
+                self._member_text_values(member, team_id=team_id)
+            )
+            if keyword and not member_matches_search(
+                query=keyword,
+                values=general_values,
+                name=member.name,
+            ):
+                continue
+            if role_text and not member_matches_search(
+                query=role_text,
+                values=role_values,
+                name='',
+            ):
+                continue
+            if status_text and not member_matches_search(
+                query=status_text,
+                values=status_values,
+                name='',
+            ):
+                continue
+            matching_ids.append(member.id)
+        return queryset.filter(pk__in=matching_ids)
+
+    def filter_queryset(self, queryset):
+        queryset = super().filter_queryset(queryset)
+        queryset = self._apply_member_field_text_filters(queryset)
+        return self._apply_member_text_search(queryset)
 
     def get_queryset(self):
         from apps.common.team_models import Team, TeamMember
@@ -200,12 +396,24 @@ class MemberViewSet(MultiSerializerMixin, ReadOnlyModelViewSet):
                 Q(team_id__in=root_ids)
                 | Q(team__parent_id__in=root_ids)
             )
+        owned_team_prefetch = Team.objects.filter(
+            is_active=True,
+        ).select_related('parent')
+        if root_ids:
+            owned_team_prefetch = owned_team_prefetch.filter(
+                Q(id__in=root_ids) | Q(parent_id__in=root_ids)
+            )
         return queryset.prefetch_related(
             Prefetch(
                 'teammember_set',
                 queryset=membership_prefetch,
                 to_attr='prefetched_current_team_memberships',
-            )
+            ),
+            Prefetch(
+                'owned_teams',
+                queryset=owned_team_prefetch,
+                to_attr='prefetched_context_owned_teams',
+            ),
         )
 
     def get_serializer_class(self):
@@ -233,6 +441,52 @@ class MemberViewSet(MultiSerializerMixin, ReadOnlyModelViewSet):
                 required=False,
                 enum=list(TEAM_MEMBER_ROLE_PRIORITY),
                 description='team_role 的兼容别名。',
+            ),
+            OpenApiParameter(
+                name='search',
+                type=str,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description=(
+                    '通用关键词；支持姓名、用户名、手机号、邮箱、学校、'
+                    '专业、年级、团队名、角色与状态，并支持中文姓名全拼、'
+                    '拼音首字母和单字符搜索。'
+                ),
+            ),
+            OpenApiParameter(
+                name='role_search',
+                type=str,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description='按全局或团队角色编码/显示词进行部分匹配。',
+            ),
+            OpenApiParameter(
+                name='status_search',
+                type=str,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description='按账号或成员状态编码/显示词进行部分匹配。',
+            ),
+            OpenApiParameter(
+                name='school',
+                type=str,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description='学校名称，大小写不敏感的部分匹配。',
+            ),
+            OpenApiParameter(
+                name='grade',
+                type=str,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description='年级，大小写不敏感的部分匹配。',
+            ),
+            OpenApiParameter(
+                name='major',
+                type=str,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description='专业，大小写不敏感的部分匹配。',
             ),
         ],
     )

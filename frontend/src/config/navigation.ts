@@ -53,9 +53,9 @@ export const NAVIGATION_GROUPS: readonly AppNavigationGroup[] = [
     items: [
       { path: '/team', title: '团队组织', icon: 'OfficeBuilding' },
       { path: '/members', title: '成员管理', icon: 'User' },
-      { path: '/members/schedule', title: '我的灵活工时', icon: 'Clock' },
-      { path: '/members/team-schedule', title: '团队灵活工时', icon: 'DataAnalysis' },
-      { path: '/members/skills', title: '技能标签', icon: 'Collection' },
+      { path: '/members/schedule', title: '我的任务与工作量', icon: 'Clock' },
+      { path: '/members/team-schedule', title: '团队有效工作量', icon: 'DataAnalysis' },
+      { path: '/members/skills', title: '技能与组队', icon: 'Collection' },
       { path: '/finance', title: '经费管理', icon: 'Money' },
       { path: '/files', title: '文件管理', icon: 'Document' },
       { path: '/imports', title: '导入中心', icon: 'Upload' },

@@ -334,17 +334,17 @@ class RankingObjectionCreateSerializer(serializers.ModelSerializer):
 class RankingObjectionReviewSerializer(serializers.Serializer):
     """
     排名异议处理序列化器
-    - action: leader_review（负责人初审）/ teacher_confirm（老师最终确认）
+    - action: leader_review（负责人初审）/ teacher_confirm（最终复核，保留旧动作名）
     - leader_opinion: 负责人意见
-    - teacher_opinion: 老师意见
+    - teacher_opinion: 复核意见（保留旧字段名）
     - final_result: 最终结果
-    - final_status: resolved/approved/rejected（老师确认时必填）
+    - final_status: approved/rejected（最终复核时必填）
     """
     action = serializers.ChoiceField(choices=['leader_review', 'teacher_confirm'])
     leader_opinion = serializers.CharField(required=False, allow_blank=True, default='')
     teacher_opinion = serializers.CharField(required=False, allow_blank=True, default='')
     final_result = serializers.CharField(required=False, allow_blank=True, default='')
-    # 老师确认时的最终状态：approved(异议成立)/rejected(异议不成立)
+    # 最终复核状态：approved(异议成立)/rejected(异议不成立)
     final_status = serializers.ChoiceField(
         choices=['approved', 'rejected'], required=False
     )
@@ -364,7 +364,7 @@ class RankingObjectionReviewSerializer(serializers.Serializer):
                 raise serializers.ValidationError({'leader_opinion': '负责人初审需填写意见'})
         elif action == 'teacher_confirm':
             if not attrs.get('final_status'):
-                raise serializers.ValidationError({'final_status': '老师确认需指定最终状态'})
+                raise serializers.ValidationError({'final_status': '最终复核需指定最终状态'})
             if (
                 attrs.get('final_status') == 'approved'
                 and attrs.get('corrected_rank') is None

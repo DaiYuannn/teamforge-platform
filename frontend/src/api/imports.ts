@@ -24,6 +24,16 @@ export function previewImport(
   return upload<ImportPreviewResult>('/imports/tasks/preview/', formData)
 }
 
+export function previewMaterialArchive(
+  file: File,
+  team: number,
+): Promise<ImportPreviewResult & { archive_sha256: string }> {
+  const formData = new FormData()
+  formData.append('file', file)
+  formData.append('team', String(team))
+  return upload('/imports/tasks/preview-materials/', formData)
+}
+
 /** 确认导入（执行实际数据导入） */
 export function confirmImport(
   taskId: number,

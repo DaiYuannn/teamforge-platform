@@ -130,3 +130,63 @@ class TestAwardTracking:
         award.recipients.set([u1, u2])
         assert award.recipients.count() == 2
         assert u1.competition_awards.count() == 1
+
+    def test_award_can_be_updated_and_legacy_summary_stays_in_sync(
+        self,
+        leader_client,
+        make_project,
+        make_user,
+    ):
+        project = make_project(leader=leader_client.user)
+        comp = make_competition(project)
+        recipient = make_user(email='award-update-recipient@test.com')
+        award = CompetitionAward.objects.create(
+            competition=comp,
+            award_name='省赛二等奖',
+            award_level='二等奖',
+        )
+
+        response = leader_client.patch(
+            f'/api/v1/competitions/{comp.id}/awards/{award.id}/',
+            {
+                'award_name': '省赛一等奖',
+                'award_level': '一等奖',
+                'award_date': '2026-07-20',
+                'recipients': [recipient.id],
+            },
+            format='json',
+        )
+
+        assert response.status_code == 200, response.json()
+        award.refresh_from_db()
+        comp.refresh_from_db()
+        assert award.award_name == '省赛一等奖'
+        assert list(award.recipients.values_list('id', flat=True)) == [recipient.id]
+        assert comp.is_awarded is True
+        assert comp.award_level == '一等奖'
+
+    def test_deleting_last_award_clears_legacy_award_summary(
+        self,
+        leader_client,
+        make_project,
+    ):
+        project = make_project(leader=leader_client.user)
+        comp = make_competition(
+            project,
+            is_awarded=True,
+            award_level='金奖',
+        )
+        award = CompetitionAward.objects.create(
+            competition=comp,
+            award_name='金奖',
+            award_level='金奖',
+        )
+
+        response = leader_client.delete(
+            f'/api/v1/competitions/{comp.id}/awards/{award.id}/',
+        )
+
+        assert response.status_code == 200, response.json()
+        comp.refresh_from_db()
+        assert comp.is_awarded is False
+        assert comp.award_level == ''

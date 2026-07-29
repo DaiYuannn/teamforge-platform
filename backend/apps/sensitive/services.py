@@ -7,7 +7,12 @@ from django.db import transaction
 from django.utils import timezone
 from datetime import timedelta
 
-from .models import SensitiveData, SensitiveAccessRequest
+from .models import (
+    SensitiveAccessRequest,
+    SensitiveData,
+    SensitiveDataGrant,
+    SensitiveGrantAccessLog,
+)
 from apps.audit.models import OperationLog
 
 
@@ -300,6 +305,125 @@ class SensitiveDataService:
             'plaintext': plaintext,
             'sensitive_data': sensitive,
             'request': request_obj,
+        }
+
+    @staticmethod
+    def resolve_direct_grant(
+        *,
+        sensitive_data,
+        viewer,
+        grant_id=None,
+        require_download=False,
+    ):
+        """Resolve one exact, unexpired grant without falling back to team scope."""
+        queryset = SensitiveDataGrant.objects.filter(
+            sensitive_data=sensitive_data,
+            granted_to=viewer,
+        ).select_related('sensitive_data', 'granted_to', 'granted_by')
+        if grant_id:
+            queryset = queryset.filter(pk=grant_id)
+        grant = queryset.order_by('-updated_at').first()
+        if grant is None:
+            return False, '未找到该资料对你的直接授权', None
+        if grant.revoked_at is not None:
+            return False, '该直接授权已撤销', grant
+        if timezone.now() >= grant.expires_at:
+            return False, '该直接授权已过期', grant
+        if require_download and not grant.can_download:
+            return False, '该直接授权不包含附件下载权限', grant
+        if not require_download and not grant.can_view:
+            return False, '该直接授权不包含明文查看权限', grant
+        return True, '', grant
+
+    @staticmethod
+    def record_direct_grant_access(
+        *,
+        grant,
+        viewer,
+        action,
+        request=None,
+        is_success=True,
+        detail='',
+    ):
+        if grant is None:
+            return None
+        return SensitiveGrantAccessLog.objects.create(
+            grant=grant,
+            sensitive_data=grant.sensitive_data,
+            accessor=viewer,
+            action=action,
+            purpose_snapshot=grant.purpose,
+            is_success=is_success,
+            detail=detail[:300],
+            request_method=getattr(request, 'method', '') if request else '',
+            request_path=getattr(request, 'path', '') if request else '',
+            request_ip=_get_client_ip(request) if request else None,
+        )
+
+    @staticmethod
+    def view_sensitive_data_by_grant(
+        *,
+        sensitive_data,
+        viewer,
+        grant_id=None,
+        request=None,
+    ):
+        success, message, grant = SensitiveDataService.resolve_direct_grant(
+            sensitive_data=sensitive_data,
+            viewer=viewer,
+            grant_id=grant_id,
+        )
+        if not success:
+            SensitiveDataService.record_direct_grant_access(
+                grant=grant,
+                viewer=viewer,
+                action=SensitiveGrantAccessLog.Action.VIEW,
+                request=request,
+                is_success=False,
+                detail=message,
+            )
+            return False, message
+        try:
+            plaintext = (
+                SensitiveDataService.decrypt_value(sensitive_data.encrypted_content)
+                if sensitive_data.is_encrypted
+                else sensitive_data.encrypted_content
+            )
+        except Exception as exc:
+            message = f'解密失败: {exc}'
+            SensitiveDataService.record_direct_grant_access(
+                grant=grant,
+                viewer=viewer,
+                action=SensitiveGrantAccessLog.Action.VIEW,
+                request=request,
+                is_success=False,
+                detail=message,
+            )
+            return False, message
+        SensitiveDataService.record_direct_grant_access(
+            grant=grant,
+            viewer=viewer,
+            action=SensitiveGrantAccessLog.Action.VIEW,
+            request=request,
+        )
+        OperationLog.objects.create(
+            operator=viewer,
+            operation_type=OperationLog.OperationType.OTHER,
+            module='sensitive',
+            object_type='SensitiveDataGrant',
+            object_id=str(grant.id),
+            description=(
+                f'依据单份授权查看敏感资料明文: {sensitive_data.title}'
+                f'（用途：{grant.purpose}）'
+            ),
+            request_method=getattr(request, 'method', '') if request else '',
+            request_path=getattr(request, 'path', '') if request else '',
+            request_ip=_get_client_ip(request) if request else None,
+        )
+        return True, {
+            'plaintext': plaintext,
+            'grant': grant,
+            'sensitive_data': sensitive_data,
         }
 
     @staticmethod

@@ -1,8 +1,8 @@
 """
 贡献度视图
 - ContributionViewSet: 贡献记录 CRUD + 审核 + 我的贡献 + 待审核 + 按项目查询
-- MemberRankingViewSet: 成员排名 列表 + 生成草案 + 修改排序 + 老师确认 + 按项目查询
-- RankingObjectionViewSet: 排名异议 列表 + 创建 + 负责人初审 + 老师最终确认
+- MemberRankingViewSet: 成员排名 列表 + 生成草案 + 修改排序 + 负责人确认 + 按项目查询
+- RankingObjectionViewSet: 排名异议 列表 + 创建 + 负责人初审 + 独立复核
 """
 from django.db.models import Q
 from django.utils import timezone
@@ -13,12 +13,9 @@ from rest_framework.viewsets import ModelViewSet
 
 from common.response import success_response, error_response
 from common.mixins import MultiSerializerMixin, MultiPermissionMixin
-from common.permissions import IsTeacherOrAdmin
 from common.project_access import (
-    active_user_root_team_ids,
     has_active_project_leadership,
     project_can_manage,
-    project_root_team_ids,
     scope_project_queryset,
 )
 from apps.projects.models import Project, ProjectMember
@@ -100,8 +97,8 @@ def _is_actual_project_participant(user, project):
 
 
 def _organization_teachers_for_project(project):
-    """只向项目所在根团队内的老师发送异议通知。"""
-    teachers = User.objects.filter(
+    """小团队版唯一操作老师拥有全局业务权限。"""
+    return User.objects.filter(
         global_role=User.GlobalRole.TEACHER,
         is_active=True,
         membership_status__in=[
@@ -109,40 +106,50 @@ def _organization_teachers_for_project(project):
             User.MembershipStatus.ON_LEAVE,
         ],
     )
-    from apps.common.team_models import Team, TeamMember
 
-    active_root_ids = set(
-        Team.objects.filter(
-            parent__isnull=True,
+
+def _project_ranking_reviewers(project, *, exclude_ids=None):
+    """Return the small set of people who may handle a ranking objection."""
+    exclude_ids = {value for value in (exclude_ids or set()) if value}
+    reviewer_ids = set()
+    if project and project.leader_id:
+        reviewer_ids.add(project.leader_id)
+    if project:
+        reviewer_ids.update(
+            ProjectMember.objects.filter(
+                project=project,
+                role_in_project=ProjectMember.RoleInProject.LEADER,
+                status=ProjectMember.Status.ACTIVE,
+            ).values_list('user_id', flat=True)
+        )
+    reviewers = list(
+        User.objects.filter(
+            id__in=reviewer_ids - exclude_ids,
             is_active=True,
-        ).values_list('id', flat=True)
+        )
     )
-    if not active_root_ids:
-        # 完全没有 Team 的旧部署保持原有全局老师通知行为。
-        return teachers
+    reviewers.extend(
+        _organization_teachers_for_project(project).exclude(id__in=exclude_ids)
+    )
+    return reviewers
 
-    root_ids = project_root_team_ids(project)
-    if not root_ids and project and project.leader_id:
-        root_ids = active_user_root_team_ids(project.leader)
-    if not root_ids:
-        return teachers.none()
 
-    visible_statuses = [
-        TeamMember.Status.ACTIVE,
-        TeamMember.Status.ON_LEAVE,
-    ]
-    return teachers.filter(
-        Q(
-            teammember__team_id__in=root_ids,
-            teammember__status__in=visible_statuses,
-        )
-        | Q(
-            teammember__team__parent_id__in=root_ids,
-            teammember__status__in=visible_statuses,
-        )
-        | Q(owned_teams__id__in=root_ids)
-        | Q(owned_teams__parent_id__in=root_ids)
-    ).distinct()
+def _can_finalize_ranking_objection(user, objection):
+    """A different project lead, the operating teacher, or admin may finalize."""
+    if (
+        not user
+        or not user.is_authenticated
+        or user.id in {
+            objection.objector_id,
+            objection.leader_reviewer_id,
+        }
+    ):
+        return False
+    project = objection.ranking.project
+    return bool(
+        user.global_role in ['sys_admin', 'teacher']
+        or (project is not None and project_can_manage(user, project))
+    )
 
 
 def _notify_ranking_objection(objection, stage, sender):
@@ -152,9 +159,10 @@ def _notify_ranking_objection(objection, stage, sender):
     project = objection.ranking.project
     recipients = []
     if stage == 'created':
-        if project and project.leader:
-            recipients.append(project.leader)
-        recipients.extend(_organization_teachers_for_project(project))
+        recipients.extend(_project_ranking_reviewers(
+            project,
+            exclude_ids={objection.objector_id},
+        ))
         title = f'排名异议待初审：{project.name if project else "团队排名"}'
         content = (
             f'{objection.objector.name} 对 {objection.ranking.period} '
@@ -162,9 +170,15 @@ def _notify_ranking_objection(objection, stage, sender):
         )
     elif stage == 'leader_reviewed':
         recipients.append(objection.objector)
-        recipients.extend(_organization_teachers_for_project(project))
-        title = f'排名异议已初审：{project.name if project else "团队排名"}'
-        content = f'负责人初审意见：{objection.leader_opinion}，请老师进行最终确认。'
+        recipients.extend(_project_ranking_reviewers(
+            project,
+            exclude_ids={
+                objection.objector_id,
+                objection.leader_reviewer_id,
+            },
+        ))
+        title = f'排名异议待复核：{project.name if project else "团队排名"}'
+        content = f'负责人初审意见：{objection.leader_opinion}，请另一位负责人完成最终复核。'
     else:
         recipients.append(objection.objector)
         if project and project.leader:
@@ -379,7 +393,7 @@ class ContributionViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewS
                 http_status=status.HTTP_403_FORBIDDEN,
             )
         can_review = (
-            user.global_role == 'sys_admin'
+            user.global_role in {'sys_admin', 'teacher'}
             or contribution.reviewer_id == user.id
             or (
                 contribution.reviewer_id is None
@@ -552,7 +566,7 @@ class MemberRankingViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelView
     - list: 按项目查询排序（已确认的公开可见，草案仅负责人/老师/管理员可见）
     - generate: POST 项目负责人生成排序草案
     - update_rank: PATCH 修改排序（项目负责人）
-    - confirm: POST 老师确认排序（确认后不可改，is_public=True）
+    - confirm: POST 项目负责人确认并公开排序
     - by_project: GET 指定项目的排序
     """
     queryset = MemberRanking.objects.all().order_by('period', 'rank')
@@ -573,7 +587,7 @@ class MemberRankingViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelView
         'retrieve': [IsAuthenticated],
         'generate': [IsAuthenticated],
         'update_rank': [IsAuthenticated],
-        'confirm': [IsTeacherOrAdmin],
+        'confirm': [IsAuthenticated],
         'by_project': [IsAuthenticated],
     }
 
@@ -603,8 +617,17 @@ class MemberRankingViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelView
             queryset = queryset.filter(project_id__in=project_ids)
         # 普通成员仅可见已公开（已确认）的排名
         if user.global_role not in ['sys_admin', 'teacher']:
-            # 项目负责人可见自己项目的草案，其他成员仅可见 is_public=True
-            my_project_ids = Project.objects.filter(leader=user).values_list('id', flat=True)
+            # 牵头负责人和有效共同负责人可见草案，其他成员仅可见已公开结果。
+            my_project_ids = set(
+                Project.objects.filter(leader=user).values_list('id', flat=True)
+            )
+            my_project_ids.update(
+                ProjectMember.objects.filter(
+                    user=user,
+                    role_in_project=ProjectMember.RoleInProject.LEADER,
+                    status=ProjectMember.Status.ACTIVE,
+                ).values_list('project_id', flat=True)
+            )
             queryset = queryset.filter(
                 Q(is_public=True) | Q(project_id__in=list(my_project_ids))
             )
@@ -627,10 +650,10 @@ class MemberRankingViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelView
         except Project.DoesNotExist:
             return error_response(message='项目不存在', code=1004, http_status=status.HTTP_404_NOT_FOUND)
 
-        # 权限校验：项目负责人/老师/管理员
+        # 权限校验：项目负责人/操作老师/管理员
         if not _is_project_leader_or_admin(request.user, project):
             return error_response(
-                message='仅项目负责人/老师/管理员可生成排序', code=1003,
+                message='仅项目负责人、操作老师或管理员可生成排序', code=1003,
                 http_status=status.HTTP_403_FORBIDDEN,
             )
 
@@ -654,10 +677,10 @@ class MemberRankingViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelView
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        # 权限校验：项目负责人/老师/管理员
+        # 权限校验：项目负责人/操作老师/管理员
         if not _is_project_leader_or_admin(request.user, ranking.project):
             return error_response(
-                message='仅项目负责人/老师/管理员可修改排序', code=1003,
+                message='仅项目负责人、操作老师或管理员可修改排序', code=1003,
                 http_status=status.HTTP_403_FORBIDDEN,
             )
 
@@ -678,7 +701,7 @@ class MemberRankingViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelView
     @action(detail=False, methods=['post'])
     def confirm(self, request):
         """
-        老师确认排序（确认后不可改，is_public=True）
+        项目负责人确认排序（确认后不可改，is_public=True）
         POST /api/v1/contributions/rankings/confirm/
         body: {"ids": [1, 2, 3]} 或 {"project": 1, "period": "2026-06"}
         """
@@ -697,6 +720,28 @@ class MemberRankingViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelView
             if period:
                 ranking_qs = ranking_qs.filter(period=period)
             ids = list(ranking_qs.values_list('id', flat=True))
+
+        rankings = list(
+            MemberRanking.objects.filter(id__in=ids).select_related('project')
+        )
+        if len(rankings) != len(set(ids)):
+            return error_response(message='部分排序记录不存在', code=1004)
+        if not rankings:
+            return error_response(message='没有可确认的排序草案')
+        unauthorized_projects = {
+            ranking.project.name if ranking.project else '团队级排序'
+            for ranking in rankings
+            if not _is_project_leader_or_admin(request.user, ranking.project)
+        }
+        if unauthorized_projects:
+            return error_response(
+                message=(
+                    '仅对应项目负责人、操作老师或管理员可确认排序：'
+                    + '、'.join(sorted(unauthorized_projects))
+                ),
+                code=1003,
+                http_status=status.HTTP_403_FORBIDDEN,
+            )
 
         success, result = RankingService.confirm_ranking(ids, request.user)
         if not success:
@@ -719,8 +764,17 @@ class MemberRankingViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelView
         queryset = self.get_queryset().filter(project_id=project_id)
         # 普通成员仅可见已公开的
         if request.user.global_role not in ['sys_admin', 'teacher']:
-            my_project_ids = Project.objects.filter(leader=request.user).values_list('id', flat=True)
-            if int(project_id) not in list(my_project_ids):
+            my_project_ids = set(
+                Project.objects.filter(leader=request.user).values_list('id', flat=True)
+            )
+            my_project_ids.update(
+                ProjectMember.objects.filter(
+                    user=request.user,
+                    role_in_project=ProjectMember.RoleInProject.LEADER,
+                    status=ProjectMember.Status.ACTIVE,
+                ).values_list('project_id', flat=True)
+            )
+            if int(project_id) not in my_project_ids:
                 queryset = queryset.filter(is_public=True)
         page = self.paginate_queryset(queryset)
         if page is not None:
@@ -738,7 +792,7 @@ class RankingObjectionViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelV
     - list: 按项目查询异议（项目成员可见）
     - create: 项目成员提交异议
     - leader_review: PATCH 项目负责人初审
-    - teacher_confirm: PATCH 老师最终确认
+    - teacher_confirm: PATCH 最终复核（保留旧接口名）
     """
     queryset = RankingObjection.objects.all().order_by('-created_at')
     # 默认序列化器（兜底）
@@ -757,7 +811,7 @@ class RankingObjectionViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelV
         'retrieve': [IsAuthenticated],
         'create': [IsAuthenticated],
         'leader_review': [IsAuthenticated],
-        'teacher_confirm': [IsTeacherOrAdmin],
+        'teacher_confirm': [IsAuthenticated],
     }
 
     def get_queryset(self):
@@ -833,7 +887,13 @@ class RankingObjectionViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelV
         project = getattr(objection.ranking, 'project', None)
         if not _is_project_leader_or_admin(request.user, project):
             return error_response(
-                message='仅项目负责人/老师/管理员可进行初审', code=1003,
+                message='仅项目负责人、操作老师或管理员可进行初审', code=1003,
+                http_status=status.HTTP_403_FORBIDDEN,
+            )
+        if objection.objector_id == request.user.id:
+            return error_response(
+                message='异议提出人不能审核自己的异议，请由另一位负责人或操作老师处理',
+                code=1003,
                 http_status=status.HTTP_403_FORBIDDEN,
             )
 
@@ -857,22 +917,28 @@ class RankingObjectionViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelV
     @action(detail=True, methods=['patch'])
     def teacher_confirm(self, request, pk=None):
         """
-        老师最终确认
+        另一位项目负责人最终复核（旧接口名保留兼容）
         PATCH /api/v1/contributions/objections/{id}/teacher_confirm/
         body: {
-            "teacher_opinion": "老师意见",
+            "teacher_opinion": "复核意见",
             "final_result": "最终结果",
             "final_status": "approved/rejected"
         }
         """
         objection = self.get_object()
+        if not _can_finalize_ranking_objection(request.user, objection):
+            return error_response(
+                message='最终复核须由另一位项目负责人、操作老师或管理员完成，且不能自审',
+                code=1003,
+                http_status=status.HTTP_403_FORBIDDEN,
+            )
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         validated_data = serializer.validated_data
 
         # 校验 action 必须为 teacher_confirm
         if validated_data.get('action') != 'teacher_confirm':
-            return error_response(message='该接口仅支持老师最终确认操作')
+            return error_response(message='该接口仅支持最终复核操作')
 
         # 校验当前状态必须为负责人已初审
         if objection.status != RankingObjection.Status.LEADER_REVIEWED:
@@ -895,5 +961,5 @@ class RankingObjectionViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelV
 
         return success_response(
             RankingObjectionSerializer(objection).data,
-            message='异议最终确认完成',
+            message='异议最终复核完成',
         )

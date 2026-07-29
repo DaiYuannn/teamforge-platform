@@ -53,11 +53,47 @@
             </el-tag>
           </el-descriptions-item>
           <el-descriptions-item label="获奖结果">
-            <el-tag :type="competition.is_awarded ? 'warning' : 'info'" size="small">
-              {{ competition.is_awarded ? competition.award_level || '已获奖' : '未获奖 / 待定' }}
+            <el-tag :type="awards.length || competition.is_awarded ? 'warning' : 'info'" size="small">
+              {{ awardSummary }}
             </el-tag>
           </el-descriptions-item>
         </el-descriptions>
+      </section>
+
+      <section class="detail-section">
+        <div class="section-heading">
+          <div>
+            <h3>比赛成果与获奖记录</h3>
+            <p>一场比赛可以登记多条奖项，并明确获奖日期和实际获奖成员；不再只保留一个模糊的获奖等级。</p>
+          </div>
+          <el-button v-if="canManage" type="primary" plain size="small" @click="openAwardDialog()">
+            新增奖项
+          </el-button>
+        </div>
+        <div v-loading="awardLoading" class="award-ledger">
+          <article v-for="award in awards" :key="award.id" class="award-item">
+            <div class="award-item__heading">
+              <div>
+                <strong>{{ award.award_name }}</strong>
+                <span>{{ award.award_level || '未单独标注等级' }} · {{ displayDate(award.award_date) }}</span>
+              </div>
+              <div v-if="canManage" class="award-item__actions">
+                <el-button text type="primary" size="small" @click="openAwardDialog(award)">编辑</el-button>
+                <el-button text type="danger" size="small" @click="removeAward(award)">删除</el-button>
+              </div>
+            </div>
+            <p>
+              获奖成员：
+              {{ awardRecipientNames(award) || '未指定（可在编辑中从实际参赛名单选择）' }}
+            </p>
+            <p v-if="award.notes" class="award-item__notes">{{ award.notes }}</p>
+          </article>
+          <el-empty
+            v-if="!awardLoading && awards.length === 0"
+            :image-size="56"
+            description="尚未登记比赛成果"
+          />
+        </div>
       </section>
 
       <section class="detail-section">
@@ -199,6 +235,64 @@
       </footer>
     </template>
 
+    <el-dialog
+      v-model="awardDialogVisible"
+      :title="awardForm.id ? '编辑比赛奖项' : '新增比赛奖项'"
+      width="560px"
+      append-to-body
+      destroy-on-close
+    >
+      <el-form label-width="88px" :label-position="isMobile ? 'top' : 'right'">
+        <el-form-item label="奖项名称" required>
+          <el-input v-model="awardForm.award_name" maxlength="200" placeholder="例如：全国一等奖 / 最佳创意奖" />
+        </el-form-item>
+        <el-form-item label="奖项等级">
+          <el-input v-model="awardForm.award_level" maxlength="50" placeholder="例如：一等奖、金奖、国家级" />
+        </el-form-item>
+        <el-form-item label="获奖日期">
+          <el-date-picker
+            v-model="awardForm.award_date"
+            type="date"
+            value-format="YYYY-MM-DD"
+            placeholder="选择结果公布或获奖日期"
+            style="width: 100%"
+          />
+        </el-form-item>
+        <el-form-item label="获奖成员">
+          <el-select
+            v-model="awardForm.recipients"
+            multiple
+            filterable
+            collapse-tags
+            collapse-tags-tooltip
+            placeholder="从本场比赛实际参赛名单选择"
+            style="width: 100%"
+          >
+            <el-option
+              v-for="participant in activeParticipants"
+              :key="participant.user"
+              :label="participant.user_detail?.name || `成员 ${participant.user}`"
+              :value="participant.user"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="成果说明">
+          <el-input
+            v-model="awardForm.notes"
+            type="textarea"
+            :rows="3"
+            maxlength="1000"
+            show-word-limit
+            placeholder="可补充证书、名次或后续复用说明"
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="awardDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="awardSubmitting" @click="submitAward">保存奖项</el-button>
+      </template>
+    </el-dialog>
+
     <template #footer>
       <el-button v-if="canManage && competition" type="primary" @click="emit('edit', competition)">
         编辑比赛与名单
@@ -209,8 +303,15 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { useDevice } from '@/composables/useDevice'
+import {
+  createCompetitionAward,
+  deleteCompetitionAward,
+  getCompetitionAwards,
+  updateCompetitionAward,
+} from '@/api/competitions'
 import {
   formatDate,
   formatDateTime,
@@ -222,6 +323,7 @@ import {
 } from '@/utils/format'
 import type {
   Competition,
+  CompetitionAward,
   CompetitionContributionEvidence,
 } from '@/types'
 
@@ -234,6 +336,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (event: 'update:visible', value: boolean): void
   (event: 'edit', value: Competition): void
+  (event: 'awards-changed'): void
 }>()
 
 const { isMobile } = useDevice()
@@ -242,6 +345,18 @@ const descriptionColumns = computed(() => (isMobile.value ? 1 : 2))
 const dialogVisible = computed({
   get: () => props.visible,
   set: (value) => emit('update:visible', value),
+})
+const awards = ref<CompetitionAward[]>([])
+const awardLoading = ref(false)
+const awardDialogVisible = ref(false)
+const awardSubmitting = ref(false)
+const awardForm = reactive({
+  id: null as number | null,
+  award_name: '',
+  award_level: '',
+  award_date: null as string | null,
+  recipients: [] as number[],
+  notes: '',
 })
 
 const milestones = computed(() => {
@@ -280,6 +395,99 @@ const reusableContributions = computed(() =>
   props.competition?.reusable_contributions || [],
 )
 const defaultReuseNote = '复用只引用内容和证明材料；原贡献仍归属来源项目，不会自动复制或重复计分。'
+const awardSummary = computed(() => {
+  if (awards.value.length > 0) {
+    if (awards.value.length === 1) {
+      return awards.value[0]?.award_level || awards.value[0]?.award_name || '已获奖'
+    }
+    return `已登记 ${awards.value.length} 项成果`
+  }
+  return props.competition?.is_awarded
+    ? props.competition.award_level || '已获奖'
+    : '未获奖 / 待定'
+})
+
+watch(
+  () => ({ visible: props.visible, competitionId: props.competition?.id }),
+  ({ visible, competitionId }) => {
+    if (visible && competitionId) {
+      void loadAwards(competitionId)
+    } else if (!visible) {
+      awards.value = []
+    }
+  },
+  { immediate: true },
+)
+
+async function loadAwards(competitionId = props.competition?.id): Promise<void> {
+  if (!competitionId) return
+  awardLoading.value = true
+  try {
+    awards.value = await getCompetitionAwards(competitionId)
+  } finally {
+    awardLoading.value = false
+  }
+}
+
+function openAwardDialog(award?: CompetitionAward): void {
+  Object.assign(awardForm, {
+    id: award?.id ?? null,
+    award_name: award?.award_name || '',
+    award_level: award?.award_level || '',
+    award_date: award?.award_date || null,
+    recipients: [...(award?.recipients || [])],
+    notes: award?.notes || '',
+  })
+  awardDialogVisible.value = true
+}
+
+async function submitAward(): Promise<void> {
+  const competitionId = props.competition?.id
+  if (!competitionId) return
+  if (!awardForm.award_name.trim()) {
+    ElMessage.warning('请填写奖项名称')
+    return
+  }
+  awardSubmitting.value = true
+  try {
+    const payload = {
+      award_name: awardForm.award_name.trim(),
+      award_level: awardForm.award_level.trim(),
+      award_date: awardForm.award_date,
+      recipients: [...awardForm.recipients],
+      notes: awardForm.notes.trim(),
+    }
+    if (awardForm.id) {
+      await updateCompetitionAward(competitionId, awardForm.id, payload)
+    } else {
+      await createCompetitionAward(competitionId, payload)
+    }
+    await loadAwards(competitionId)
+    awardDialogVisible.value = false
+    emit('awards-changed')
+    ElMessage.success(awardForm.id ? '奖项已更新' : '奖项已登记')
+  } finally {
+    awardSubmitting.value = false
+  }
+}
+
+async function removeAward(award: CompetitionAward): Promise<void> {
+  const competitionId = props.competition?.id
+  if (!competitionId) return
+  await ElMessageBox.confirm(
+    `确定删除“${award.award_name}”吗？删除后比赛获奖汇总会自动重算。`,
+    '删除奖项',
+    { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' },
+  )
+  await deleteCompetitionAward(competitionId, award.id)
+  await loadAwards(competitionId)
+  emit('awards-changed')
+  ElMessage.success('奖项已删除')
+}
+
+function awardRecipientNames(award: CompetitionAward): string {
+  return award.recipient_details.map((recipient) => recipient.name).join('、')
+}
 
 function participantContributions(userId: number): CompetitionContributionEvidence[] {
   return competitionContributions.value.filter((item) => item.user === userId)
@@ -390,6 +598,63 @@ function displayDateTime(value?: string | null): string {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
+}
+
+.award-ledger {
+  min-height: 76px;
+}
+
+.award-item {
+  padding: 12px;
+  background: var(--color-surface-subtle);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-sm);
+
+  & + & {
+    margin-top: 8px;
+  }
+
+  p {
+    margin: 7px 0 0;
+    color: var(--color-text-muted);
+    font-size: 12px;
+    line-height: 1.6;
+  }
+}
+
+.award-item__heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+
+  > div:first-child {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+
+  strong {
+    color: var(--color-text);
+    font-size: 13px;
+  }
+
+  span {
+    margin-top: 2px;
+    color: var(--color-text-muted);
+    font-size: 11px;
+  }
+}
+
+.award-item__actions {
+  display: flex;
+  flex-shrink: 0;
+}
+
+.award-item__notes {
+  padding-top: 6px;
+  border-top: 1px dashed var(--color-border-light);
+  white-space: pre-wrap;
 }
 
 .milestone-item {

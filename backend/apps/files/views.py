@@ -46,7 +46,9 @@ class FileAssetViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet)
     - destroy: 删除文件（老师/管理员/上传者）
     """
     queryset = FileAsset.objects.select_related(
-        'project', 'folder', 'uploader', 'deleted_by',
+        'project', 'folder', 'team', 'team__parent',
+        'competition_entry', 'competition_entry__project',
+        'uploader', 'deleted_by',
     ).prefetch_related('tag_relations__tag').order_by('-created_at')
 
     serializer_classes_by_action = {
@@ -75,7 +77,7 @@ class FileAssetViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet)
         'office_preview': [IsAuthenticated],
     }
 
-    filterset_fields = ['project', 'level', 'uploader']
+    filterset_fields = ['project', 'team', 'competition_entry', 'level', 'uploader']
     search_fields = ['name']
     ordering_fields = ['created_at', 'size', 'name']
 

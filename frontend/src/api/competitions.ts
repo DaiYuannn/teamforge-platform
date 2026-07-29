@@ -1,6 +1,8 @@
 import { get, post, patch, del, download } from './request'
 import type {
   Competition,
+  CompetitionAward,
+  CompetitionAwardFormData,
   CompetitionFormData,
   CompetitionParticipant,
   CompetitionLevel,
@@ -8,12 +10,31 @@ import type {
   PaginatedResponse,
   PaginationParams,
 } from '@/types'
+import type { TeamCandidate, TeamMemberRole } from './teams'
+
+export interface CompetitionEvent {
+  id: number
+  name: string
+  edition: string
+  organizer: string
+  entry_count: number
+}
+
+export type CompetitionEventQueryParams = PaginationParams
 
 /** 比赛查询参数 */
 export interface CompetitionQueryParams extends PaginationParams {
   level?: CompetitionLevel | ''
   status?: CompetitionStatus | ''
   project?: number
+  event?: number
+}
+
+export interface CompetitionParticipantCandidateQueryParams {
+  search?: string
+  school?: string
+  team_role?: TeamMemberRole
+  membership_status?: string
 }
 
 /** 导出比赛时沿用列表中的业务筛选，不携带分页参数。 */
@@ -24,8 +45,17 @@ export interface CompetitionExportParams {
   project?: number
 }
 
+/** 获取比赛届次列表 */
+export function getCompetitionEvents(
+  params: CompetitionEventQueryParams = {},
+): Promise<PaginatedResponse<CompetitionEvent>> {
+  return get<PaginatedResponse<CompetitionEvent>>('/competitions/events/', params)
+}
+
 /** 获取比赛列表 */
-export function getCompetitions(params: CompetitionQueryParams): Promise<PaginatedResponse<Competition>> {
+export function getCompetitions(
+  params: CompetitionQueryParams = {},
+): Promise<PaginatedResponse<Competition>> {
   return get<PaginatedResponse<Competition>>('/competitions/', params)
 }
 
@@ -54,6 +84,14 @@ export function getCompetitionParticipants(id: number): Promise<CompetitionParti
   return get<CompetitionParticipant[]>(`/competitions/${id}/participants/`)
 }
 
+/** 从当前总团队人员库中搜索可加入该参赛条目的成员 */
+export function getCompetitionParticipantCandidates(
+  id: number,
+  params: CompetitionParticipantCandidateQueryParams = {},
+): Promise<TeamCandidate[]> {
+  return get<TeamCandidate[]>(`/competitions/${id}/participant-candidates/`, params)
+}
+
 /** 添加比赛负责人或参赛成员 */
 export function addCompetitionParticipant(
   id: number,
@@ -78,6 +116,33 @@ export function updateCompetitionParticipant(
 /** 从比赛名单中移除成员 */
 export function deleteCompetitionParticipant(id: number, participantId: number): Promise<void> {
   return del<void>(`/competitions/${id}/participants/?participant_id=${participantId}`)
+}
+
+/** 获取一条参赛记录下的全部奖项、获奖日期和获奖成员。 */
+export function getCompetitionAwards(id: number): Promise<CompetitionAward[]> {
+  return get<CompetitionAward[]>(`/competitions/${id}/award_tracking/`)
+}
+
+/** 为一条参赛记录新增奖项。 */
+export function createCompetitionAward(
+  id: number,
+  data: CompetitionAwardFormData,
+): Promise<CompetitionAward> {
+  return post<CompetitionAward>(`/competitions/${id}/award_tracking/`, data)
+}
+
+/** 修改一条奖项。 */
+export function updateCompetitionAward(
+  id: number,
+  awardId: number,
+  data: Partial<CompetitionAwardFormData>,
+): Promise<CompetitionAward> {
+  return patch<CompetitionAward>(`/competitions/${id}/awards/${awardId}/`, data)
+}
+
+/** 删除一条奖项。 */
+export function deleteCompetitionAward(id: number, awardId: number): Promise<void> {
+  return del<void>(`/competitions/${id}/awards/${awardId}/`)
 }
 
 /** 将当前比赛筛选导出为 Excel。 */

@@ -165,6 +165,77 @@
         </div>
       </section>
 
+      <section class="detail-surface" aria-labelledby="member-competitions-title">
+        <header class="section-heading">
+          <div>
+            <h2 id="member-competitions-title">精确参赛记录</h2>
+            <p>{{ member?.competition_participations?.length || 0 }} 条报名队记录</p>
+          </div>
+        </header>
+
+        <el-table
+          v-if="!isMobile"
+          :data="member?.competition_participations || []"
+          table-layout="fixed"
+          size="small"
+        >
+          <template #empty>
+            <EmptyState text="暂无精确参赛记录" compact />
+          </template>
+          <el-table-column label="比赛届次" min-width="180">
+            <template #default="{ row }">
+              <div class="project-name-cell">
+                <strong>{{ row.event_name || row.competition_name }}</strong>
+                <span>{{ [row.event_edition, row.event_organizer].filter(Boolean).join(' · ') || '-' }}</span>
+              </div>
+            </template>
+          </el-table-column>
+          <el-table-column label="项目 / 参赛条目" min-width="190">
+            <template #default="{ row }">
+              <div class="project-name-cell">
+                <strong>{{ row.project_name }}</strong>
+                <span>{{ row.entry_name || row.project_code || '-' }}</span>
+              </div>
+            </template>
+          </el-table-column>
+          <el-table-column prop="role_display" label="参赛身份" width="112" />
+          <el-table-column label="参与状态" width="108">
+            <template #default="{ row }">
+              <el-tag size="small" :type="competitionStatusType(row.participation_status)">
+                {{ row.participation_status_display }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="具体分工" min-width="180" show-overflow-tooltip>
+            <template #default="{ row }">{{ row.responsibility || '尚未填写具体分工' }}</template>
+          </el-table-column>
+        </el-table>
+
+        <div v-else class="mobile-project-list">
+          <EmptyState
+            v-if="!member?.competition_participations?.length"
+            text="暂无精确参赛记录"
+            compact
+          />
+          <article
+            v-for="record in member?.competition_participations || []"
+            :key="record.participant_id"
+          >
+            <div>
+              <strong>{{ record.event_name || record.competition_name }}</strong>
+              <span>{{ [record.event_edition, record.project_name, record.entry_name].filter(Boolean).join(' · ') }}</span>
+            </div>
+            <p>{{ record.responsibility || '尚未填写具体分工' }}</p>
+            <div class="mobile-project-meta">
+              <span>{{ record.role_display }}</span>
+              <el-tag size="small" :type="competitionStatusType(record.participation_status)">
+                {{ record.participation_status_display }}
+              </el-tag>
+            </div>
+          </article>
+        </div>
+      </section>
+
       <section class="detail-surface" aria-labelledby="growth-title">
         <header class="section-heading">
           <div>
@@ -295,6 +366,12 @@ function projectMembershipStatusLabel(value?: string): string {
 function projectMembershipStatusType(value?: string): 'success' | 'warning' | 'info' {
   if (value === 'on_leave') return 'warning'
   if (value === 'exited') return 'info'
+  return 'success'
+}
+
+function competitionStatusType(value?: string): 'success' | 'warning' | 'info' {
+  if (value === 'planned') return 'warning'
+  if (value === 'withdrawn') return 'info'
   return 'success'
 }
 

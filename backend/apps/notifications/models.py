@@ -217,3 +217,44 @@ class Announcement(models.Model):
         elif self.is_public:
             self.audience = self.Audience.PUBLIC
         super().save(*args, **kwargs)
+
+
+class AnnouncementAttachment(models.Model):
+    """公告直接附件，由公告的可见范围统一控制下载权限。"""
+
+    announcement = models.ForeignKey(
+        Announcement,
+        on_delete=models.CASCADE,
+        related_name='attachments',
+        verbose_name='所属公告',
+    )
+    file = models.FileField(
+        '附件文件',
+        upload_to='announcements/%Y%m/',
+    )
+    name = models.CharField('文件名称', max_length=255)
+    size = models.BigIntegerField('文件大小', default=0)
+    content_type = models.CharField(
+        '内容类型',
+        max_length=100,
+        blank=True,
+        default='',
+    )
+    uploaded_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        related_name='uploaded_announcement_attachments',
+        verbose_name='上传人',
+        null=True,
+        blank=True,
+    )
+    created_at = models.DateTimeField('上传时间', auto_now_add=True)
+
+    class Meta:
+        db_table = 'announcement_attachments'
+        verbose_name = '公告附件'
+        verbose_name_plural = verbose_name
+        ordering = ['created_at', 'id']
+
+    def __str__(self):
+        return f'{self.announcement.title} - {self.name}'

@@ -226,24 +226,24 @@ const authRoutes: RouteRecordRaw[] = [
           roles: ['sys_admin', 'sens_approver', 'teacher'],
         },
       },
-      // 灵活工作时间
+      // 比赛项目任务与有效工作量
       {
         path: 'members/schedule',
         name: 'MySchedule',
         component: () => import('@/views/members/MyScheduleView.vue'),
-        meta: { title: '我的灵活工时', requiresAuth: true },
+        meta: { title: '我的任务与工作量', requiresAuth: true },
       },
       {
         path: 'members/team-schedule',
         name: 'TeamSchedule',
         component: () => import('@/views/members/TeamScheduleView.vue'),
-        meta: { title: '团队灵活工时', requiresAuth: true },
+        meta: { title: '团队有效工作量', requiresAuth: true },
       },
       {
         path: 'members/skills',
         name: 'MemberSkills',
         component: () => import('@/views/members/MemberSkillsView.vue'),
-        meta: { title: '技能标签', requiresAuth: true },
+        meta: { title: '技能与组队', requiresAuth: true },
       },
       // 集成配置
       {

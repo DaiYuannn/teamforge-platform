@@ -11,3 +11,4 @@ class CommonConfig(AppConfig):
     def ready(self):
         # Importing the module registers its drf-spectacular extensions.
         from common import schema  # noqa: F401
+        from . import activity_signals  # noqa: F401

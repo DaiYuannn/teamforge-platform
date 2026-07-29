@@ -2,13 +2,20 @@
 from decimal import Decimal
 
 import pytest
+from django.core.files.uploadedfile import SimpleUploadedFile
+from rest_framework.test import APIClient
 
 from apps.finance.models import FinanceBudget, FinanceExpense, FinanceIncome
+from apps.projects.models import ProjectMember
 
 
 def response_data(response):
     payload = response.json()
     return payload.get('data', payload) if isinstance(payload, dict) else payload
+
+
+def upload(name, content=b'proof'):
+    return SimpleUploadedFile(name, content, content_type='image/png')
 
 
 @pytest.mark.api
@@ -32,8 +39,27 @@ class TestFinanceWorkflow:
         assert income.recorded_by == teacher_client.user
 
         budget = FinanceBudget.objects.get(project=project)
-        assert budget.bonus_amount == Decimal('12000.00')
+        # Expected/confirmed bonuses do not increase spendable funds.
+        assert budget.bonus_amount == Decimal('0.00')
         assert budget.other_income == Decimal('0.00')
+
+        confirmed = teacher_client.post(
+            f'/api/v1/finance/incomes/{income.id}/set_stage/',
+            {'stage': FinanceIncome.Stage.CONFIRMED},
+            format='json',
+        )
+        assert confirmed.status_code == 200, confirmed.json()
+        received = teacher_client.post(
+            f'/api/v1/finance/incomes/{income.id}/set_stage/',
+            {
+                'stage': FinanceIncome.Stage.RECEIVED,
+                'proof_file': upload('bonus-arrival.png'),
+            },
+            format='multipart',
+        )
+        assert received.status_code == 200, received.json()
+        budget.refresh_from_db()
+        assert budget.bonus_amount == Decimal('12000.00')
 
         list_response = member_client.get(
             f'/api/v1/finance/incomes/?project={project.id}'
@@ -54,18 +80,30 @@ class TestFinanceWorkflow:
         assert response.status_code == 403
 
     def test_reimbursement_transitions_drive_budget(
-        self, teacher_client, make_project
+        self, teacher_client, make_project, make_user
     ):
         project = make_project(leader=teacher_client.user)
+        applicant = make_user(email='workflow-applicant@example.com')
+        ProjectMember.objects.update_or_create(
+            project=project,
+            user=applicant,
+            defaults={
+                'role_in_project': ProjectMember.RoleInProject.PARTICIPANT,
+                'status': ProjectMember.Status.ACTIVE,
+            },
+        )
+        applicant_client = APIClient()
+        applicant_client.force_authenticate(applicant)
         FinanceIncome.objects.create(
             project=project,
             title='项目拨款',
             amount=Decimal('5000.00'),
             income_type=FinanceIncome.IncomeType.GRANT,
+            stage=FinanceIncome.Stage.RECEIVED,
             income_date='2026-07-01',
             recorded_by=teacher_client.user,
         )
-        created = teacher_client.post('/api/v1/finance/expenses/', {
+        created = applicant_client.post('/api/v1/finance/expenses/', {
             'project': project.id,
             'title': '材料采购',
             'amount': '600.00',
@@ -77,7 +115,14 @@ class TestFinanceWorkflow:
         expense = FinanceExpense.objects.get(pk=expense_id)
         assert expense.reimbursement_status == FinanceExpense.ReimbursementStatus.DRAFT
 
-        submitted = teacher_client.post(
+        receipt = applicant_client.post('/api/v1/finance/receipts/', {
+            'expense': expense_id,
+            'attachment_type': 'invoice',
+            'file': upload('invoice.png'),
+        }, format='multipart')
+        assert receipt.status_code == 201, receipt.json()
+
+        submitted = applicant_client.post(
             f'/api/v1/finance/expenses/{expense_id}/submit_reimbursement/',
             {},
             format='json',
@@ -95,8 +140,12 @@ class TestFinanceWorkflow:
         assert reviewed.status_code == 200, reviewed.json()
         paid = teacher_client.post(
             f'/api/v1/finance/expenses/{expense_id}/mark_paid/',
-            {'payment_method': '银行转账', 'payment_reference': 'PAY-2026-001'},
-            format='json',
+            {
+                'payment_method': '银行转账',
+                'payment_reference': 'PAY-2026-001',
+                'proof_file': upload('payment-proof.png'),
+            },
+            format='multipart',
         )
         assert paid.status_code == 200, paid.json()
 

@@ -1,4 +1,4 @@
-import { download, get, post } from './request'
+import { download, get, post, upload } from './request'
 import type {
   PaginatedResponse,
   PaginationParams,
@@ -7,6 +7,8 @@ import type {
   SensitiveAccessRequestReviewParams,
   SensitiveData,
   SensitiveDataCreateParams,
+  SensitiveDataGrant,
+  SensitiveGrantAccessLog,
   SensitiveDataQueryParams,
 } from '@/types'
 
@@ -26,15 +28,54 @@ export const getSensitiveData = (
 /** 创建敏感资料 */
 export const createSensitiveData = (
   data: SensitiveDataCreateParams,
-): Promise<SensitiveData> => post(`${BASE}/data/`, data)
+): Promise<SensitiveData> => {
+  if (!data.attachment_upload) return post(`${BASE}/data/`, data)
+  const formData = new FormData()
+  Object.entries(data).forEach(([key, value]) => {
+    if (value === undefined || value === null || key === 'attachment_upload') return
+    formData.append(key, String(value))
+  })
+  formData.append('attachment_upload', data.attachment_upload)
+  return upload(`${BASE}/data/`, formData)
+}
 
 /** 获取我的敏感资料 */
 export const getMySensitiveData = (): Promise<PaginatedResponse<SensitiveData> | SensitiveData[]> =>
   get(`${BASE}/data/my_data/`)
 
 /** 查看敏感资料明文（限时） */
-export const viewSensitiveData = (id: number, requestId?: number) =>
-  post(`${BASE}/data/${id}/view/`, { request_id: requestId })
+export const viewSensitiveData = (id: number, requestId?: number, grantId?: number) =>
+  post(`${BASE}/data/${id}/view/`, {
+    ...(requestId ? { request_id: requestId } : {}),
+    ...(grantId ? { grant_id: grantId } : {}),
+  })
+
+export const getSensitiveDataGrants = (id: number): Promise<SensitiveDataGrant[]> =>
+  get(`${BASE}/data/${id}/grants/`)
+
+export const saveSensitiveDataGrant = (
+  id: number,
+  data: Pick<SensitiveDataGrant, 'granted_to' | 'can_view' | 'can_download' | 'purpose' | 'expires_at'>,
+): Promise<SensitiveDataGrant> => post(`${BASE}/data/${id}/grants/`, data)
+
+export const revokeSensitiveDataGrant = (id: number, grantId: number): Promise<SensitiveDataGrant> =>
+  post(`${BASE}/data/${id}/grants/${grantId}/revoke/`)
+
+export const getSensitiveGrantCandidates = (
+  id: number,
+  search = '',
+): Promise<Array<{ id: number; name: string; email: string; school?: string; major?: string }>> =>
+  get(`${BASE}/data/${id}/grant-candidates/`, search ? { search } : undefined)
+
+export const getSensitiveGrantAccessLogs = (id: number): Promise<SensitiveGrantAccessLog[]> =>
+  get(`${BASE}/data/${id}/grant-access-logs/`)
+
+export const downloadSensitiveAttachmentByGrant = (
+  id: number,
+  grantId: number,
+): Promise<Blob> => download(`${BASE}/data/${id}/download-by-grant/`, {
+  params: { grant_id: grantId },
+})
 
 // ============================================
 // 访问申请 API

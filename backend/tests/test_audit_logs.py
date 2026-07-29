@@ -47,7 +47,7 @@ def make_log(db, make_user):
         operator = operator or make_user(
             email=f'log_op{counter[0]}@test.com',
             name=f'操作员{counter[0]}',
-            global_role='teacher',
+            global_role='member',
         )
         log = OperationLog.objects.create(
             operator=operator,

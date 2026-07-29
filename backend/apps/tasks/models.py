@@ -47,6 +47,14 @@ class Task(SoftDeleteMixin, models.Model):
         related_name='tasks',
         verbose_name='所属项目',
     )
+    competition_entry = models.ForeignKey(
+        'competitions.Competition',
+        on_delete=models.SET_NULL,
+        related_name='work_items',
+        verbose_name='比赛参赛队',
+        null=True,
+        blank=True,
+    )
     # 任务标题
     title = models.CharField('任务标题', max_length=200)
     # 指派给（负责人）
@@ -73,6 +81,7 @@ class Task(SoftDeleteMixin, models.Model):
     )
     # 任务描述
     description = models.TextField('任务描述', blank=True, default='')
+    reference_note = models.TextField('参考说明', blank=True, default='')
     # 截止时间
     deadline = models.DateTimeField('截止时间', null=True, blank=True)
     # 开始时间
@@ -188,3 +197,8 @@ class TaskLog(models.Model):
 from .subtask_models import SubTask  # noqa: E402,F401
 from .dependency_models import TaskDependency  # noqa: E402,F401
 from .comment_models import TaskComment  # noqa: E402,F401
+from .workload_models import (  # noqa: E402,F401
+    CompetitionWorkloadAllocation,
+    CompetitionWorkloadAssessment,
+    CompetitionWorkloadObjection,
+)

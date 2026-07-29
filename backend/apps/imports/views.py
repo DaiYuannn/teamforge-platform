@@ -22,8 +22,15 @@ from .models import ImportTask
 from .serializers import (
     ImportTaskSerializer, ImportTaskListSerializer,
     ImportPreviewSerializer, ImportConfirmSerializer,
+    MaterialArchivePreviewSerializer,
 )
 from .services import import_service
+from .material_archive import (
+    MaterialArchiveError,
+    confirm_material_archive,
+    preview_material_archive,
+    rollback_material_archive,
+)
 
 
 class ImportTaskViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet):
@@ -41,6 +48,7 @@ class ImportTaskViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet
         'retrieve': ImportTaskSerializer,
         'preview': ImportPreviewSerializer,
         'confirm': ImportConfirmSerializer,
+        'preview_materials': MaterialArchivePreviewSerializer,
     }
 
     permission_classes_by_action = {
@@ -49,6 +57,7 @@ class ImportTaskViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet
         'preview': [IsAuthenticated],
         'confirm': [IsAuthenticated],
         'rollback': [IsAuthenticated],
+        'preview_materials': [IsAuthenticated],
         'destroy': [IsAuthenticated],
     }
 
@@ -78,7 +87,7 @@ class ImportTaskViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet
     def get_queryset(self):
         queryset = super().get_queryset().select_related('team', 'created_by')
         user = self.request.user
-        if user.global_role == 'sys_admin':
+        if user.global_role in ['sys_admin', 'teacher']:
             return queryset
         managed_ids = self._managed_team_ids(user)
         # 旧任务没有团队字段；仅原创建人可继续查看和处理。
@@ -114,7 +123,11 @@ class ImportTaskViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet
         team = Team.objects.filter(pk=team_id).first() if team_id else None
         if team_id and team is None:
             return error_response(message='所选团队不存在', http_status=status.HTTP_400_BAD_REQUEST)
-        if team and request.user.global_role != 'sys_admin' and team.id not in managed_ids:
+        if (
+            team
+            and request.user.global_role not in ['sys_admin', 'teacher']
+            and team.id not in managed_ids
+        ):
             return error_response(
                 message='只有团队主负责人、共同负责人或管理员可以向该团队导入数据',
                 http_status=status.HTTP_403_FORBIDDEN,
@@ -190,6 +203,76 @@ class ImportTaskViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet
             'field_options': import_service.get_field_options(module),
         }, message='文件解析成功，请确认字段映射后导入')
 
+    @action(detail=False, methods=['post'], url_path='preview-materials')
+    def preview_materials(self, request):
+        """Securely validate a ZIP + manifest.json material package."""
+        serializer = MaterialArchivePreviewSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        uploaded_file = serializer.validated_data['file']
+        team = Team.objects.filter(pk=serializer.validated_data['team']).first()
+        if team is None:
+            return error_response(message='所选团队不存在', http_status=status.HTTP_400_BAD_REQUEST)
+        managed_ids = self._managed_team_ids(request.user)
+        if (
+            request.user.global_role not in ['sys_admin', 'teacher']
+            and team.id not in managed_ids
+        ):
+            return error_response(
+                message='只有团队主负责人、共同负责人、管理员或操作老师可以导入资料包',
+                code=1003,
+                http_status=status.HTTP_403_FORBIDDEN,
+            )
+
+        upload_dir = os.path.join(settings.MEDIA_ROOT, 'imports', 'materials')
+        os.makedirs(upload_dir, exist_ok=True)
+        safe_name = get_valid_filename(os.path.basename(uploaded_file.name))
+        file_path = os.path.join(upload_dir, f'{uuid.uuid4().hex}_{safe_name}')
+        with open(file_path, 'wb') as target:
+            for chunk in uploaded_file.chunks():
+                target.write(chunk)
+        try:
+            preview = preview_material_archive(
+                file_path,
+                team=team,
+                operator=request.user,
+            )
+        except MaterialArchiveError as exc:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+            return error_response(
+                message=f'资料包安全校验失败: {exc}',
+                http_status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        import_task = ImportTask.objects.create(
+            module=ImportTask.Module.MATERIALS,
+            file_path=file_path,
+            status=ImportTask.Status.PREVIEWED,
+            preview_data={
+                'archive_sha256': preview['archive_sha256'],
+                'rows': preview['rows'][:200],
+                'manifest_version': 1,
+            },
+            total_rows=preview['total_rows'],
+            valid_rows=preview['valid_rows'],
+            error_rows=preview['error_rows'],
+            error_details=preview['errors'],
+            created_by=request.user,
+            team=team,
+        )
+        return success_response({
+            'task_id': import_task.id,
+            'headers': [],
+            'field_mapping': {},
+            'field_options': [],
+            'preview_rows': preview['rows'],
+            'total_rows': preview['total_rows'],
+            'valid_rows': preview['valid_rows'],
+            'error_rows': preview['error_rows'],
+            'error_details': preview['errors'],
+            'archive_sha256': preview['archive_sha256'],
+        }, message='资料包安全校验完成，请确认后导入')
+
     @action(detail=True, methods=['post'])
     def confirm(self, request, pk=None):
         """
@@ -210,7 +293,19 @@ class ImportTaskViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet
         import_task.status = ImportTask.Status.CONFIRMING
         import_task.save()
 
-        # 执行导入
+        if import_task.module == ImportTask.Module.MATERIALS:
+            try:
+                result = confirm_material_archive(import_task, operator=request.user)
+            except MaterialArchiveError as exc:
+                import_task.status = ImportTask.Status.PREVIEWED
+                import_task.save(update_fields=['status', 'updated_at'])
+                return error_response(
+                    message=str(exc),
+                    http_status=status.HTTP_400_BAD_REQUEST,
+                )
+            return success_response(result, message='资料包导入成功')
+
+        # 执行结构化表格导入
         success, result = import_service.confirm_import(
             import_task,
             field_mapping,
@@ -230,6 +325,12 @@ class ImportTaskViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet
         根据快照删除已写入的数据
         """
         import_task = self.get_object()
+
+        if import_task.module == ImportTask.Module.MATERIALS:
+            if import_task.status != ImportTask.Status.CONFIRMED:
+                return error_response(message='只能回滚已确认的资料包导入任务')
+            message = rollback_material_archive(import_task)
+            return success_response(message=message)
 
         success, message = import_service.rollback_import(import_task)
 

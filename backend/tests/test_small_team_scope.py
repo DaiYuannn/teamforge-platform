@@ -129,7 +129,7 @@ class TestSmallTeamSensitiveScope:
         api_client.force_authenticate(user=teacher)
         assert api_client.get(
             '/api/v1/sensitive/requests/pending_approve/'
-        ).status_code == 403
+        ).status_code == 200
 
 
 @pytest.mark.django_db

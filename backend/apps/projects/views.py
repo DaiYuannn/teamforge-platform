@@ -240,7 +240,7 @@ class ProjectViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet):
                 ),
                 Prefetch(
                     'competitions',
-                    queryset=Competition.objects.prefetch_related(
+                    queryset=Competition.objects.select_related('event').prefetch_related(
                         Prefetch(
                             'participants',
                             queryset=CompetitionParticipant.objects.select_related(

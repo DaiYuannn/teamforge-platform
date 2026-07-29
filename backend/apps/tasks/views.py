@@ -55,7 +55,9 @@ class TaskViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelViewSet):
 
     def get_queryset(self):
         queryset = scope_project_queryset(
-            super().get_queryset().select_related(
+            super().get_queryset().filter(
+                competition_entry__isnull=True,
+            ).select_related(
                 'project', 'assignee', 'creator', 'reviewer',
             ).prefetch_related('collaborators'),
             self.request.user,

@@ -18,7 +18,7 @@
       <button type="button" :class="{ active: filterType === 'task' }" @click="filterType = 'task'">
         <span>执行任务</span><strong>{{ stats.tasks }}</strong>
       </button>
-      <button type="button" :class="['warning', { active: filterType === 'approval' }]" @click="filterType = 'approval'">
+      <button type="button" :class="['warning', { active: filterType === 'approval_all' }]" @click="filterType = 'approval_all'">
         <span>等待审批</span><strong>{{ stats.approvals }}</strong>
       </button>
     </section>
@@ -34,6 +34,7 @@
           <el-radio-button value="task">任务</el-radio-button>
           <el-radio-button value="overdue_task">逾期</el-radio-button>
           <el-radio-button value="approval">审批</el-radio-button>
+          <el-radio-button value="workflow_approval">流程审批</el-radio-button>
           <el-radio-button value="contribution_review">贡献审核</el-radio-button>
           <el-radio-button value="ip_todo">知识产权</el-radio-button>
           <el-radio-button value="finance_review">报销审核</el-radio-button>
@@ -80,7 +81,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { ArrowRight, List, Lock, Trophy, Warning, WarningFilled } from '@element-plus/icons-vue'
+import { ArrowRight, List, Lock, Stamp, Trophy, Warning, WarningFilled } from '@element-plus/icons-vue'
 import { getUnifiedTodos, type UnifiedTodoItem } from '@/api/todo'
 import EmptyState from '@/components/EmptyState.vue'
 import PageHeader from '@/components/PageHeader.vue'
@@ -95,32 +96,36 @@ const allTodoItems = ref<UnifiedTodoItem[]>([])
 const filterType = ref('')
 
 const visibleTodos = computed(() =>
-  filterType.value ? allTodoItems.value.filter((item) => item.type === filterType.value) : allTodoItems.value,
+  filterType.value === 'approval_all'
+    ? allTodoItems.value.filter((item) => ['approval', 'workflow_approval'].includes(item.type))
+    : filterType.value
+      ? allTodoItems.value.filter((item) => item.type === filterType.value)
+      : allTodoItems.value,
 )
 
 const stats = computed(() => ({
   total: allTodoItems.value.length,
   overdue: allTodoItems.value.filter((item) => item.type === 'overdue_task').length,
   tasks: allTodoItems.value.filter((item) => item.type === 'task').length,
-  approvals: allTodoItems.value.filter((item) => item.type === 'approval').length,
+  approvals: allTodoItems.value.filter((item) => ['approval', 'workflow_approval'].includes(item.type)).length,
 }))
 
 const currentFilterLabel = computed(() => (filterType.value ? getTypeLabel(filterType.value) : '全部行动项'))
 
 function getTypeIcon(type: string): any {
-  return { task: List, overdue_task: Warning, approval: Lock, contribution_review: Trophy, ip_todo: Trophy, finance_review: Lock, finance_payment: List }[type] || List
+  return { task: List, overdue_task: Warning, approval: Lock, workflow_approval: Stamp, contribution_review: Trophy, ip_todo: Trophy, finance_review: Lock, finance_payment: List }[type] || List
 }
 
 function typeTone(type: string): string {
-  return { task: 'primary', overdue_task: 'danger', approval: 'warning', contribution_review: 'success', ip_todo: 'warning', finance_review: 'warning', finance_payment: 'primary' }[type] || 'neutral'
+  return { task: 'primary', overdue_task: 'danger', approval: 'warning', workflow_approval: 'warning', contribution_review: 'success', ip_todo: 'warning', finance_review: 'warning', finance_payment: 'primary' }[type] || 'neutral'
 }
 
 function getTypeTagType(type: string): TagType {
-  return ({ task: 'primary', overdue_task: 'danger', approval: 'warning', contribution_review: 'success', ip_todo: 'warning', finance_review: 'warning', finance_payment: 'primary' }[type] || 'info') as TagType
+  return ({ task: 'primary', overdue_task: 'danger', approval: 'warning', workflow_approval: 'warning', contribution_review: 'success', ip_todo: 'warning', finance_review: 'warning', finance_payment: 'primary' }[type] || 'info') as TagType
 }
 
 function getTypeLabel(type: string): string {
-  return { task: '任务', overdue_task: '逾期任务', approval: '待审批', contribution_review: '贡献审核', ip_todo: '知识产权', finance_review: '报销审核', finance_payment: '待登记打款' }[type] || type
+  return { task: '任务', overdue_task: '逾期任务', approval: '敏感资料审批', workflow_approval: '流程审批', approval_all: '全部审批', contribution_review: '贡献审核', ip_todo: '知识产权', finance_review: '报销审核', finance_payment: '待登记打款' }[type] || type
 }
 
 function isOverdue(date: string): boolean {

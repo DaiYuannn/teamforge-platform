@@ -27,7 +27,9 @@ class User(AbstractUser):
     class GlobalRole(models.TextChoices):
         """全局角色枚举"""
         SYS_ADMIN = 'sys_admin', '系统管理员'
-        TEACHER = 'teacher', '老师'
+        # 小团队版只保留一个具有全局业务操作权限的老师账号。
+        # 其他老师使用普通全局角色，并在具体团队中配置为“查看老师（只读）”。
+        TEACHER = 'teacher', '操作老师'
         MEMBER = 'member', '普通成员'
         SENS_APPROVER = 'sens_approver', '敏感审批人'
 
@@ -91,6 +93,21 @@ class User(AbstractUser):
         verbose_name = '用户'
         verbose_name_plural = verbose_name
         ordering = ['-date_joined']
+        constraints = [
+            models.UniqueConstraint(
+                fields=('global_role',),
+                condition=(
+                    models.Q(
+                        global_role='teacher',
+                        is_active=True,
+                    )
+                    & ~models.Q(
+                        membership_status='exited',
+                    )
+                ),
+                name='uniq_active_operating_teacher',
+            ),
+        ]
 
     def __str__(self):
         return f'{self.name}({self.email})'
@@ -107,8 +124,27 @@ class User(AbstractUser):
 
     @property
     def is_teacher_role(self):
-        """是否为老师"""
+        """是否为小团队唯一的全局操作老师。"""
         return self.global_role == self.GlobalRole.TEACHER
+
+    @property
+    def is_operating_teacher(self):
+        """显式别名：全局 ``teacher`` 代表可执行全部业务操作的老师。"""
+        return self.is_teacher_role
+
+    @property
+    def is_viewing_teacher(self):
+        """是否至少在一个团队中担任只读查看老师。"""
+        from apps.common.team_models import TeamMember
+
+        return TeamMember.objects.filter(
+            user=self,
+            role=TeamMember.Role.TEACHER,
+            status__in=[
+                TeamMember.Status.ACTIVE,
+                TeamMember.Status.ON_LEAVE,
+            ],
+        ).exists()
 
     @property
     def is_sensitive_approver(self):

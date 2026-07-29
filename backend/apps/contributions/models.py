@@ -228,7 +228,7 @@ class MemberRanking(models.Model):
     ip_contribution_count = models.IntegerField('IP贡献数', default=0)
     # 是否已公示（原有字段，保留）
     is_published = models.BooleanField('已公示', default=False)
-    # 是否公开（新增：老师确认后置为 True，公开可见）
+    # 是否公开（负责人确认后置为 True，团队成员可见）
     is_public = models.BooleanField('是否公开', default=False)
     # 生成排名时固化规则和证据，避免规则变化后无法解释历史排名。
     rule_version = models.CharField('排名规则版本', max_length=30, default='2026.2')
@@ -264,8 +264,8 @@ class MemberRanking(models.Model):
 class RankingObjection(models.Model):
     """
     排名异议模型
-    成员对排名结果提出异议，经项目负责人初审、老师最终确认
-    状态流转：pending(待处理) -> leader_reviewed(负责人已初审) -> approved/rejected(老师最终确认)
+    成员对排名结果提出异议，经一位项目负责人初审、另一位负责人或操作老师独立复核。
+    状态流转：pending(待处理) -> leader_reviewed(负责人已初审) -> approved/rejected(最终复核)
     """
 
     class Status(models.TextChoices):
@@ -312,18 +312,16 @@ class RankingObjection(models.Model):
     )
     # 负责人审核时间（新增）
     leader_reviewed_at = models.DateTimeField('负责人审核时间', null=True, blank=True)
-    # 老师意见（新增）
-    teacher_opinion = models.TextField('老师意见', blank=True, default='')
-    # 老师确认人（新增）
+    # 历史字段名保留兼容，界面统一称为“最终复核”。
+    teacher_opinion = models.TextField('最终复核意见', blank=True, default='')
     teacher_confirmer = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
         related_name='ranking_objection_teacher_confirms',
-        verbose_name='老师确认人',
+        verbose_name='最终复核人',
         null=True, blank=True,
     )
-    # 老师确认时间（新增）
-    teacher_confirmed_at = models.DateTimeField('老师确认时间', null=True, blank=True)
+    teacher_confirmed_at = models.DateTimeField('最终复核时间', null=True, blank=True)
     # 最终结果（新增）
     final_result = models.TextField('最终结果', blank=True, default='')
     # 异议成立后的实际更正及审计快照

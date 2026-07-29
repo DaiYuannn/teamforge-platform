@@ -137,9 +137,11 @@ Authorization: Bearer <access_token>
 | 角色值 | 中文名 | 说明 |
 |--------|--------|------|
 | sys_admin | 系统管理员 | 拥有全部权限 |
-| teacher | 老师 | 确认排序、查看日志、知识产权归档等 |
+| teacher | 操作老师 | 小团队版仅允许一个有效账号，拥有全局业务操作权限 |
 | sens_approver | 敏感审批人 | 审批敏感资料查看申请 |
-| member | 普通成员 | 默认角色，填写贡献/工时等 |
+| member | 普通成员 | 默认角色；其他老师也使用该全局角色，再通过 `TeamMember.role=teacher` 获得团队范围只读权限 |
+
+> `global_role=teacher` 与 `TeamMember.role=teacher` 含义不同：前者是唯一操作老师，后者是查看老师，不能据此获得新增、修改、审批或付款权限。
 
 ---
 
@@ -1500,10 +1502,10 @@ Authorization: Bearer <access_token>
 
 ### POST /api/v1/contributions/rankings/confirm/ - 确认排序
 
-老师确认排序（确认后不可改，对全员公开）。
+项目负责人确认并公开排序（确认后不可改）；唯一操作老师和系统管理员可兜底处理。
 
 - **方法**：POST
-- **权限**：老师 / 管理员
+- **权限**：项目牵头/共同负责人、操作老师或管理员
 
 **请求参数**：
 
@@ -1563,12 +1565,12 @@ Authorization: Bearer <access_token>
 
 - **备注**：排名须已公开（已确认）才能提异议。
 
-### POST /api/v1/contributions/objections/{id}/leader_review/ - 初审
+### PATCH /api/v1/contributions/objections/{id}/leader_review/ - 初审
 
 项目负责人对异议进行初审。
 
 - **方法**：PATCH
-- **权限**：项目负责人 / 老师 / 管理员
+- **权限**：项目负责人 / 操作老师 / 管理员；异议提出人不能自审
 
 **请求参数**：
 
@@ -1594,26 +1596,26 @@ Authorization: Bearer <access_token>
 }
 ```
 
-### POST /api/v1/contributions/objections/{id}/teacher_confirm/ - 终审
+### PATCH /api/v1/contributions/objections/{id}/teacher_confirm/ - 最终复核
 
-老师对异议进行最终确认。
+另一位项目负责人完成最终复核；操作老师或管理员可兜底。路径和历史字段名保留 `teacher_confirm` 仅为兼容旧客户端。
 
 - **方法**：PATCH
-- **权限**：老师 / 管理员
+- **权限**：另一位项目负责人、操作老师或管理员；异议提出人和初审人均不能复核
 
 **请求参数**：
 
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | action | string | 是 | 固定为 `teacher_confirm` |
-| teacher_opinion | string | 否 | 老师意见 |
+| teacher_opinion | string | 否 | 最终复核意见（历史字段名） |
 | final_result | string | 否 | 最终结果说明 |
 | final_status | string | 是 | approved / rejected |
 
 ```json
 {
   "action": "teacher_confirm",
-  "teacher_opinion": "维持原排名",
+  "teacher_opinion": "第二位负责人复核后维持原排名",
   "final_result": "排名合理，维持原排序",
   "final_status": "approved"
 }
@@ -1624,12 +1626,12 @@ Authorization: Bearer <access_token>
 ```json
 {
   "code": 0,
-  "message": "异议最终确认完成",
+  "message": "异议最终复核完成",
   "data": { "id": 1, "status": "approved", "final_result": "排名合理，维持原排序" }
 }
 ```
 
-- **备注**：异议须先经负责人初审，老师才能终审。
+- **备注**：异议须先经一人初审，再由不同的人完成最终复核。
 
 ---
 

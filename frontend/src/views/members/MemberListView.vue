@@ -14,24 +14,45 @@
           <el-input
             v-model="queryParams.search"
             :prefix-icon="Search"
-            placeholder="姓名、手机号或邮箱"
+            placeholder="姓名、拼音、首字母、手机号、邮箱、学校或专业"
             clearable
-            @keyup.enter="handleSearch"
+            aria-label="搜索姓名、拼音、首字母、手机号、邮箱、学校或专业"
           />
         </el-form-item>
         <el-form-item label="年级">
-          <el-input v-model="queryParams.grade" placeholder="全部年级" clearable />
+          <el-input
+            v-model="queryParams.grade"
+            placeholder="输入年级片段，如 2024"
+            clearable
+            aria-label="按年级片段筛选成员"
+          />
         </el-form-item>
         <el-form-item label="学校">
-          <el-input v-model="queryParams.school" placeholder="全部学校" clearable />
+          <el-input
+            v-model="queryParams.school"
+            placeholder="输入学校名称片段"
+            clearable
+            aria-label="按学校名称片段筛选成员"
+          />
         </el-form-item>
         <el-form-item label="所属小组">
-          <el-select v-model="queryParams.team" placeholder="全部小组" clearable filterable>
+          <el-select
+            v-model="queryParams.team"
+            placeholder="全部小组"
+            clearable
+            filterable
+            @change="handleImmediateFilterChange"
+          >
             <el-option v-for="team in teamOptions" :key="team.id" :label="team.name" :value="team.id" />
           </el-select>
         </el-form-item>
         <el-form-item label="团队身份">
-          <el-select v-model="queryParams.team_role" placeholder="全部身份" clearable>
+          <el-select
+            v-model="queryParams.team_role"
+            placeholder="全部身份"
+            clearable
+            @change="handleImmediateFilterChange"
+          >
             <el-option
               v-for="option in TEAM_ROLE_OPTIONS"
               :key="option.value"
@@ -41,10 +62,20 @@
           </el-select>
         </el-form-item>
         <el-form-item label="专业">
-          <el-input v-model="queryParams.major" placeholder="全部专业" clearable />
+          <el-input
+            v-model="queryParams.major"
+            placeholder="输入专业片段，如计算机"
+            clearable
+            aria-label="按专业片段筛选成员"
+          />
         </el-form-item>
         <el-form-item label="成员状态">
-          <el-select v-model="queryParams.membership_status" placeholder="全部状态" clearable>
+          <el-select
+            v-model="queryParams.membership_status"
+            placeholder="全部状态"
+            clearable
+            @change="handleImmediateFilterChange"
+          >
             <el-option label="在队" value="active" />
             <el-option label="暂离" value="on_leave" />
             <el-option label="已离队" value="exited" />
@@ -58,6 +89,9 @@
           </el-button>
         </el-form-item>
       </el-form>
+      <p class="filter-hint">
+        自由文本支持任意片段匹配；姓名还支持拼音和首字母，英文字母不区分大小写。
+      </p>
     </section>
 
     <el-alert
@@ -222,7 +256,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { Refresh, Search, View } from '@element-plus/icons-vue'
 import { getMembers, type MemberQueryParams } from '@/api/members'
 import { getTeams, type Team } from '@/api/teams'
@@ -248,6 +282,10 @@ const loadFailed = ref(false)
 const memberList = ref<Member[]>([])
 const teamOptions = ref<Team[]>([])
 const total = ref(0)
+const TEXT_SEARCH_DEBOUNCE_MS = 320
+let textSearchTimer: number | undefined
+let suppressTextSearch = false
+let memberRequestId = 0
 
 const queryParams = reactive<MemberQueryParams>({
   page: 1,
@@ -302,25 +340,48 @@ function membershipStatusType(value?: string): 'success' | 'warning' | 'danger' 
 }
 
 async function loadData(): Promise<void> {
+  const requestId = ++memberRequestId
   loading.value = true
   loadFailed.value = false
   try {
-    const response = await getMembers(queryParams)
+    const response = await getMembers({ ...queryParams })
+    if (requestId !== memberRequestId) return
     memberList.value = response.results
     total.value = response.count
   } catch {
-    loadFailed.value = true
+    if (requestId === memberRequestId) loadFailed.value = true
   } finally {
-    loading.value = false
+    if (requestId === memberRequestId) loading.value = false
   }
 }
 
+function cancelTextSearch(): void {
+  if (textSearchTimer === undefined) return
+  window.clearTimeout(textSearchTimer)
+  textSearchTimer = undefined
+}
+
+function scheduleTextSearch(): void {
+  if (suppressTextSearch) return
+  cancelTextSearch()
+  textSearchTimer = window.setTimeout(() => {
+    textSearchTimer = undefined
+    handleSearch()
+  }, TEXT_SEARCH_DEBOUNCE_MS)
+}
+
 function handleSearch(): void {
+  cancelTextSearch()
   queryParams.page = 1
   loadData()
 }
 
+function handleImmediateFilterChange(): void {
+  handleSearch()
+}
+
 function handleReset(): void {
+  suppressTextSearch = true
   queryParams.search = ''
   queryParams.grade = ''
   queryParams.major = ''
@@ -328,6 +389,8 @@ function handleReset(): void {
   queryParams.team = undefined
   queryParams.team_role = undefined
   queryParams.membership_status = ''
+  suppressTextSearch = false
+  cancelTextSearch()
   queryParams.page = 1
   loadData()
 }
@@ -352,6 +415,22 @@ onMounted(() => {
   loadData()
   loadTeamOptions()
 })
+
+watch(
+  () => [
+    queryParams.search,
+    queryParams.grade,
+    queryParams.school,
+    queryParams.major,
+  ],
+  scheduleTextSearch,
+  { flush: 'sync' },
+)
+
+onBeforeUnmount(() => {
+  cancelTextSearch()
+  memberRequestId += 1
+})
 </script>
 
 <style lang="scss" scoped>
@@ -363,8 +442,15 @@ onMounted(() => {
 }
 
 .filter-panel {
-  padding: 14px 16px 0;
+  padding: 14px 16px 10px;
   margin-bottom: 12px;
+}
+
+.filter-hint {
+  margin: -4px 0 2px;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .filter-form {
@@ -374,11 +460,11 @@ onMounted(() => {
   }
 
   :deep(.el-input) {
-    width: 150px;
+    width: 180px;
   }
 
   :deep(.el-form-item:first-child .el-input) {
-    width: 230px;
+    width: 340px;
   }
 }
 

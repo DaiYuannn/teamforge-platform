@@ -261,6 +261,77 @@ class MemberTaskSummarySerializer(serializers.Serializer):
     is_overdue = serializers.BooleanField()
 
 
+class MemberCompetitionParticipationSerializer(serializers.Serializer):
+    participant_id = serializers.IntegerField()
+    competition_id = serializers.IntegerField()
+    competition_name = serializers.CharField()
+    event_id = serializers.IntegerField(allow_null=True)
+    event_name = serializers.CharField()
+    event_edition = serializers.CharField()
+    event_organizer = serializers.CharField()
+    project_id = serializers.IntegerField()
+    project_name = serializers.CharField()
+    project_code = serializers.CharField()
+    entry_name = serializers.CharField()
+    role = serializers.CharField()
+    role_display = serializers.CharField()
+    participation_status = serializers.CharField()
+    participation_status_display = serializers.CharField()
+    responsibility = serializers.CharField()
+    joined_at = serializers.DateTimeField()
+
+
+def _get_competition_participations(user, viewer=None):
+    """Return exact roster records instead of inferring entry membership by project."""
+    from apps.competitions.models import CompetitionParticipant
+    from common.project_access import scope_project_queryset
+
+    participations = CompetitionParticipant.objects.filter(
+        user=user,
+    ).select_related(
+        'competition__project',
+        'competition__event',
+    )
+    if viewer is not None:
+        participations = scope_project_queryset(
+            participations,
+            viewer,
+            project_lookup='competition__project',
+        )
+    participations = participations.order_by(
+        '-competition__event__edition',
+        'competition__event__name',
+        'competition__project__name',
+        'competition__entry_name',
+        'id',
+    )
+    result = []
+    for participation in participations:
+        competition = participation.competition
+        event = competition.event
+        project = competition.project
+        result.append({
+            'participant_id': participation.id,
+            'competition_id': competition.id,
+            'competition_name': competition.name,
+            'event_id': event.id if event else None,
+            'event_name': event.name if event else competition.name,
+            'event_edition': event.edition if event else '',
+            'event_organizer': event.organizer if event else competition.organizer,
+            'project_id': project.id,
+            'project_name': project.name,
+            'project_code': project.code,
+            'entry_name': competition.entry_name,
+            'role': participation.role,
+            'role_display': participation.get_role_display(),
+            'participation_status': participation.participation_status,
+            'participation_status_display': participation.get_participation_status_display(),
+            'responsibility': participation.responsibility,
+            'joined_at': participation.joined_at,
+        })
+    return result
+
+
 class MemberListSerializer(serializers.ModelSerializer):
     """成员列表精简序列化器（返回用户基本信息+联系方式）"""
     global_role_display = serializers.CharField(source='get_global_role_display', read_only=True)
@@ -307,6 +378,7 @@ class MemberSerializer(serializers.ModelSerializer):
     projects = serializers.SerializerMethodField()
     # 参与的项目数量
     project_count = serializers.SerializerMethodField()
+    competition_participations = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -315,7 +387,8 @@ class MemberSerializer(serializers.ModelSerializer):
             'global_role', 'global_role_display', 'is_student', 'school', 'grade', 'major',
             'membership_status', 'team_joined_at', 'team_left_at', 'exit_reason',
             'handover_to', 'handover_notes', 'is_active',
-            'projects', 'project_count', 'team_memberships', 'date_joined',
+            'projects', 'project_count', 'competition_participations',
+            'team_memberships', 'date_joined',
         )
         read_only_fields = fields
 
@@ -372,6 +445,10 @@ class MemberSerializer(serializers.ModelSerializer):
     def get_team_memberships(self, obj):
         return _get_active_team_memberships(obj, _viewer(self))
 
+    @extend_schema_field(MemberCompetitionParticipationSerializer(many=True))
+    def get_competition_participations(self, obj):
+        return _get_competition_participations(obj, _viewer(self))
+
 
 class MemberDetailSerializer(serializers.ModelSerializer):
     """
@@ -392,6 +469,7 @@ class MemberDetailSerializer(serializers.ModelSerializer):
     tasks = serializers.SerializerMethodField()
     # 任务数量
     task_count = serializers.SerializerMethodField()
+    competition_participations = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -401,7 +479,7 @@ class MemberDetailSerializer(serializers.ModelSerializer):
             'membership_status', 'team_joined_at', 'team_left_at', 'exit_reason',
             'handover_to', 'handover_notes', 'is_active',
             'skills', 'latest_work_schedule',
-            'projects', 'project_count', 'team_memberships',
+            'projects', 'project_count', 'competition_participations', 'team_memberships',
             'tasks', 'task_count',
             'date_joined',
         )
@@ -523,3 +601,7 @@ class MemberDetailSerializer(serializers.ModelSerializer):
 
     def get_team_memberships(self, obj):
         return _get_active_team_memberships(obj, _viewer(self))
+
+    @extend_schema_field(MemberCompetitionParticipationSerializer(many=True))
+    def get_competition_participations(self, obj):
+        return _get_competition_participations(obj, _viewer(self))

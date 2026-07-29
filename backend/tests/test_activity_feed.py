@@ -124,7 +124,8 @@ class TestLogActivityService:
             metadata={'name': project.name},
         )
         assert activity.id is not None
-        assert Activity.objects.count() == 1
+        assert Activity.objects.count() == 2
+        assert Activity.objects.filter(description='创建了项目').count() == 1
         assert activity.actor == user
 
     def test_log_activity_minimal(self):
@@ -158,8 +159,8 @@ class TestLogActivityService:
         log_activity(Activity.Type.PROJECT_CREATED, actor=user, project=project)
         log_activity(Activity.Type.TASK_CREATED, actor=user, project=project)
         log_activity(Activity.Type.FILE_UPLOADED, actor=user, project=project)
-        assert Activity.objects.count() == 3
-        assert Activity.objects.filter(project=project).count() == 3
+        assert Activity.objects.count() == 4
+        assert Activity.objects.filter(project=project).count() == 4
 
 
 @pytest.mark.api
@@ -185,7 +186,10 @@ class TestActivityFeedAPI:
         resp = member_client.get('/api/v1/activities/')
         assert resp.status_code == 200
         results = get_results(resp)
-        assert len(results) == 2
+        assert len(results) == 3
+        assert {'创建项目A', '创建任务'}.issubset({
+            item['description'] for item in results
+        })
 
     def test_feed_includes_fields(self, member_client, make_user, make_project):
         """动态流包含必要字段"""
@@ -198,8 +202,10 @@ class TestActivityFeedAPI:
         )
         resp = member_client.get('/api/v1/activities/')
         results = get_results(resp)
-        assert len(results) == 1
-        item = results[0]
+        item = next(
+            result for result in results
+            if result['description'] == '字段测试'
+        )
         assert item['activity_type'] == 'project_created'
         assert item['type_display'] == '创建项目'
         assert item['actor_name'] == user.name
@@ -220,8 +226,10 @@ class TestActivityFeedAPI:
         resp = member_client.get(f'/api/v1/activities/?project={p1.id}')
         assert resp.status_code == 200
         results = get_results(resp)
-        assert len(results) == 1
-        assert results[0]['description'] == '项目1动态'
+        assert len(results) == 2
+        assert '项目1动态' in {
+            item['description'] for item in results
+        }
 
     def test_filter_by_type(self, member_client, make_user, make_project):
         """按动态类型过滤"""
@@ -282,12 +290,12 @@ class TestActivityFeedAPI:
         assert resp.status_code == 200
         data = extract_data(resp)
         # 分页结构
-        assert data['count'] == 25
+        assert data['count'] == 26
         assert len(data['results']) == 10
 
         resp2 = member_client.get('/api/v1/activities/?page_size=10&page=3')
         data2 = extract_data(resp2)
-        assert len(data2['results']) == 5
+        assert len(data2['results']) == 6
 
     def test_feed_ordering(self, member_client, make_user, make_project):
         """动态按时间倒序（最新在前）"""
@@ -328,7 +336,7 @@ class TestProjectActivityAPI:
         resp = member_client.get(f'/api/v1/activities/project/{p1.id}/')
         assert resp.status_code == 200
         results = get_results(resp)
-        assert len(results) == 2
+        assert len(results) == 3
         descs = [r['description'] for r in results]
         assert '项目1创建' in descs
         assert '项目1任务' in descs
@@ -340,7 +348,8 @@ class TestProjectActivityAPI:
         resp = member_client.get(f'/api/v1/activities/project/{project.id}/')
         assert resp.status_code == 200
         results = get_results(resp)
-        assert len(results) == 0
+        assert len(results) == 1
+        assert results[0]['activity_type'] == 'project_created'
 
     def test_project_activity_not_found(self, member_client):
         """项目不存在"""
@@ -382,3 +391,148 @@ class TestProjectActivityAPI:
         project = make_project()
         resp = api_client.get(f'/api/v1/activities/project/{project.id}/')
         assert resp.status_code == 401
+
+
+@pytest.mark.model
+@pytest.mark.django_db
+class TestAutomaticActivityTransitions:
+    """横切信号只记录真实状态变化，不因普通保存制造重复动态。"""
+
+    def test_team_member_join_and_leave_are_transition_aware(self, make_user):
+        from apps.common.activity_models import Activity
+        from apps.common.team_models import Team, TeamMember
+
+        owner = make_user(email='activity-team-owner@test.com')
+        member_user = make_user(email='activity-team-member@test.com')
+        team = Team.objects.create(
+            name='动态测试团队',
+            code='ACTIVITY-TEAM',
+            owner=owner,
+        )
+        membership = TeamMember.objects.create(
+            team=team,
+            user=member_user,
+            role=TeamMember.Role.MEMBER,
+            status=TeamMember.Status.ACTIVE,
+        )
+        activity_filter = Activity.objects.filter(
+            target_type='team_member',
+            target_id=membership.id,
+        )
+        assert list(
+            activity_filter.values_list('activity_type', flat=True)
+        ) == [Activity.Type.MEMBER_JOINED]
+
+        membership.role = TeamMember.Role.ADMIN
+        membership.save(update_fields=['role'])
+        assert activity_filter.count() == 1
+
+        membership.status = TeamMember.Status.EXITED
+        membership.save(update_fields=['status'])
+        assert list(
+            activity_filter.order_by('id').values_list(
+                'activity_type',
+                flat=True,
+            )
+        ) == [
+            Activity.Type.MEMBER_JOINED,
+            Activity.Type.MEMBER_LEFT,
+        ]
+
+        membership.status = TeamMember.Status.ACTIVE
+        membership.save(update_fields=['status'])
+        assert list(
+            activity_filter.order_by('id').values_list(
+                'activity_type',
+                flat=True,
+            )
+        ) == [
+            Activity.Type.MEMBER_JOINED,
+            Activity.Type.MEMBER_LEFT,
+            Activity.Type.MEMBER_JOINED,
+        ]
+
+    def test_payment_and_internal_transfer_have_independent_activity(
+        self,
+        make_project,
+        make_user,
+    ):
+        from datetime import date
+        from decimal import Decimal
+
+        from apps.common.activity_models import Activity
+        from apps.finance.models import (
+            FinanceExpense,
+            FinanceInternalTransfer,
+            FinancePayment,
+        )
+
+        project = make_project(name='资金动态项目')
+        payer = make_user(email='activity-payer@test.com')
+        recipient = make_user(email='activity-recipient@test.com')
+        expense = FinanceExpense.objects.create(
+            project=project,
+            title='现场往返车费',
+            amount=Decimal('120.00'),
+            expense_date=date.today(),
+            spender=recipient,
+            payee=recipient,
+            reimbursement_status=FinanceExpense.ReimbursementStatus.APPROVED,
+        )
+        payment = FinancePayment.objects.create(
+            expense=expense,
+            recipient=recipient,
+            amount=Decimal('120.00'),
+            status=FinancePayment.Status.COMPLETED,
+            payment_method='微信',
+            payment_reference='PAY-ACTIVITY-1',
+            paid_by=payer,
+        )
+        payment.payment_reference = 'PAY-ACTIVITY-1-UPDATED'
+        payment.save(update_fields=['payment_reference'])
+        assert Activity.objects.filter(
+            target_type='finance_payment',
+            target_id=payment.id,
+            activity_type=Activity.Type.FINANCE_PAYMENT,
+        ).count() == 1
+
+        failed_expense = FinanceExpense.objects.create(
+            project=project,
+            title='异常付款测试',
+            amount=Decimal('30.00'),
+            expense_date=date.today(),
+            spender=recipient,
+            payee=recipient,
+            reimbursement_status=FinanceExpense.ReimbursementStatus.APPROVED,
+        )
+        failed_payment = FinancePayment.objects.create(
+            expense=failed_expense,
+            recipient=recipient,
+            amount=Decimal('30.00'),
+            status=FinancePayment.Status.FAILED,
+            payment_method='银行转账',
+            failure_reason='收款账户异常',
+            paid_by=payer,
+        )
+        assert Activity.objects.filter(
+            target_type='finance_payment',
+            target_id=failed_payment.id,
+            activity_type=Activity.Type.FINANCE_PAYMENT,
+        ).count() == 1
+
+        transfer = FinanceInternalTransfer.objects.create(
+            project=project,
+            from_user=payer,
+            to_user=recipient,
+            amount=Decimal('200.00'),
+            status=FinanceInternalTransfer.Status.COMPLETED,
+            payment_method='银行转账',
+            payment_reference='TRANSFER-ACTIVITY-1',
+            recorded_by=payer,
+        )
+        transfer_activity = Activity.objects.get(
+            target_type='finance_internal_transfer',
+            target_id=transfer.id,
+        )
+        assert transfer_activity.activity_type == Activity.Type.FINANCE_TRANSFER
+        assert transfer_activity.metadata['counts_as_income_or_expense'] is False

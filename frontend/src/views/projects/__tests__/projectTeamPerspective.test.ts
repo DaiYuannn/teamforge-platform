@@ -32,6 +32,7 @@ describe('project team perspective', () => {
       'co_leader_names',
       'team_details',
       'competition_summaries',
+      'competition.display_name || competition.name',
       'member_work_summary',
       'active_task_titles',
       'competition_responsibilities',

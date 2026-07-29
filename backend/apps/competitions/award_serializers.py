@@ -33,7 +33,7 @@ class CompetitionAwardSerializer(serializers.ModelSerializer):
 
 
 class CompetitionAwardCreateSerializer(serializers.Serializer):
-    """比赛获奖记录创建序列化器"""
+    """比赛获奖记录新增/修改序列化器。"""
     award_name = serializers.CharField(max_length=200)
     award_level = serializers.CharField(max_length=50, required=False, allow_blank=True, default='')
     award_date = serializers.DateField(required=False, allow_null=True)
@@ -56,3 +56,15 @@ class CompetitionAwardCreateSerializer(serializers.Serializer):
         if recipients:
             award.recipients.set(recipients)
         return award
+
+    def update(self, instance, validated_data):
+        """修改奖项本身及其获奖人名单。"""
+        recipients_supplied = 'recipients' in validated_data
+        recipients = validated_data.pop('recipients', [])
+        for field in ('award_name', 'award_level', 'award_date', 'notes'):
+            if field in validated_data:
+                setattr(instance, field, validated_data[field])
+        instance.save()
+        if recipients_supplied:
+            instance.recipients.set(recipients)
+        return instance

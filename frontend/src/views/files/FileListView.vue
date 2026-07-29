@@ -286,6 +286,9 @@
                 <el-table-column prop="folder_name" label="文件夹" min-width="110" show-overflow-tooltip>
                   <template #default="{ row }">{{ row.folder_name || '根目录' }}</template>
                 </el-table-column>
+                <el-table-column label="可见范围" min-width="145" show-overflow-tooltip>
+                  <template #default="{ row }">{{ fileVisibilityLabel(row as ManagedFileAsset) }}</template>
+                </el-table-column>
                 <el-table-column label="标签" min-width="160">
                   <template #default="{ row }">
                     <div v-if="row.tags?.length" class="file-tags">
@@ -376,6 +379,7 @@
                 <dl class="mobile-file-meta">
                   <div class="meta-wide"><dt>所属项目</dt><dd>{{ item.project_name || '-' }}</dd></div>
                   <div><dt>文件夹</dt><dd>{{ item.folder_name || '根目录' }}</dd></div>
+                  <div class="meta-wide"><dt>可见范围</dt><dd>{{ fileVisibilityLabel(item) }}</dd></div>
                   <div><dt>大小</dt><dd>{{ formatFileSize(item.size) }}</dd></div>
                   <div><dt>上传者</dt><dd>{{ item.uploader_name || '-' }}</dd></div>
                   <div><dt>上传时间</dt><dd>{{ formatDate(item.created_at) }}</dd></div>
@@ -512,6 +516,44 @@
           <p class="form-help">
             “全实践团队”仍需登录；互联网公开只通过公开门户或单独创建的分享链接。
           </p>
+        </el-form-item>
+        <el-form-item v-if="uploadForm.level === 'internal'" label="内部可见范围" required>
+          <el-radio-group v-model="uploadForm.scope" @change="handleUploadScopeChange">
+            <el-radio-button value="project">本项目成员</el-radio-button>
+            <el-radio-button value="team">指定小团队</el-radio-button>
+            <el-radio-button value="competition">指定参赛条目</el-radio-button>
+          </el-radio-group>
+          <el-select
+            v-if="uploadForm.scope === 'team'"
+            v-model="uploadForm.team"
+            class="scope-target-select"
+            clearable
+            placeholder="请选择项目关联团队"
+          >
+            <el-option
+              v-for="team in uploadTeamOptions"
+              :key="team.id"
+              :label="team.parent_name ? `${team.parent_name} / ${team.name}` : team.name"
+              :value="team.id"
+            />
+          </el-select>
+          <el-select
+            v-if="uploadForm.scope === 'competition'"
+            v-model="uploadForm.competition_entry"
+            class="scope-target-select"
+            clearable
+            filterable
+            :loading="uploadCompetitionLoading"
+            placeholder="请选择比赛与参赛条目"
+          >
+            <el-option
+              v-for="entry in uploadCompetitionOptions"
+              :key="entry.id"
+              :label="[entry.event_name || entry.name, entry.entry_name].filter(Boolean).join(' · ')"
+              :value="entry.id"
+            />
+          </el-select>
+          <p class="form-help">指定范围后，其他项目成员也无法通过文件列表或下载接口访问。</p>
         </el-form-item>
         <el-form-item label="文件" required>
           <el-upload
@@ -839,11 +881,13 @@ import {
   type OfficePreview,
 } from '@/api/files'
 import { getProjects } from '@/api/projects'
+import { getCompetitions } from '@/api/competitions'
+import { getTeams, type Team } from '@/api/teams'
 import PageHeader from '@/components/PageHeader.vue'
 import { useDevice } from '@/composables/useDevice'
 import { useAppStore } from '@/stores/app'
 import { useUserStore } from '@/stores/user'
-import type { FileLevel, FileVersion, Project } from '@/types'
+import type { Competition, FileLevel, FileVersion, Project } from '@/types'
 import { FILE_LEVEL_MAP } from '@/utils/constants'
 import { downloadBlob, formatDate, formatFileSize } from '@/utils/format'
 import { positiveQueryId } from '@/utils/globalSearch'
@@ -866,6 +910,7 @@ const loading = ref(false)
 const fileList = ref<ManagedFileAsset[]>([])
 const total = ref(0)
 const projectOptions = ref<Project[]>([])
+const teamOptions = ref<Team[]>([])
 const folders = ref<FileFolder[]>([])
 const tags = ref<FileTag[]>([])
 
@@ -882,19 +927,34 @@ const queryParams = reactive<FileManagementQueryParams>({
 const selectedProject = computed(() =>
   projectOptions.value.find((project) => project.id === queryParams.project),
 )
+function projectTeamRootIds(project: Project): Set<number> {
+  return new Set((project.team_details || []).map((team) => team.parent_id || team.id))
+}
+
+function hasManageableProjectTeam(project: Project): boolean {
+  const rootIds = projectTeamRootIds(project)
+  return rootIds.size > 0 && teamOptions.value.some((team) => (
+    team.can_manage && rootIds.has(team.parent || team.id)
+  ))
+}
+
 const manageableProjects = computed(() => projectOptions.value.filter((project) =>
   ['teacher', 'sys_admin'].includes(userStore.role)
-  || project.leader === userStore.userInfo?.id,
+  || project.can_manage
+  || hasManageableProjectTeam(project),
 ))
 const canManageSelectedProject = computed(() => Boolean(
   selectedProject.value
   && (
     ['teacher', 'sys_admin'].includes(userStore.role)
-    || selectedProject.value.leader === userStore.userInfo?.id
+    || selectedProject.value.can_manage
   ),
 ))
 const canUpload = computed(() =>
-  ['teacher', 'sys_admin'].includes(userStore.role) || canManageSelectedProject.value,
+  Boolean(
+    selectedProject.value
+    && manageableProjects.value.some((project) => project.id === selectedProject.value?.id),
+  ),
 )
 const canRestoreFiles = computed(() => ['teacher', 'sys_admin'].includes(userStore.role))
 const canPermanentlyDelete = computed(() => userStore.role === 'sys_admin')
@@ -959,9 +1019,7 @@ const folderTree = computed<FolderTreeNode[]>(() => {
 })
 
 function canManageFile(file: ManagedFileAsset): boolean {
-  if (['teacher', 'sys_admin'].includes(userStore.role)) return true
-  const project = projectOptions.value.find((item) => item.id === file.project)
-  return Boolean(project && project.leader === userStore.userInfo?.id)
+  return Boolean(file.can_manage)
 }
 
 async function loadProjects(): Promise<void> {
@@ -970,6 +1028,15 @@ async function loadProjects(): Promise<void> {
     projectOptions.value = response.results
   } catch {
     projectOptions.value = []
+  }
+}
+
+async function loadTeams(): Promise<void> {
+  try {
+    const response = await getTeams({ page: 1, page_size: 200 })
+    teamOptions.value = response.results
+  } catch {
+    teamOptions.value = []
   }
 }
 
@@ -1046,6 +1113,14 @@ function tagStyle(color: string): Record<string, string> {
   }
 }
 
+function fileVisibilityLabel(file: ManagedFileAsset): string {
+  if (file.level === 'public') return '全实践团队'
+  if (file.level === 'sensitive') return '敏感审批 / 授权'
+  if (file.competition_entry) return `参赛条目：${file.competition_entry_name || file.competition_entry}`
+  if (file.team) return `小团队：${file.team_name || file.team}`
+  return '本项目成员'
+}
+
 async function handleDownload(file: ManagedFileAsset): Promise<void> {
   try {
     const blob = await downloadFile(file.id)
@@ -1060,10 +1135,30 @@ const uploading = ref(false)
 const uploadPickerKey = ref(0)
 const pendingUpload = ref<File | null>(null)
 const uploadFolders = ref<FileFolder[]>([])
-const uploadForm = reactive<{ project?: number; folder?: number; level: FileLevel }>({
+const uploadCompetitionOptions = ref<Competition[]>([])
+const uploadCompetitionLoading = ref(false)
+const uploadForm = reactive<{
+  project?: number
+  folder?: number
+  level: FileLevel
+  scope: 'project' | 'team' | 'competition'
+  team?: number
+  competition_entry?: number
+}>({
   project: undefined,
   folder: undefined,
   level: 'internal',
+  scope: 'project',
+  team: undefined,
+  competition_entry: undefined,
+})
+const uploadTeamOptions = computed(() => {
+  const project = projectOptions.value.find((item) => item.id === uploadForm.project)
+  if (!project) return []
+  const rootIds = projectTeamRootIds(project)
+  return teamOptions.value.filter((team) => (
+    team.can_manage && rootIds.has(team.parent || team.id)
+  ))
 })
 const uploadTargetLabel = computed(() => {
   const project = projectOptions.value.find((item) => item.id === uploadForm.project)
@@ -1076,15 +1171,48 @@ async function openUploadDialog(): Promise<void> {
   uploadForm.project = queryParams.project
   uploadForm.folder = typeof queryParams.folder === 'number' ? queryParams.folder : undefined
   uploadForm.level = 'internal'
+  const canUseProjectScope = Boolean(
+    ['teacher', 'sys_admin'].includes(userStore.role)
+    || projectOptions.value.find((item) => item.id === uploadForm.project)?.can_manage,
+  )
+  uploadForm.scope = canUseProjectScope ? 'project' : 'team'
+  uploadForm.team = canUseProjectScope ? undefined : uploadTeamOptions.value[0]?.id
+  uploadForm.competition_entry = undefined
   pendingUpload.value = null
   uploadPickerKey.value += 1
   uploadFolders.value = queryParams.project ? folders.value : []
+  await loadUploadCompetitions(uploadForm.project)
   uploadVisible.value = true
 }
 
 async function handleUploadProjectChange(projectId: number): Promise<void> {
   uploadForm.folder = undefined
+  uploadForm.competition_entry = undefined
+  const project = projectOptions.value.find((item) => item.id === projectId)
+  const canUseProjectScope = Boolean(
+    ['teacher', 'sys_admin'].includes(userStore.role) || project?.can_manage,
+  )
+  uploadForm.scope = canUseProjectScope ? 'project' : 'team'
+  uploadForm.team = canUseProjectScope ? undefined : uploadTeamOptions.value[0]?.id
   uploadFolders.value = projectId ? await getFileFolders(projectId) : []
+  await loadUploadCompetitions(projectId)
+}
+
+function handleUploadScopeChange(): void {
+  uploadForm.team = undefined
+  uploadForm.competition_entry = undefined
+}
+
+async function loadUploadCompetitions(projectId?: number): Promise<void> {
+  uploadCompetitionOptions.value = []
+  if (!projectId) return
+  uploadCompetitionLoading.value = true
+  try {
+    const response = await getCompetitions({ project: projectId, page: 1, page_size: 200 })
+    uploadCompetitionOptions.value = response.results
+  } finally {
+    uploadCompetitionLoading.value = false
+  }
 }
 
 function handleUploadFileChange(file: UploadFile): void {
@@ -1100,12 +1228,30 @@ async function handleUploadSubmit(): Promise<void> {
     ElMessage.warning('请选择项目和文件')
     return
   }
+  if (uploadForm.level === 'internal' && uploadForm.scope === 'team' && !uploadForm.team) {
+    ElMessage.warning('请选择指定小团队')
+    return
+  }
+  if (
+    uploadForm.level === 'internal'
+    && uploadForm.scope === 'competition'
+    && !uploadForm.competition_entry
+  ) {
+    ElMessage.warning('请选择指定参赛条目')
+    return
+  }
   uploading.value = true
   try {
     await uploadFile(uploadForm.project, pendingUpload.value, {
       project: uploadForm.project,
       folder: uploadForm.folder,
       level: uploadForm.level,
+      team: uploadForm.level === 'internal' && uploadForm.scope === 'team'
+        ? uploadForm.team
+        : undefined,
+      competition_entry: uploadForm.level === 'internal' && uploadForm.scope === 'competition'
+        ? uploadForm.competition_entry
+        : undefined,
     })
     uploadVisible.value = false
     ElMessage.success('文件上传成功')
@@ -1510,7 +1656,7 @@ async function handleVersionRestore(version: FileVersion): Promise<void> {
 }
 
 onMounted(async () => {
-  await loadProjects()
+  await Promise.all([loadProjects(), loadTeams()])
   await Promise.all([loadTags(), loadData()])
   const fileId = positiveQueryId(route.query.file_id)
   if (fileId) {
@@ -1989,6 +2135,11 @@ onUnmounted(releasePreviewUrl)
 
 .upload-icon { font-size: 28px; color: var(--color-primary); }
 .upload-label { margin-top: 7px; color: var(--color-text-regular); }
+
+.scope-target-select {
+  width: 100%;
+  margin-top: 10px;
+}
 
 .tag-editor {
   display: grid;

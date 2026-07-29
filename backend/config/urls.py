@@ -43,6 +43,7 @@ urlpatterns = [
     path('api/v1/competitions/', include('apps.competitions.urls')),
     path('api/v1/tasks/', include('apps.tasks.urls')),
     path('api/v1/members/', include('apps.members.urls')),
+    path('api/v1/skill-matrix/', include('apps.members.skill_matrix_urls')),
     path('api/v1/finance/', include('apps.finance.urls')),
     path('api/v1/files/', include('apps.files.urls')),
     path('api/v1/imports/', include('apps.imports.urls')),

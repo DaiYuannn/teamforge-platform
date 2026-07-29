@@ -1,7 +1,7 @@
 import type { Member, TeamRole } from '@/types'
 
 export const TEAM_ROLE_OPTIONS: Array<{ value: TeamRole; label: string }> = [
-  { value: 'teacher', label: '指导老师' },
+  { value: 'teacher', label: '查看老师（只读）' },
   { value: 'owner', label: '主负责人' },
   { value: 'co_lead', label: '共同负责人' },
   { value: 'admin', label: '团队管理员' },

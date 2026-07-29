@@ -147,13 +147,38 @@
           </div>
           <el-alert v-if="errors.requests" :title="errors.requests" type="error" show-icon :closable="false" />
           <div v-loading="loading.requests" class="record-list">
-            <article v-for="request in approvalRequests" :key="request.id" class="request-row">
+            <article
+              v-for="request in approvalRequests"
+              :id="`approval-request-${request.id}`"
+              :key="request.id"
+              class="request-row"
+              :class="{ 'focused-request': focusedRequestId === request.id }"
+            >
               <div class="request-main">
                 <div class="record-heading">
                   <div><h3>{{ request.title }}</h3><p>{{ request.flow_name }} · {{ request.applicant_name }}</p></div>
                   <el-tag :type="approvalStatusTone(request.status)" size="small">{{ request.status_display || approvalStatusLabel(request.status) }}</el-tag>
                 </div>
                 <p class="request-content">{{ request.content || '未填写申请说明' }}</p>
+                <div v-if="request.flow_type === 'team_membership'" class="membership-summary">
+                  <el-tag size="small" effect="plain">{{ membershipActionLabel(String(request.metadata.action || '')) }}</el-tag>
+                  <span>{{ teamName(Number(request.metadata.target_team_id)) }}</span>
+                  <span>{{ teamRoleLabel(String(request.metadata.requested_role || '')) }}</span>
+                  <span v-if="request.metadata.reason">{{ request.metadata.reason }}</span>
+                </div>
+                <div class="reviewer-summary">
+                  <strong>{{ request.current_step_name }}</strong>
+                  <span>
+                    当前处理人：
+                    {{ request.reviewer_names.length ? request.reviewer_names.join('、') : reviewerRolesLabel(request.reviewer_roles) }}
+                  </span>
+                </div>
+                <ol v-if="request.review_history.length" class="review-history">
+                  <li v-for="(review, index) in request.review_history" :key="`${request.id}-review-${index}`">
+                    <span>{{ reviewActionLabel(review.action) }} · {{ review.step_name }}</span>
+                    <small>{{ review.by_name || `用户 #${review.by}` }}<template v-if="review.opinion"> · {{ review.opinion }}</template></small>
+                  </li>
+                </ol>
               </div>
               <div class="request-meta"><span>当前节点 {{ request.current_step + 1 }}</span><time>{{ formatDateTime(request.created_at) }}</time></div>
               <div class="row-actions">
@@ -313,7 +338,14 @@
           <div v-for="(step, index) in flowDialog.steps" :key="index" class="designer-row">
             <span class="step-index">{{ index + 1 }}</span>
             <el-input v-model="step.name" :placeholder="`第 ${index + 1} 级审批`" />
-            <el-select v-model="step.reviewer_role" placeholder="审批角色"><el-option v-for="option in reviewerRoleOptions" :key="option.value" :label="option.label" :value="option.value" /></el-select>
+            <div class="reviewer-target-inputs">
+              <el-select v-model="step.reviewer_role" clearable placeholder="按角色审批">
+                <el-option v-for="option in reviewerRoleOptions" :key="option.value" :label="option.label" :value="option.value" />
+              </el-select>
+              <el-select v-model="step.reviewer_ids" multiple collapse-tags collapse-tags-tooltip filterable clearable placeholder="或指定成员">
+                <el-option v-for="user in users" :key="user.id" :label="`${user.name || user.username} · ${user.email}`" :value="user.id" />
+              </el-select>
+            </div>
             <el-button :icon="Delete" circle plain type="danger" aria-label="删除节点" :disabled="flowDialog.steps.length === 1" @click="flowDialog.steps.splice(index, 1)" />
           </div>
         </div>
@@ -322,8 +354,64 @@
       <template #footer><el-button @click="flowDialog.visible = false">取消</el-button><el-button type="primary" :loading="saving" @click="saveFlow">保存</el-button></template>
     </el-dialog>
 
-    <el-dialog v-model="requestDialog.visible" title="发起审批申请" width="560px" :fullscreen="isMobile" append-to-body>
-      <el-form label-position="top"><el-form-item label="审批流程" required><el-select v-model="requestDialog.flow"><el-option v-for="flow in activeFlows" :key="flow.id" :label="flow.name" :value="flow.id" /></el-select></el-form-item><el-form-item label="申请标题" required><el-input v-model="requestDialog.title" maxlength="100" /></el-form-item><el-form-item label="申请说明"><el-input v-model="requestDialog.content" type="textarea" :rows="5" maxlength="1000" /></el-form-item></el-form>
+    <el-dialog v-model="requestDialog.visible" title="发起审批申请" width="620px" :fullscreen="isMobile" append-to-body>
+      <el-form label-position="top">
+        <el-form-item label="审批流程" required>
+          <el-select v-model="requestDialog.flow" @change="handleRequestFlowChange">
+            <el-option v-for="flow in activeFlows" :key="flow.id" :label="flow.name" :value="flow.id" />
+          </el-select>
+        </el-form-item>
+        <template v-if="selectedRequestFlow?.flow_type === 'team_membership'">
+          <el-alert title="成员关系只会在最终审批通过后变更；转组会保留原成员历史。" type="info" :closable="false" show-icon class="permission-alert" />
+          <div class="dialog-grid">
+            <el-form-item label="申请类型" required>
+              <el-select v-model="requestDialog.membershipAction" @change="handleMembershipActionChange">
+                <el-option label="加入团队" value="join" />
+                <el-option label="转入其他团队" value="transfer" />
+                <el-option label="调整团队角色" value="role_change" />
+              </el-select>
+            </el-form-item>
+            <el-form-item v-if="requestDialog.membershipAction !== 'join'" label="当前成员关系" required>
+              <el-select v-model="requestDialog.membershipId" filterable @change="handleMembershipSelection">
+                <el-option
+                  v-for="membership in ownTeamMemberships"
+                  :key="membership.id"
+                  :label="`${teamName(membership.team)} · ${membership.role_display || teamRoleLabel(membership.role)}`"
+                  :value="membership.id"
+                />
+              </el-select>
+            </el-form-item>
+          </div>
+          <div class="dialog-grid">
+            <el-form-item label="目标团队" required>
+              <el-select
+                v-model="requestDialog.targetTeamId"
+                filterable
+                :disabled="requestDialog.membershipAction === 'role_change'"
+              >
+                <el-option
+                  v-for="team in requestTargetTeams"
+                  :key="team.id"
+                  :label="team.parent_name ? `${team.parent_name} / ${team.name}` : team.name"
+                  :value="team.id"
+                />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="申请角色" required>
+              <el-select v-model="requestDialog.requestedRole">
+                <el-option v-for="role in requestRoleOptions" :key="role.value" :label="role.label" :value="role.value" />
+              </el-select>
+            </el-form-item>
+          </div>
+          <el-form-item label="申请原因" required>
+            <el-input v-model="requestDialog.reason" type="textarea" :rows="3" maxlength="500" show-word-limit />
+          </el-form-item>
+        </template>
+        <el-form-item label="申请标题" required><el-input v-model="requestDialog.title" maxlength="100" /></el-form-item>
+        <el-form-item v-if="selectedRequestFlow?.flow_type !== 'team_membership'" label="申请说明">
+          <el-input v-model="requestDialog.content" type="textarea" :rows="5" maxlength="1000" />
+        </el-form-item>
+      </el-form>
       <template #footer><el-button @click="requestDialog.visible = false">取消</el-button><el-button type="primary" :loading="saving" @click="saveRequest">提交申请</el-button></template>
     </el-dialog>
 
@@ -374,7 +462,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Connection, Delete, Document, Edit, FolderOpened, Plus, Refresh } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
@@ -386,7 +475,12 @@ import { getUsers } from '@/api/users'
 import { getProjects } from '@/api/projects'
 import { getTeams, getTeamMembers, type Team, type TeamMember } from '@/api/teams'
 import type { Project, User } from '@/types'
-import { canCancelApprovalRequest, canReviewApprovalRequest } from './platformAccess'
+import {
+  approvalRequestIdFromQuery,
+  buildTeamMembershipMetadata,
+  canCancelApprovalRequest,
+  canReviewApprovalRequest,
+} from './platformAccess'
 import {
   approveApprovalRequest,
   cancelApprovalRequest,
@@ -436,13 +530,15 @@ import {
   type FormSubmission,
   type GitRepository,
   type RoleAssignment,
+  type TeamMembershipAction,
 } from '@/api/platform'
 
 const { isMobile } = useDevice()
+const route = useRoute()
 const userStore = useUserStore()
 const isAdmin = computed(() => userStore.role === 'sys_admin')
 const isManager = computed(() => isAdmin.value || userStore.role === 'teacher')
-const activeTab = ref('roles')
+const activeTab = ref(route.query.tab === 'approvals' ? 'approvals' : 'roles')
 const integrationMode = ref<'platforms' | 'repositories'>('platforms')
 const integrationModes = [{ label: '外部平台', value: 'platforms' }, { label: 'Git 仓库', value: 'repositories' }]
 const refreshing = ref(false)
@@ -465,6 +561,8 @@ const teams = ref<Team[]>([])
 const selectedTeamId = ref<number | null>(null)
 const selectedTeamMembers = ref<TeamMember[]>([])
 const teamLoading = ref(false)
+const ownTeamMemberships = ref<TeamMember[]>([])
+const focusedRequestId = ref<number | null>(null)
 
 const responseItems = <T,>(response: { results: T[] } | T[]): T[] => Array.isArray(response) ? response : response.results
 const activeFlowCount = computed(() => flows.value.filter((item) => item.is_active).length)
@@ -472,6 +570,18 @@ const pendingRequestCount = computed(() => approvalRequests.value.filter((item) 
 const activeFormCount = computed(() => forms.value.filter((item) => item.is_active).length)
 const activeIntegrationCount = computed(() => externalPlatforms.value.filter((item) => item.is_active).length + gitRepositories.value.filter((item) => item.is_active).length)
 const activeFlows = computed(() => flows.value.filter((item) => item.is_active))
+const requestRoleOptions = computed(() => {
+  if (userStore.userInfo?.membership_status === 'external') {
+    return [{ value: 'external', label: '外部协作者' }]
+  }
+  return [
+    { value: 'member', label: '团队成员' },
+    { value: 'advisor', label: '顾问' },
+    { value: 'admin', label: '团队管理员' },
+    { value: 'co_lead', label: '共同负责人' },
+    { value: 'teacher', label: '查看老师（只读）' },
+  ]
+})
 
 const permissionOptions = [
   { value: 'project.view', label: '查看项目' }, { value: 'project.create', label: '创建项目' },
@@ -483,12 +593,14 @@ const permissionOptions = [
   { value: 'member.view', label: '查看成员' }, { value: 'member.manage', label: '管理成员' },
 ]
 const reviewerRoleOptions = [
-  { value: 'teacher', label: '指导老师' }, { value: 'sys_admin', label: '系统管理员' },
+  { value: 'team_manager', label: '目标团队负责人/管理员' },
+  { value: 'teacher', label: '操作老师' }, { value: 'sys_admin', label: '系统管理员' },
   { value: 'sens_approver', label: '敏感信息审批人' }, { value: 'member', label: '普通成员' },
 ]
 const flowTypeOptions = [
   { value: 'leave', label: '请假审批' }, { value: 'expense', label: '经费审批' },
   { value: 'sensitive', label: '敏感信息审批' }, { value: 'project', label: '项目事项审批' },
+  { value: 'team_membership', label: '团队成员关系审批' },
 ]
 const formFieldTypeOptions: Array<{ value: CustomFormFieldType; label: string }> = [
   { value: 'text', label: '单行文本' }, { value: 'textarea', label: '多行文本' },
@@ -504,7 +616,45 @@ const platformTypeOptions = [
 const roleDialog = reactive({ visible: false, id: null as number | null, name: '', description: '', permissions: [] as string[] })
 const assignmentDialog = reactive({ visible: false, id: null as number | null, user: null as number | null, role: null as number | null, project: null as number | null })
 const flowDialog = reactive({ visible: false, id: null as number | null, name: '', flow_type: 'project', steps: [] as ApprovalStep[], is_active: true })
-const requestDialog = reactive({ visible: false, flow: null as number | null, title: '', content: '' })
+const requestDialog = reactive({
+  visible: false,
+  flow: null as number | null,
+  title: '',
+  content: '',
+  membershipAction: 'join' as TeamMembershipAction,
+  targetTeamId: null as number | null,
+  membershipId: null as number | null,
+  requestedRole: 'member',
+  reason: '',
+})
+const selectedRequestFlow = computed(() =>
+  activeFlows.value.find((flow) => flow.id === requestDialog.flow),
+)
+const selectedSourceMembership = computed(() =>
+  ownTeamMemberships.value.find(
+    (membership) => membership.id === requestDialog.membershipId,
+  ),
+)
+const requestTargetTeams = computed(() => {
+  const activeTeams = teams.value.filter((team) => team.is_active)
+  if (
+    requestDialog.membershipAction === 'role_change'
+    && selectedSourceMembership.value
+  ) {
+    return activeTeams.filter(
+      (team) => team.id === selectedSourceMembership.value?.team,
+    )
+  }
+  if (
+    requestDialog.membershipAction === 'transfer'
+    && selectedSourceMembership.value
+  ) {
+    return activeTeams.filter(
+      (team) => team.id !== selectedSourceMembership.value?.team,
+    )
+  }
+  return activeTeams
+})
 interface FormFieldDraft extends CustomFormField { optionsText: string }
 const formDialog = reactive({ visible: false, id: null as number | null, name: '', description: '', fields: [] as FormFieldDraft[], is_active: true })
 // Dynamic Element Plus controls expose different model value unions per field type.
@@ -520,7 +670,10 @@ async function loadResource(key: keyof typeof loading, loader: () => Promise<voi
 const loadRoles = () => loadResource('roles', async () => { roles.value = responseItems(await getCustomRoles()) }, '角色')
 const loadAssignments = () => loadResource('assignments', async () => { assignments.value = responseItems(await getRoleAssignments()) }, '角色分配')
 const loadFlows = () => loadResource('flows', async () => { flows.value = responseItems(await getApprovalFlows()) }, '审批流程')
-const loadRequests = () => loadResource('requests', async () => { approvalRequests.value = responseItems(await getApprovalRequests()) }, '审批申请')
+const loadRequests = () => loadResource('requests', async () => {
+  approvalRequests.value = responseItems(await getApprovalRequests())
+  await focusRequestFromQuery()
+}, '审批申请')
 const loadForms = () => loadResource('forms', async () => { forms.value = responseItems(await getCustomForms()) }, '表单')
 const loadSubmissions = () => loadResource('submissions', async () => { submissions.value = responseItems(await getFormSubmissions()) }, '提交记录')
 const loadPlatforms = () => loadResource('platforms', async () => { externalPlatforms.value = responseItems(await getExternalPlatforms()) }, '外部平台')
@@ -542,6 +695,38 @@ async function loadSelectedTeamMembers(): Promise<void> {
   try { selectedTeamMembers.value = await getTeamMembers(selectedTeamId.value) } catch { ElMessage.error('团队成员信息加载失败') } finally { teamLoading.value = false }
 }
 
+async function loadOwnTeamMemberships(): Promise<void> {
+  const userId = userStore.userInfo?.id
+  if (!userId || !teams.value.length) {
+    ownTeamMemberships.value = []
+    return
+  }
+  const results = await Promise.allSettled(
+    teams.value.map((team) => getTeamMembers(team.id)),
+  )
+  const byId = new Map<number, TeamMember>()
+  results.forEach((result) => {
+    if (result.status !== 'fulfilled') return
+    result.value
+      .filter((membership) =>
+        membership.user === userId
+        && ['active', 'on_leave'].includes(membership.status),
+      )
+      .forEach((membership) => byId.set(membership.id, membership))
+  })
+  ownTeamMemberships.value = [...byId.values()]
+}
+
+async function focusRequestFromQuery(): Promise<void> {
+  focusedRequestId.value = approvalRequestIdFromQuery(route.query.request_id)
+  if (!focusedRequestId.value) return
+  activeTab.value = 'approvals'
+  await nextTick()
+  document
+    .getElementById(`approval-request-${focusedRequestId.value}`)
+    ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+}
+
 async function refreshActiveTab(): Promise<void> {
   refreshing.value = true
   try {
@@ -558,7 +743,55 @@ function flowTypeLabel(value: string): string { return flowTypeOptions.find((ite
 function platformTypeLabel(value: string): string { return platformTypeOptions.find((item) => item.value === value)?.label || value }
 function connectionLabel(value: string): string { return ({ unchecked: '未检测', connected: '已连接', error: '连接异常' } as Record<string, string>)[value] || '未检测' }
 function connectionTone(value: string): 'success' | 'danger' | 'info' { return value === 'connected' ? 'success' : value === 'error' ? 'danger' : 'info' }
-function reviewerLabel(step: ApprovalStep): string { return reviewerRoleOptions.find((item) => item.value === step.reviewer_role)?.label || (step.reviewer_ids?.length ? `${step.reviewer_ids.length} 位指定成员` : '管理角色') }
+function reviewerLabel(step: ApprovalStep): string {
+  const roles = [
+    ...(step.reviewer_roles || []),
+    ...(step.reviewer_role ? [step.reviewer_role] : []),
+  ]
+  const roleLabel = reviewerRolesLabel(roles)
+  if (roles.length && step.reviewer_ids?.length) {
+    return `${roleLabel} / ${step.reviewer_ids.length} 位指定成员`
+  }
+  return roles.length
+    ? roleLabel
+    : step.reviewer_ids?.length
+      ? `${step.reviewer_ids.length} 位指定成员`
+      : '未分配'
+}
+function reviewerRolesLabel(roles: string[]): string {
+  if (!roles.length) return '历史兼容审批人'
+  return roles
+    .map((role) => reviewerRoleOptions.find((item) => item.value === role)?.label || role)
+    .join('、')
+}
+function teamName(teamId: number): string {
+  return teams.value.find((team) => team.id === teamId)?.name || `团队 #${teamId || '-'}`
+}
+function teamRoleLabel(role: string): string {
+  return ({
+    owner: '负责人',
+    co_lead: '共同负责人',
+    admin: '团队管理员',
+    teacher: '查看老师（只读）',
+    member: '团队成员',
+    advisor: '顾问',
+    external: '外部协作者',
+  } as Record<string, string>)[role] || role || '未指定角色'
+}
+function membershipActionLabel(action: string): string {
+  return ({
+    join: '加入团队',
+    transfer: '转入团队',
+    role_change: '调整角色',
+  } as Record<string, string>)[action] || action || '成员关系申请'
+}
+function reviewActionLabel(action: string): string {
+  return ({
+    approve: '已通过',
+    reject: '已驳回',
+    cancel: '已取消',
+  } as Record<string, string>)[action] || action
+}
 function approvalStatusLabel(status: ApprovalStatus): string { return ({ pending: '待审批', approved: '已通过', rejected: '已驳回', cancelled: '已取消' })[status] }
 function approvalStatusTone(status: ApprovalStatus): 'warning' | 'success' | 'danger' | 'info' { const tones: Record<ApprovalStatus, 'warning' | 'success' | 'danger' | 'info'> = { pending: 'warning', approved: 'success', rejected: 'danger', cancelled: 'info' }; return tones[status] }
 function requiredFieldCount(item: CustomForm): number { return item.fields.filter((field) => field.required).length }
@@ -602,13 +835,35 @@ async function saveAssignment(): Promise<void> {
 }
 async function removeAssignment(item: RoleAssignment): Promise<void> { if (!await confirmAction(`撤销 ${item.user_name} 的“${item.role_name}”角色？`, '撤销角色')) return; await deleteRoleAssignment(item.id); ElMessage.success('角色已撤销'); await loadAssignments() }
 
-function openFlowDialog(flow?: ApprovalFlow): void { Object.assign(flowDialog, { visible: true, id: flow?.id || null, name: flow?.name || '', flow_type: flow?.flow_type || 'project', steps: flow?.steps?.map((step) => ({ ...step })) || [{ name: '负责人审批', reviewer_role: 'teacher' }], is_active: flow?.is_active ?? true }) }
-function addFlowStep(): void { flowDialog.steps.push({ name: `第 ${flowDialog.steps.length + 1} 级审批`, reviewer_role: 'teacher' }) }
+function openFlowDialog(flow?: ApprovalFlow): void { Object.assign(flowDialog, { visible: true, id: flow?.id || null, name: flow?.name || '', flow_type: flow?.flow_type || 'project', steps: flow?.steps?.map((step) => ({ ...step })) || [{ name: '负责人审批', reviewer_role: 'team_manager' }], is_active: flow?.is_active ?? true }) }
+function addFlowStep(): void { flowDialog.steps.push({ name: `第 ${flowDialog.steps.length + 1} 级审批`, reviewer_role: 'team_manager' }) }
 async function saveFlow(): Promise<void> {
-  if (!flowDialog.name.trim() || !flowDialog.flow_type || !flowDialog.steps.length || flowDialog.steps.some((step) => !step.name.trim() || !step.reviewer_role)) return void ElMessage.warning('请完整填写流程名称、类型和审批节点')
+  if (
+    !flowDialog.name.trim()
+    || !flowDialog.flow_type
+    || !flowDialog.steps.length
+    || flowDialog.steps.some(
+      (step) =>
+        !step.name.trim()
+        || (!step.reviewer_role && !step.reviewer_ids?.length),
+    )
+  ) return void ElMessage.warning('请完整填写流程名称、类型，并为每个节点指定角色或成员')
   saving.value = true
   try {
-    const payload = { name: flowDialog.name.trim(), flow_type: flowDialog.flow_type, steps: flowDialog.steps.map((step) => ({ name: step.name.trim(), reviewer_role: step.reviewer_role })), is_active: flowDialog.is_active }
+    const payload = {
+      name: flowDialog.name.trim(),
+      flow_type: flowDialog.flow_type,
+      steps: flowDialog.steps.map((step) => ({
+        name: step.name.trim(),
+        ...(step.reviewer_role
+          ? { reviewer_role: step.reviewer_role }
+          : {}),
+        ...(step.reviewer_ids?.length
+          ? { reviewer_ids: [...new Set(step.reviewer_ids)] }
+          : {}),
+      })),
+      is_active: flowDialog.is_active,
+    }
     if (flowDialog.id) await updateApprovalFlow(flowDialog.id, payload)
     else await createApprovalFlow(payload)
     flowDialog.visible = false
@@ -617,8 +872,82 @@ async function saveFlow(): Promise<void> {
   } finally { saving.value = false }
 }
 async function removeFlow(flow: ApprovalFlow): Promise<void> { if (!await confirmAction(`删除流程“${flow.name}”？已有申请可能受影响。`, '删除审批流程')) return; await deleteApprovalFlow(flow.id); ElMessage.success('审批流程已删除'); await loadFlows() }
-function openRequestDialog(): void { Object.assign(requestDialog, { visible: true, flow: activeFlows.value[0]?.id || null, title: '', content: '' }) }
-async function saveRequest(): Promise<void> { if (!requestDialog.flow || !requestDialog.title.trim()) return void ElMessage.warning('请选择流程并填写申请标题'); saving.value = true; try { await createApprovalRequest({ flow: requestDialog.flow, title: requestDialog.title.trim(), content: requestDialog.content.trim() }); requestDialog.visible = false; ElMessage.success('审批申请已提交'); await loadRequests() } finally { saving.value = false } }
+async function openRequestDialog(): Promise<void> {
+  await loadOwnTeamMemberships()
+  Object.assign(requestDialog, {
+    visible: true,
+    flow: activeFlows.value[0]?.id || null,
+    title: '',
+    content: '',
+    membershipAction: 'join',
+    targetTeamId: null,
+    membershipId: null,
+    requestedRole: userStore.userInfo?.membership_status === 'external' ? 'external' : 'member',
+    reason: '',
+  })
+  handleRequestFlowChange()
+}
+function handleRequestFlowChange(): void {
+  if (selectedRequestFlow.value?.flow_type !== 'team_membership') return
+  if (!requestDialog.title.trim()) requestDialog.title = '团队成员关系申请'
+  handleMembershipActionChange()
+}
+function handleMembershipActionChange(): void {
+  requestDialog.membershipId = null
+  requestDialog.targetTeamId = null
+  requestDialog.requestedRole = userStore.userInfo?.membership_status === 'external'
+    ? 'external'
+    : 'member'
+}
+function handleMembershipSelection(): void {
+  const membership = ownTeamMemberships.value.find(
+    (item) => item.id === requestDialog.membershipId,
+  )
+  if (!membership) return
+  if (requestDialog.membershipAction === 'role_change') {
+    requestDialog.targetTeamId = membership.team
+  } else if (requestDialog.targetTeamId === membership.team) {
+    requestDialog.targetTeamId = null
+  }
+}
+async function saveRequest(): Promise<void> {
+  if (!requestDialog.flow || !requestDialog.title.trim()) {
+    return void ElMessage.warning('请选择流程并填写申请标题')
+  }
+  const payload: {
+    flow: number
+    title: string
+    content: string
+    metadata?: Record<string, unknown>
+  } = {
+    flow: requestDialog.flow,
+    title: requestDialog.title.trim(),
+    content: requestDialog.content.trim(),
+  }
+  if (selectedRequestFlow.value?.flow_type === 'team_membership') {
+    const metadata = buildTeamMembershipMetadata({
+      action: requestDialog.membershipAction,
+      targetTeamId: requestDialog.targetTeamId,
+      membershipId: requestDialog.membershipId,
+      requestedRole: requestDialog.requestedRole,
+      reason: requestDialog.reason,
+    })
+    if (!metadata) {
+      return void ElMessage.warning('请完整填写成员关系申请信息')
+    }
+    payload.content = requestDialog.reason.trim()
+    payload.metadata = metadata
+  }
+  saving.value = true
+  try {
+    await createApprovalRequest(payload)
+    requestDialog.visible = false
+    ElMessage.success('审批申请已提交')
+    await loadRequests()
+  } finally {
+    saving.value = false
+  }
+}
 function canReview(item: ApprovalRequest): boolean { return canReviewApprovalRequest(item, flows.value, { id: userStore.userInfo?.id, role: userStore.role, isManager: isManager.value }) }
 function canCancel(item: ApprovalRequest): boolean { return canCancelApprovalRequest(item, userStore.userInfo?.id) }
 async function reviewRequest(item: ApprovalRequest, action: 'approve' | 'reject'): Promise<void> {
@@ -686,7 +1015,17 @@ onMounted(async () => {
     loadRoles(), loadAssignments(), loadFlows(), loadRequests(), loadForms(),
     loadSubmissions(), loadPlatforms(), loadRepositories(), loadLookups(),
   ])
+  await focusRequestFromQuery()
 })
+
+watch(
+  () => [route.query.tab, route.query.request_id],
+  async ([tab]) => {
+    if (tab === 'approvals') activeTab.value = 'approvals'
+    if (!approvalRequests.value.length) await loadRequests()
+    else await focusRequestFromQuery()
+  },
+)
 </script>
 
 <style scoped lang="scss">
@@ -711,8 +1050,12 @@ onMounted(async () => {
 .initial { display: grid; place-items: center; width: 34px; height: 34px; flex: 0 0 auto; color: var(--color-primary); font-weight: 600; background: var(--color-primary-soft); border-radius: 50%; }
 .step-preview { display: grid; gap: 8px; li { display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; align-items: center; gap: 8px; span { display: grid; place-items: center; width: 22px; height: 22px; color: var(--color-primary); background: var(--color-primary-soft); border-radius: 50%; font-size: 11px; } strong { font-size: 12px; font-weight: 500; } small { color: var(--color-text-muted); } } }
 .record-list { display: grid; gap: 8px; min-height: 80px; }
-.request-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 20px; padding: 14px 16px; background: var(--color-surface); border: 1px solid var(--color-border-light); border-radius: var(--radius-sm); }
+.request-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 20px; padding: 14px 16px; background: var(--color-surface); border: 1px solid var(--color-border-light); border-radius: var(--radius-sm); transition: border-color .2s ease, box-shadow .2s ease; }
+.focused-request { border-color: var(--color-primary); box-shadow: 0 0 0 3px var(--color-primary-soft); }
 .request-content { margin-top: 7px; color: var(--color-text-regular); font-size: 12px; line-height: 1.5; }
+.membership-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 9px; color: var(--color-text-secondary); font-size: 12px; }
+.reviewer-summary { display: flex; flex-wrap: wrap; gap: 6px 12px; margin-top: 10px; color: var(--color-text-muted); font-size: 11px; strong { color: var(--color-text-secondary); font-weight: 600; } }
+.review-history { display: grid; gap: 5px; margin-top: 9px; padding-left: 18px; color: var(--color-text-secondary); font-size: 11px; li { padding-left: 2px; } small { display: block; margin-top: 2px; color: var(--color-text-muted); } }
 .request-meta { display: grid; gap: 4px; color: var(--color-text-muted); font-size: 11px; text-align: right; }
 .row-actions { display: flex; gap: 6px; }
 .field-summary { display: flex; gap: 14px; color: var(--color-text-muted); font-size: 12px; }
@@ -728,6 +1071,7 @@ onMounted(async () => {
 .dialog-section-heading { display: flex; align-items: center; justify-content: space-between; margin: 4px 0 10px; }
 .designer-list { display: grid; gap: 8px; margin-bottom: 16px; }
 .designer-row { display: grid; grid-template-columns: 30px minmax(0, 1fr) minmax(140px, .6fr) 34px; align-items: center; gap: 8px; }
+.reviewer-target-inputs { display: grid; gap: 6px; min-width: 0; }
 .field-row { grid-template-columns: minmax(130px, 1fr) minmax(110px, .8fr) 120px minmax(130px, 1fr) auto 34px; }
 .step-index { display: grid; place-items: center; width: 26px; height: 26px; color: var(--color-primary); background: var(--color-primary-soft); border-radius: 50%; font-size: 12px; }
 .dialog-description { margin: 0 0 16px; color: var(--color-text-muted); line-height: 1.6; }

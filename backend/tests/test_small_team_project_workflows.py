@@ -223,16 +223,25 @@ def test_reused_project_leader_has_read_only_ip_access_and_external_detail_is_li
 @pytest.mark.api
 @pytest.mark.permission
 @pytest.mark.django_db
-def test_contribution_is_routed_to_configured_reviewer_not_every_teacher(
+def test_contribution_is_routed_to_reviewer_not_viewing_teacher(
     make_project,
     make_user,
 ):
     project = make_project()
     contributor = make_user(email='contribution-member@test.com')
     reviewer = make_user(email='contribution-reviewer@test.com')
-    unrelated_teacher = make_user(
+    viewing_teacher = make_user(
         email='unrelated-teacher@test.com',
-        global_role='teacher',
+    )
+    viewing_team = Team.objects.create(
+        name='只读老师团队',
+        code='CONTRIBUTION-VIEWING-TEACHER',
+        owner=project.leader,
+    )
+    TeamMember.objects.create(
+        team=viewing_team,
+        user=viewing_teacher,
+        role=TeamMember.Role.TEACHER,
     )
     for member in (contributor, reviewer):
         ProjectMember.objects.create(project=project, user=member)
@@ -259,7 +268,7 @@ def test_contribution_is_routed_to_configured_reviewer_not_every_teacher(
     reviewer_queue = client_for(reviewer).get(
         '/api/v1/contributions/contributions/pending_review/'
     )
-    teacher_queue = client_for(unrelated_teacher).get(
+    teacher_queue = client_for(viewing_teacher).get(
         '/api/v1/contributions/contributions/pending_review/'
     )
 
@@ -269,7 +278,7 @@ def test_contribution_is_routed_to_configured_reviewer_not_every_teacher(
     assert contribution.reviewer_id == reviewer.id
     assert contribution.id in {row['id'] for row in response_results(reviewer_queue)}
     assert contribution.id not in {row['id'] for row in response_results(teacher_queue)}
-    forbidden_review = client_for(unrelated_teacher).patch(
+    forbidden_review = client_for(viewing_teacher).patch(
         f'/api/v1/contributions/contributions/{contribution.id}/review/',
         {
             'status': 'approved',
@@ -281,7 +290,7 @@ def test_contribution_is_routed_to_configured_reviewer_not_every_teacher(
         '/api/v1/contributions/contributions/',
         {
             'project': project.id,
-            'user': unrelated_teacher.id,
+            'user': viewing_teacher.id,
             'contribution_type': 'stage_task',
             'content': '非项目成员不应被登记贡献',
         },
@@ -337,6 +346,13 @@ def test_projectless_legacy_contribution_review_never_crashes(make_user):
         content='历史无项目贡献',
         status='pending',
     )
+    admin_contribution = Contribution.objects.create(
+        project=None,
+        user=contributor,
+        contribution_type='other',
+        content='另一条历史无项目贡献',
+        status='pending',
+    )
 
     teacher_response = client_for(teacher).patch(
         f'/api/v1/contributions/contributions/{contribution.id}/review/',
@@ -344,12 +360,12 @@ def test_projectless_legacy_contribution_review_never_crashes(make_user):
         format='json',
     )
     admin_response = client_for(admin).patch(
-        f'/api/v1/contributions/contributions/{contribution.id}/review/',
+        f'/api/v1/contributions/contributions/{admin_contribution.id}/review/',
         {'status': 'approved', 'review_opinion': '管理员兜底'},
         format='json',
     )
 
-    assert teacher_response.status_code == 403
+    assert teacher_response.status_code == 200
     assert admin_response.status_code == 200
 
 

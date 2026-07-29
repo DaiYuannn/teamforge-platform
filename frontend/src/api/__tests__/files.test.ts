@@ -88,6 +88,32 @@ describe('file management closure API', () => {
     expect(formData.get('file')).toBe(file)
   })
 
+  it('sends exactly one selected small-team or competition-entry scope', async () => {
+    uploadMock.mockResolvedValue({ id: 13 })
+    const teamFile = new File(['team'], 'team.txt', { type: 'text/plain' })
+    const competitionFile = new File(['competition'], 'competition.txt', {
+      type: 'text/plain',
+    })
+
+    await uploadFile(8, teamFile, {
+      project: 8,
+      level: 'internal',
+      team: 21,
+    })
+    await uploadFile(8, competitionFile, {
+      project: 8,
+      level: 'internal',
+      competition_entry: 34,
+    })
+
+    const teamForm = uploadMock.mock.calls[0]?.[1] as FormData
+    const competitionForm = uploadMock.mock.calls[1]?.[1] as FormData
+    expect(teamForm.get('team')).toBe('21')
+    expect(teamForm.get('competition_entry')).toBeNull()
+    expect(competitionForm.get('competition_entry')).toBe('34')
+    expect(competitionForm.get('team')).toBeNull()
+  })
+
   it('synchronizes only changed tag relations', async () => {
     postMock.mockResolvedValue({})
 

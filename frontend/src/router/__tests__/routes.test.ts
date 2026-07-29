@@ -14,6 +14,8 @@ describe('v2.1 workspace routes', () => {
     expect(routes.get('EngineeringConsole')?.path).toBe('/admin/engineering')
     expect(routes.get('EngineeringConsole')?.meta.roles).toEqual(['sys_admin'])
     expect(routes.get('IPTodo')?.meta.title).toBe('知识产权待办')
+    expect(routes.get('MySchedule')?.meta.title).toBe('我的任务与工作量')
+    expect(routes.get('TeamSchedule')?.meta.title).toBe('团队有效工作量')
   })
 
   it('keeps legacy sensitive links as hidden workspace redirects', () => {

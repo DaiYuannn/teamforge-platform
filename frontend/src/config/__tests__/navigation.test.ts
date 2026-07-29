@@ -45,6 +45,13 @@ describe('account-scoped navigation', () => {
       .find((group) => group.key === 'outcomes')?.items || []
     expect(outcomeItems.find((item) => item.path === '/intellectual-property/todo')?.title)
       .toBe('知识产权待办')
+
+    const resourceItems = getVisibleNavigationGroups('member', 'active')
+      .find((group) => group.key === 'resources')?.items || []
+    expect(resourceItems.find((item) => item.path === '/members/schedule')?.title)
+      .toBe('我的任务与工作量')
+    expect(resourceItems.find((item) => item.path === '/members/team-schedule')?.title)
+      .toBe('团队有效工作量')
   })
 
   it('uses an external-safe mobile tab set and route guard policy', () => {

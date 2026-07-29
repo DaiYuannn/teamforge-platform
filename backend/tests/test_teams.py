@@ -283,7 +283,7 @@ class TestTeam:
         ))
         assert isolated_rows == []
 
-    def test_active_root_teacher_can_view_child_but_cannot_manage(
+    def test_team_viewer_teacher_can_view_child_but_cannot_manage(
         self, member_client, make_user, api_client
     ):
         root = Team.objects.create(
@@ -292,7 +292,6 @@ class TestTeam:
         )
         teacher = make_user(
             email='root-team-teacher@test.com',
-            global_role='teacher',
         )
         TeamMember.objects.create(
             team=root,
@@ -401,6 +400,60 @@ class TestTeam:
         TeamMember.objects.create(team=team, user=u2, role='member')
         resp = member_client.get(f'/api/v1/teams/{team.id}/')
         assert extract_data(resp)['member_count'] >= 2
+
+    def test_root_directory_aggregates_child_only_members_without_duplicates(
+        self, member_client, make_user
+    ):
+        root = Team.objects.create(
+            name='统一人员库',
+            code='ROOT-DIRECTORY-AGGREGATE',
+            owner=member_client.user,
+        )
+        child_owner = make_user(email='directory-child-owner@test.com')
+        child_only = make_user(email='directory-child-only@test.com')
+        both = make_user(email='directory-both@test.com')
+        child = Team.objects.create(
+            name='项目执行组',
+            code='ROOT-DIRECTORY-CHILD',
+            owner=child_owner,
+            parent=root,
+            team_type=Team.TeamType.SQUAD,
+        )
+        TeamMember.objects.create(
+            team=root,
+            user=member_client.user,
+            role=TeamMember.Role.OWNER,
+        )
+        TeamMember.objects.create(
+            team=root,
+            user=both,
+            role=TeamMember.Role.MEMBER,
+        )
+        TeamMember.objects.create(
+            team=child,
+            user=child_only,
+            role=TeamMember.Role.MEMBER,
+        )
+        TeamMember.objects.create(
+            team=child,
+            user=both,
+            role=TeamMember.Role.CO_LEAD,
+        )
+
+        detail = member_client.get(f'/api/v1/teams/{root.id}/')
+        response = member_client.get(f'/api/v1/teams/{root.id}/members/')
+        rows = extract_rows(response)
+
+        assert response.status_code == 200, response.json()
+        assert extract_data(detail)['member_count'] == 3
+        assert {row['user'] for row in rows} == {
+            member_client.user.id,
+            child_only.id,
+            both.id,
+        }
+        assert [row['user'] for row in rows].count(both.id) == 1
+        both_row = next(row for row in rows if row['user'] == both.id)
+        assert both_row['role'] == TeamMember.Role.CO_LEAD
 
     def test_team_member_crud(self, member_client, make_user):
         """团队成员独立 CRUD"""

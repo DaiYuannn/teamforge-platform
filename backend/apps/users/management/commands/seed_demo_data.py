@@ -14,7 +14,7 @@
     - 任务: 120 个（覆盖完整状态分布）
     - 文件: 96 个项目文档 + 1 个授权证书 PDF，并含版本与任务附件
     - 生命周期: 团队成员、项目成员、项目阶段历史
-    - 导入历史: 7 个模块的成功、预览、失败与回滚记录
+    - 导入历史: 8 个模块的成功、预览、失败与回滚记录
     - 公开门户: 显式公开决策、精选与成员授权
     - 经费: 每项目 1 条预算 + 2~3 条支出
     - 技能标签: 15 个 + 部分成员技能
@@ -29,7 +29,9 @@
     - 操作日志: 20 条
 """
 import calendar
+import json
 import random
+import zipfile
 from collections import Counter
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
@@ -64,6 +66,7 @@ from apps.tasks.models import Task
 from apps.finance.models import FinanceBudget, FinanceExpense, FinanceIncome, FinanceReceipt
 from apps.files.models import FileAsset, FileVersion
 from apps.imports.models import ImportTask
+from apps.imports.material_archive import preview_material_archive
 from apps.common.team_models import Team, TeamMember, TeamMembershipEvent
 from apps.dashboard.portal_models import PortalPublication, PortalSettings
 from apps.members.models import SkillTag, MemberSkill, FlexibleWorkSchedule
@@ -480,6 +483,27 @@ class Command(BaseCommand):
     def create_users(self):
         self.stdout.write('-> 创建账号...')
         U = User.GlobalRole
+        existing_operating_teacher = (
+            User.objects.filter(
+                global_role=U.TEACHER,
+                is_active=True,
+            )
+            .exclude(membership_status=User.MembershipStatus.EXITED)
+            .exclude(email__in=DEMO_ACCOUNT_EMAILS)
+            .order_by('date_joined', 'id')
+            .first()
+        )
+        # Old demo databases may still have teacher2 (or another demo account)
+        # marked as a global teacher. Normalize them before assigning teacher1.
+        User.objects.filter(
+            email__in=DEMO_ACCOUNT_EMAILS,
+            global_role=U.TEACHER,
+        ).exclude(email='teacher1@demo.com').update(global_role=U.MEMBER)
+        demo_teacher_role = (
+            U.MEMBER
+            if existing_operating_teacher
+            else U.TEACHER
+        )
 
         self.users['admin'] = self._make_user(
             'admin@demo.com', 'admin', 'admin123456', '系统管理员',
@@ -488,12 +512,15 @@ class Command(BaseCommand):
         )
         self.users['teacher1'] = self._make_user(
             'teacher1@demo.com', 'teacher1', 'teacher123456', '张老师',
-            U.TEACHER, is_student=False, is_staff=True, major='计算机科学',
+            demo_teacher_role,
+            is_student=False,
+            is_staff=not bool(existing_operating_teacher),
+            major='计算机科学',
             phone='13800000001',
         )
         self.users['teacher2'] = self._make_user(
             'teacher2@demo.com', 'teacher2', 'teacher123456', '李老师',
-            U.TEACHER, is_student=False, is_staff=True, major='软件工程',
+            U.MEMBER, is_student=False, is_staff=False, major='软件工程',
             phone='13800000002',
         )
         self.users['leader1'] = self._make_user(
@@ -524,7 +551,12 @@ class Command(BaseCommand):
             self.users['leader3'],
             self.users['leader4'],
         ]
-        self.teachers = [self.users['teacher1'], self.users['teacher2']]
+        # 小团队版只保留一个全局“操作老师”。真实数据库若已有操作
+        # 老师，不改动真实账号，两个演示老师均作为团队范围内查看老师。
+        self.teachers = [
+            existing_operating_teacher or self.users['teacher1']
+        ]
+        self.demo_teacher_is_operator = existing_operating_teacher is None
 
         used_names = {
             '系统管理员', '张老师', '李老师', '王明', '赵芳', '刘强',
@@ -1863,8 +1895,62 @@ class Command(BaseCommand):
                 updated_at=timezone.now() - timedelta(days=20 - index * 3),
             )
 
+        material_path = import_dir / '08_materials.zip'
+        material_manifest = {
+            'version': 1,
+            'items': [
+                {
+                    'path': '项目资料/协作说明.txt',
+                    'name': '项目协作说明',
+                    'project_code': project.code,
+                    'level': 'internal',
+                    'visibility': 'project',
+                },
+            ],
+        }
+        with zipfile.ZipFile(
+            material_path,
+            'w',
+            compression=zipfile.ZIP_DEFLATED,
+        ) as archive:
+            archive.writestr(
+                'manifest.json',
+                json.dumps(material_manifest, ensure_ascii=False),
+            )
+            archive.writestr(
+                '项目资料/协作说明.txt',
+                '本资料包用于演示 ZIP + manifest.json 安全预览和确认导入。',
+            )
+        material_preview = preview_material_archive(
+            material_path,
+            team=self.team,
+            operator=self.users['admin'],
+        )
+        material_task = ImportTask.objects.create(
+            module=ImportTask.Module.MATERIALS,
+            file_path=str(material_path),
+            status=ImportTask.Status.PREVIEWED,
+            field_mapping={},
+            preview_data={
+                'archive_sha256': material_preview['archive_sha256'],
+                'rows': material_preview['rows'],
+                'manifest_version': 1,
+            },
+            snapshot=[],
+            total_rows=material_preview['total_rows'],
+            valid_rows=material_preview['valid_rows'],
+            error_rows=material_preview['error_rows'],
+            error_details=material_preview['errors'],
+            created_by=self.users['admin'],
+            team=self.team,
+        )
+        ImportTask.objects.filter(pk=material_task.pk).update(
+            created_at=timezone.now(),
+            updated_at=timezone.now(),
+        )
+
         self.stdout.write(self.style.SUCCESS(
-            f'   导入历史创建完成：{len(definitions)} 条，覆盖全部模块'
+            f'   导入历史创建完成：{len(definitions) + 1} 条，覆盖全部模块'
         ))
 
     # ------------------------------------------------------------------
@@ -2957,7 +3043,7 @@ class Command(BaseCommand):
             },
             {
                 'recipient': self.users['leader1'],
-                'sender': self.teachers[1],
+                'sender': self.teachers[0],
                 'type': NT.COMPETITION,
                 'title': '比赛报名截止提醒',
                 'content': '互联网+大赛报名即将截止，请尽快完成材料提交。',
@@ -3273,8 +3359,15 @@ class Command(BaseCommand):
     def print_account_summary(self):
         self.stdout.write('账号清单：')
         self.stdout.write('  系统管理员: admin@demo.com / admin123456')
-        self.stdout.write('  老师1:     teacher1@demo.com / teacher123456')
-        self.stdout.write('  老师2:     teacher2@demo.com / teacher123456')
+        teacher1_label = (
+            '操作老师'
+            if getattr(self, 'demo_teacher_is_operator', True)
+            else '查看老师'
+        )
+        self.stdout.write(
+            f'  {teacher1_label}:  teacher1@demo.com / teacher123456'
+        )
+        self.stdout.write('  查看老师:  teacher2@demo.com / teacher123456')
         self.stdout.write('  负责人1:   leader1@demo.com / leader123456')
         self.stdout.write('  负责人2:   leader2@demo.com / leader123456')
         self.stdout.write('  负责人3:   leader3@demo.com / leader123456')

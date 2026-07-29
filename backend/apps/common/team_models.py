@@ -94,7 +94,7 @@ class TeamMember(models.Model):
         OWNER = 'owner', '负责人'
         CO_LEAD = 'co_lead', '共同负责人'
         ADMIN = 'admin', '团队管理员'
-        TEACHER = 'teacher', '指导老师'
+        TEACHER = 'teacher', '查看老师（只读）'
         MEMBER = 'member', '团队成员'
         ADVISOR = 'advisor', '顾问'
         EXTERNAL = 'external', '外部协作者'

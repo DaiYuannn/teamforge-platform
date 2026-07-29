@@ -33,16 +33,20 @@ class FileAssetSerializer(serializers.ModelSerializer):
     level_display = serializers.CharField(source='get_level_display', read_only=True)
     file_url = serializers.SerializerMethodField()
     folder_name = serializers.CharField(source='folder.name', read_only=True, default='')
+    team_name = serializers.CharField(source='team.name', read_only=True, default='')
+    competition_entry_name = serializers.SerializerMethodField()
+    can_manage = serializers.SerializerMethodField()
     tags = serializers.SerializerMethodField()
 
     class Meta:
         model = FileAsset
         fields = (
             'id', 'project', 'project_name', 'folder', 'folder_name',
+            'team', 'team_name', 'competition_entry', 'competition_entry_name',
             'name', 'file', 'file_url',
             'level', 'level_display', 'size', 'content_type',
             'uploader', 'uploader_name', 'version',
-            'file_hash', 'watermark_text', 'tags',
+            'file_hash', 'watermark_text', 'can_manage', 'tags',
             'created_at', 'updated_at',
         )
         read_only_fields = ('id', 'size', 'content_type', 'uploader', 'version', 'file_hash', 'created_at', 'updated_at')
@@ -54,11 +58,72 @@ class FileAssetSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         project = attrs.get('project', getattr(self.instance, 'project', None))
         folder = attrs.get('folder', getattr(self.instance, 'folder', None))
+        team = attrs.get('team', getattr(self.instance, 'team', None))
+        competition = attrs.get(
+            'competition_entry',
+            getattr(self.instance, 'competition_entry', None),
+        )
+        level = attrs.get('level', getattr(self.instance, 'level', FileAsset.Level.PUBLIC))
+        if team and competition:
+            raise serializers.ValidationError({
+                'team': '指定小团队与指定比赛参赛条目不能同时设置',
+            })
+        if level == FileAsset.Level.PUBLIC and (team or competition):
+            raise serializers.ValidationError({
+                'level': '公开文件不能再设置小团队或比赛条目范围',
+            })
+        if competition:
+            if project and competition.project_id != project.id:
+                raise serializers.ValidationError({
+                    'competition_entry': '参赛条目必须属于文件所在项目',
+                })
+            if project is None:
+                project = competition.project
+                attrs['project'] = project
+        if team and project:
+            from common.project_access import project_root_team_ids
+
+            team_root_id = team.parent_id or team.id
+            project_roots = project_root_team_ids(project)
+            if project_roots and team_root_id not in project_roots:
+                raise serializers.ValidationError({
+                    'team': '指定团队必须与文件所在项目属于同一组织范围',
+                })
         if folder and folder.project_id != getattr(project, 'id', None):
             raise serializers.ValidationError({
                 'folder': '文件夹必须属于文件所在项目',
             })
+        request = self.context.get('request')
+        if request and request.user.is_authenticated:
+            from .permissions import user_can_manage_file_scope
+
+            if not user_can_manage_file_scope(
+                request.user,
+                project=project,
+                team=team,
+                competition_entry=competition,
+            ):
+                raise serializers.ValidationError('无权写入所选文件可见范围')
         return attrs
+
+    def get_competition_entry_name(self, obj):
+        if not obj.competition_entry_id:
+            return ''
+        competition = obj.competition_entry
+        return competition.entry_name or competition.name
+
+    def get_can_manage(self, obj) -> bool:
+        request = self.context.get('request')
+        if not request or not request.user.is_authenticated:
+            return False
+        from .permissions import user_can_manage_file_scope
+
+        return user_can_manage_file_scope(
+            request.user,
+            project=obj.project,
+            team=obj.team,
+            competition_entry=obj.competition_entry,
+        )
 
     @extend_schema_field(FileTagSummarySerializer(many=True))
     def get_tags(self, obj):
@@ -92,15 +157,20 @@ class FileAssetListSerializer(serializers.ModelSerializer):
     project_name = serializers.CharField(source='project.name', read_only=True, default='')
     level_display = serializers.CharField(source='get_level_display', read_only=True)
     folder_name = serializers.CharField(source='folder.name', read_only=True, default='')
+    team_name = serializers.CharField(source='team.name', read_only=True, default='')
+    competition_entry_name = serializers.SerializerMethodField()
+    can_manage = serializers.SerializerMethodField()
     deleted_by_name = serializers.CharField(source='deleted_by.name', read_only=True, default='')
     tags = serializers.SerializerMethodField()
 
     class Meta:
         model = FileAsset
         fields = (
-            'id', 'project', 'project_name', 'folder', 'folder_name', 'name',
+            'id', 'project', 'project_name', 'folder', 'folder_name',
+            'team', 'team_name', 'competition_entry', 'competition_entry_name', 'name',
             'level', 'level_display', 'size', 'content_type',
-            'uploader_name', 'version', 'file_hash', 'watermark_text', 'tags',
+            'uploader_name', 'version', 'file_hash', 'watermark_text',
+            'can_manage', 'tags',
             'created_at', 'deleted_at', 'deleted_by_name',
         )
         read_only_fields = fields
@@ -111,6 +181,25 @@ class FileAssetListSerializer(serializers.ModelSerializer):
             {'id': relation.tag_id, 'name': relation.tag.name, 'color': relation.tag.color}
             for relation in obj.tag_relations.all()
         ]
+
+    def get_competition_entry_name(self, obj):
+        if not obj.competition_entry_id:
+            return ''
+        competition = obj.competition_entry
+        return competition.entry_name or competition.name
+
+    def get_can_manage(self, obj) -> bool:
+        request = self.context.get('request')
+        if not request or not request.user.is_authenticated:
+            return False
+        from .permissions import user_can_manage_file_scope
+
+        return user_can_manage_file_scope(
+            request.user,
+            project=obj.project,
+            team=obj.team,
+            competition_entry=obj.competition_entry,
+        )
 
 
 class FileFolderSerializer(serializers.ModelSerializer):

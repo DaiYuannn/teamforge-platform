@@ -74,7 +74,7 @@ export const TASK_PRIORITY_MAP: Record<string, { label: string; tagType: string 
 // 角色映射
 export const ROLE_MAP: Record<string, { label: string; tagType: string }> = {
   sys_admin: { label: '系统管理员', tagType: 'danger' },
-  teacher: { label: '老师', tagType: 'warning' },
+  teacher: { label: '操作老师', tagType: 'warning' },
   member: { label: '普通成员', tagType: 'primary' },
   sens_approver: { label: '敏感审批人', tagType: 'success' },
 }
@@ -163,6 +163,7 @@ export const IMPORT_MODULE_MAP: Record<string, string> = {
   competitions: '比赛',
   finance: '经费明细',
   ip_applications: '知识产权',
+  materials: 'ZIP 资料包',
 }
 
 // 导入任务状态映射
@@ -352,7 +353,7 @@ export const NOTIFICATION_CATEGORY_MAP: Record<string, { label: string; type: st
   contribution: { label: '贡献', type: 'warning' },
   ip: { label: '知识产权', type: 'info' },
   sensitive: { label: '敏感资料', type: 'danger' },
-  schedule: { label: '工时', type: 'info' },
+  schedule: { label: '任务与工作量', type: 'info' },
   competition: { label: '比赛', type: 'success' },
   finance: { label: '经费', type: 'warning' },
   announcement: { label: '公告', type: 'warning' },

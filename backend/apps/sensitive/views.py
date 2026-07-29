@@ -5,6 +5,7 @@
 关键：敏感资料明文绝不裸露，必须审批后限时查看，每次查看必须写 OperationLog
 """
 from django.http import Http404
+from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
 from rest_framework import status
@@ -15,13 +16,20 @@ from common.response import success_response, error_response
 from common.mixins import MultiSerializerMixin, MultiPermissionMixin
 from common.storage import protected_media_response
 from apps.files.audit import record_download_audit
-from .models import SensitiveData, SensitiveAccessRequest
+from .models import (
+    SensitiveAccessRequest,
+    SensitiveData,
+    SensitiveDataGrant,
+    SensitiveGrantAccessLog,
+)
 from .serializers import (
     SensitiveDataSerializer,
     SensitiveDataCreateSerializer,
     SensitiveAccessRequestSerializer,
     SensitiveAccessRequestCreateSerializer,
     SensitiveAccessRequestReviewSerializer,
+    SensitiveDataGrantSerializer,
+    SensitiveGrantAccessLogSerializer,
 )
 from .permissions import (
     IsSensitiveDataOwner,
@@ -30,6 +38,7 @@ from .permissions import (
     HasValidAccessApproval,
     IsInternalSensitiveMember,
     can_review_sensitive_request,
+    can_manage_sensitive_grants,
     scope_sensitive_data_queryset,
     sensitive_review_team_ids,
 )
@@ -68,6 +77,11 @@ class SensitiveDataViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelView
         'destroy': [IsSensitiveDataCreator],
         'my_data': [IsInternalSensitiveMember],
         'view': [HasValidAccessApproval],
+        'grants': [IsInternalSensitiveMember],
+        'revoke_grant': [IsInternalSensitiveMember],
+        'grant_candidates': [IsInternalSensitiveMember],
+        'grant_access_logs': [IsInternalSensitiveMember],
+        'download_by_grant': [IsInternalSensitiveMember],
     }
 
     def get_queryset(self):
@@ -95,7 +109,7 @@ class SensitiveDataViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelView
         )
 
         return success_response(
-            SensitiveDataSerializer(sensitive).data,
+            SensitiveDataSerializer(sensitive, context={'request': request}).data,
             message='敏感资料创建成功',
             http_status=status.HTTP_201_CREATED,
         )
@@ -126,9 +140,32 @@ class SensitiveDataViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelView
         body: {"request_id": 1}
         """
         sensitive = self.get_object()
+        grant_id = request.data.get('grant_id')
         request_id = request.data.get('request_id')
+        if grant_id:
+            success, result = SensitiveDataService.view_sensitive_data_by_grant(
+                sensitive_data=sensitive,
+                viewer=request.user,
+                grant_id=grant_id,
+                request=request,
+            )
+            if not success:
+                return error_response(
+                    message=result,
+                    code=1003,
+                    http_status=status.HTTP_403_FORBIDDEN,
+                )
+            return success_response(
+                {
+                    'plaintext': result['plaintext'],
+                    'grant_id': result['grant'].id,
+                    'purpose': result['grant'].purpose,
+                    'expires_at': result['grant'].expires_at,
+                },
+                message='已依据单份授权查看，请严格按授权用途使用',
+            )
         if not request_id:
-            return error_response(message='请提供 request_id（访问申请ID）')
+            return error_response(message='请提供 request_id 或 grant_id')
 
         success, result = SensitiveDataService.view_sensitive_data(
             request_id=request_id,
@@ -143,6 +180,208 @@ class SensitiveDataViewSet(MultiSerializerMixin, MultiPermissionMixin, ModelView
             {'plaintext': result['plaintext']},
             message='查看成功，请注意明文保密',
         )
+
+    @action(detail=True, methods=['get', 'post'])
+    @transaction.atomic
+    def grants(self, request, pk=None):
+        """List or upsert purpose-bound grants for one sensitive record."""
+        sensitive = self.get_object()
+        can_manage = can_manage_sensitive_grants(request.user, sensitive)
+        if request.method == 'GET':
+            grants = SensitiveDataGrant.objects.filter(sensitive_data=sensitive)
+            if not can_manage:
+                grants = grants.filter(granted_to=request.user)
+            grants = grants.select_related(
+                'sensitive_data', 'granted_to', 'granted_by', 'revoked_by',
+            ).order_by('-created_at')
+            return success_response(SensitiveDataGrantSerializer(grants, many=True).data)
+        if not can_manage:
+            return error_response(
+                message='只有资料本人、团队负责人或全局老师可以授权该资料',
+                code=1003,
+                http_status=status.HTTP_403_FORBIDDEN,
+            )
+        serializer = SensitiveDataGrantSerializer(
+            data=request.data,
+            context={'request': request, 'sensitive_data': sensitive},
+        )
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        grant, _ = SensitiveDataGrant.objects.update_or_create(
+            sensitive_data=sensitive,
+            granted_to=data['granted_to'],
+            defaults={
+                'can_view': data.get('can_view', True),
+                'can_download': data.get('can_download', False),
+                'purpose': data['purpose'],
+                'expires_at': data['expires_at'],
+                'granted_by': request.user,
+                'revoked_at': None,
+                'revoked_by': None,
+            },
+        )
+        from apps.audit.models import OperationLog
+
+        OperationLog.objects.create(
+            operator=request.user,
+            operation_type=OperationLog.OperationType.OTHER,
+            module='sensitive',
+            object_type='SensitiveDataGrant',
+            object_id=str(grant.id),
+            description=(
+                f'授权 {grant.granted_to.name} 使用敏感资料 {sensitive.title}；'
+                f'用途：{grant.purpose}；截止：{grant.expires_at.isoformat()}'
+            ),
+        )
+        return success_response(
+            SensitiveDataGrantSerializer(grant).data,
+            message='单份资料授权已保存',
+            http_status=status.HTTP_201_CREATED,
+        )
+
+    @action(
+        detail=True,
+        methods=['post'],
+        url_path=r'grants/(?P<grant_id>[^/.]+)/revoke',
+    )
+    @transaction.atomic
+    def revoke_grant(self, request, pk=None, grant_id=None):
+        sensitive = self.get_object()
+        if not can_manage_sensitive_grants(request.user, sensitive):
+            return error_response(
+                message='无权撤销该资料授权',
+                code=1003,
+                http_status=status.HTTP_403_FORBIDDEN,
+            )
+        grant = SensitiveDataGrant.objects.select_for_update().filter(
+            pk=grant_id,
+            sensitive_data=sensitive,
+        ).first()
+        if grant is None:
+            return error_response(message='授权记录不存在', http_status=status.HTTP_404_NOT_FOUND)
+        grant.revoked_at = timezone.now()
+        grant.revoked_by = request.user
+        grant.save(update_fields=['revoked_at', 'revoked_by', 'updated_at'])
+        return success_response(SensitiveDataGrantSerializer(grant).data, message='授权已撤销')
+
+    @action(detail=True, methods=['get'], url_path='grant-candidates')
+    def grant_candidates(self, request, pk=None):
+        sensitive = self.get_object()
+        if not can_manage_sensitive_grants(request.user, sensitive):
+            return error_response(
+                message='无权选择该资料的被授权人',
+                code=1003,
+                http_status=status.HTTP_403_FORBIDDEN,
+            )
+        from apps.common.team_models import TeamMember
+        from apps.users.models import User
+        from apps.competitions.member_search import member_matches_search
+
+        if sensitive.team_id:
+            user_ids = TeamMember.objects.filter(
+                team_id=sensitive.team_id,
+                status=TeamMember.Status.ACTIVE,
+            ).values_list('user_id', flat=True)
+            users = User.objects.filter(pk__in=user_ids)
+        else:
+            users = User.objects.filter(membership_status__in=['active', 'on_leave'])
+        users = users.filter(is_active=True).exclude(pk=request.user.id).order_by('name', 'id')
+        query = request.query_params.get('search', '')
+        candidates = []
+        for user in users[:500]:
+            if not member_matches_search(
+                query=query,
+                name=user.name,
+                values=[user.name, user.username, user.email, user.phone, user.school, user.major],
+            ):
+                continue
+            candidates.append({
+                'id': user.id,
+                'name': user.name,
+                'email': user.email,
+                'school': user.school,
+                'major': user.major,
+            })
+            if len(candidates) >= 200:
+                break
+        return success_response(candidates)
+
+    @action(detail=True, methods=['get'], url_path='grant-access-logs')
+    def grant_access_logs(self, request, pk=None):
+        sensitive = self.get_object()
+        if not can_manage_sensitive_grants(request.user, sensitive):
+            return error_response(
+                message='无权查看该资料的授权审计',
+                code=1003,
+                http_status=status.HTTP_403_FORBIDDEN,
+            )
+        logs = SensitiveGrantAccessLog.objects.filter(
+            sensitive_data=sensitive,
+        ).select_related('grant', 'accessor').order_by('-accessed_at')[:200]
+        return success_response(SensitiveGrantAccessLogSerializer(logs, many=True).data)
+
+    @action(detail=True, methods=['get'], url_path='download-by-grant')
+    def download_by_grant(self, request, pk=None):
+        sensitive = SensitiveData.objects.select_related('file_attachment').filter(pk=pk).first()
+        if sensitive is None:
+            raise Http404('敏感资料不存在')
+        success, message, grant = SensitiveDataService.resolve_direct_grant(
+            sensitive_data=sensitive,
+            viewer=request.user,
+            grant_id=request.query_params.get('grant_id'),
+            require_download=True,
+        )
+        if not success:
+            SensitiveDataService.record_direct_grant_access(
+                grant=grant,
+                viewer=request.user,
+                action=SensitiveGrantAccessLog.Action.DOWNLOAD,
+                request=request,
+                is_success=False,
+                detail=message,
+            )
+            return error_response(message=message, code=1003, http_status=status.HTTP_403_FORBIDDEN)
+        attachment = sensitive.file_attachment
+        if not attachment or not attachment.file:
+            SensitiveDataService.record_direct_grant_access(
+                grant=grant,
+                viewer=request.user,
+                action=SensitiveGrantAccessLog.Action.DOWNLOAD,
+                request=request,
+                is_success=False,
+                detail='敏感资料附件不存在',
+            )
+            raise Http404('敏感资料附件不存在')
+        try:
+            response = protected_media_response(
+                attachment.file.name,
+                as_attachment=True,
+                download_name=attachment.name,
+            )
+        except Http404:
+            SensitiveDataService.record_direct_grant_access(
+                grant=grant,
+                viewer=request.user,
+                action=SensitiveGrantAccessLog.Action.DOWNLOAD,
+                request=request,
+                is_success=False,
+                detail='敏感资料附件不存在',
+            )
+            raise
+        SensitiveDataService.record_direct_grant_access(
+            grant=grant,
+            viewer=request.user,
+            action=SensitiveGrantAccessLog.Action.DOWNLOAD,
+            request=request,
+        )
+        record_download_audit(
+            request,
+            module='sensitive',
+            object_type='SensitiveDataGrant',
+            object_id=grant.id,
+            channel='sensitive_direct_grant',
+        )
+        return response
 
 
 # ============ 访问申请 ============

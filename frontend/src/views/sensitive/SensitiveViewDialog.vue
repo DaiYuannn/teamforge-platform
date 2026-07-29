@@ -73,7 +73,7 @@ import { Timer, View } from '@element-plus/icons-vue'
 import { viewSensitiveData, viewAccessRequestData } from '@/api/sensitive'
 import { SENSITIVE_DATA_TYPE_MAP } from '@/utils/constants'
 import { formatDateTime } from '@/utils/format'
-import type { SensitiveAccessRequest } from '@/types'
+import type { SensitiveAccessRequest, SensitiveData } from '@/types'
 
 /**
  * 敏感资料限时查看弹窗
@@ -84,6 +84,9 @@ const props = defineProps<{
   visible: boolean
   /** 访问申请数据（通过申请查看时传入） */
   request?: SensitiveAccessRequest | null
+  /** 单份直接授权查看时传入 */
+  sensitiveData?: SensitiveData | null
+  grantId?: number | null
 }>()
 
 const emit = defineEmits<{
@@ -139,16 +142,20 @@ async function loadViewData(): Promise<void> {
     if (props.request && props.request.id) {
       // 通过申请查看
       res = await viewAccessRequestData(props.request.id)
-    } else if (viewData.value?.id) {
-      // 直接查看自己的资料
-      res = await viewSensitiveData(viewData.value.id)
+    } else if (props.sensitiveData?.id && props.grantId) {
+      // 通过单份、限时、用途绑定的直接授权查看
+      res = await viewSensitiveData(props.sensitiveData.id, undefined, props.grantId)
     }
     if (!res) {
       ElMessage.error('缺少有效的访问授权')
       dialogVisible.value = false
       return
     }
-    viewData.value = res
+    viewData.value = {
+      ...(props.sensitiveData || {}),
+      ...res,
+      sensitive_data_title: props.sensitiveData?.title,
+    }
     // 根据后端返回的 access_expires_at 计算剩余秒数
     const expiresAt = res?.access_expires_at || res?.expires_at
     if (expiresAt) {
