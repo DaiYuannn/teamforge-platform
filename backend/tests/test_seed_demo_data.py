@@ -15,7 +15,12 @@ from pptx import Presentation
 from pypdf import PdfReader
 
 from apps.common.team_models import Team, TeamMember, TeamMembershipEvent
-from apps.competitions.models import Competition
+from apps.competitions.models import (
+    Competition,
+    CompetitionAward,
+    CompetitionEvent,
+    CompetitionParticipant,
+)
 from apps.contributions.models import Contribution
 from apps.dashboard.portal_models import PortalPublication, PortalSettings
 from apps.exports.custom_report_models import CustomReport
@@ -24,7 +29,7 @@ from apps.exports.scheduled_report_models import (
     ScheduledReportExecution,
 )
 from apps.files.models import FileAsset, FileVersion
-from apps.finance.models import FinanceIncome, FinanceReceipt
+from apps.finance.models import FinanceExpense, FinanceIncome, FinanceReceipt
 from apps.finance.ocr_service import parse_receipt_text, validate_image
 from apps.imports.models import ImportTask
 from apps.intellectual_property.models import (
@@ -43,6 +48,7 @@ from apps.projects.models import (
 from apps.sensitive.models import SensitiveAccessRequest, SensitiveData
 from apps.tasks.models import Task
 from apps.users.management.commands.seed_demo_data import (
+    CORE_COMPETITION_SERIES,
     DEMO_ACCOUNT_EMAILS,
     DEMO_IMPORT_DIRNAME,
     DEMO_IP_PREFIX,
@@ -51,7 +57,9 @@ from apps.users.management.commands.seed_demo_data import (
     DEMO_SQUAD_CODES,
     DEMO_TEAM_CODE,
     LEGACY_COMPETITION_ACCOUNT_EMAILS,
+    LEGACY_DEMO_ACCOUNT_EMAILS,
     LEGACY_COMPETITION_REPORT_NAMES,
+    SELECTIVE_COMPETITION_SERIES,
 )
 from apps.users.models import User, UserLifecycleEvent, UserPreference
 
@@ -205,6 +213,13 @@ def test_seed_demo_data_scale_lifecycle_assets_and_safe_clean(settings, tmp_path
         author=real_user,
         published_at=timezone.now(),
     )
+    for legacy_email in LEGACY_DEMO_ACCOUNT_EMAILS:
+        User.objects.create_user(
+            email=legacy_email,
+            username=legacy_email.split('@', 1)[0],
+            password='legacy-demo-password',
+            name='旧版小团队演示账号',
+        )
 
     output = StringIO()
     call_command('seed_demo_data', clean=True, force=True, stdout=output)
@@ -212,6 +227,9 @@ def test_seed_demo_data_scale_lifecycle_assets_and_safe_clean(settings, tmp_path
     assert not Project.all_objects.filter(pk=legacy_demo_project.pk).exists()
     assert not IntellectualPropertyApplication.objects.filter(
         pk=legacy_demo_ip.pk
+    ).exists()
+    assert not User.objects.filter(
+        email__in=LEGACY_DEMO_ACCOUNT_EMAILS
     ).exists()
 
     owned_emails = list(DEMO_ACCOUNT_EMAILS)
@@ -222,11 +240,11 @@ def test_seed_demo_data_scale_lifecycle_assets_and_safe_clean(settings, tmp_path
     demo_tasks = Task.all_objects.filter(project_id__in=demo_project_ids)
     demo_files = FileAsset.objects.filter(project_id__in=demo_project_ids)
 
-    assert User.objects.filter(email__in=owned_emails).count() == 60
+    assert User.objects.filter(email__in=owned_emails).count() == 47
     assert User.objects.filter(
         email__in=owned_emails,
         global_role=User.GlobalRole.MEMBER,
-    ).count() == 58
+    ).count() == 46
     assert User.objects.filter(
         email__in=owned_emails,
         global_role=User.GlobalRole.TEACHER,
@@ -255,8 +273,8 @@ def test_seed_demo_data_scale_lifecycle_assets_and_safe_clean(settings, tmp_path
         email__in=owned_emails,
         membership_status=User.MembershipStatus.EXITED,
     )
-    assert exited_users.count() == 4
-    assert exited_users.filter(is_active=False).count() == 4
+    assert exited_users.count() == 2
+    assert exited_users.filter(is_active=False).count() == 2
     assert User.objects.filter(
         email__in=owned_emails,
         membership_status__in=[
@@ -265,103 +283,41 @@ def test_seed_demo_data_scale_lifecycle_assets_and_safe_clean(settings, tmp_path
             User.MembershipStatus.EXTERNAL,
         ],
         is_active=True,
-    ).count() == 56
+    ).count() == 45
 
     demo_team = Team.objects.get(code=DEMO_TEAM_CODE)
     demo_team_members = TeamMember.objects.filter(team=demo_team)
-    assert demo_team_members.count() == 60
+    assert demo_team_members.count() == 46
     assert Counter(demo_team_members.values_list('role', flat=True)) == {
         TeamMember.Role.OWNER: 1,
-        TeamMember.Role.ADMIN: 1,
-        TeamMember.Role.TEACHER: 2,
-        TeamMember.Role.MEMBER: 51,
-        TeamMember.Role.ADVISOR: 1,
-        TeamMember.Role.EXTERNAL: 4,
+        TeamMember.Role.CO_LEAD: 6,
+        TeamMember.Role.TEACHER: 4,
+        TeamMember.Role.MEMBER: 34,
+        TeamMember.Role.EXTERNAL: 1,
     }
     assert Counter(demo_team_members.values_list('status', flat=True)) == {
-        TeamMember.Status.ACTIVE: 52,
-        TeamMember.Status.ON_LEAVE: 4,
-        TeamMember.Status.EXITED: 4,
+        TeamMember.Status.ACTIVE: 41,
+        TeamMember.Status.ON_LEAVE: 3,
+        TeamMember.Status.EXITED: 2,
     }
     demo_team_events = TeamMembershipEvent.objects.filter(
         membership__team=demo_team
     )
-    assert demo_team_events.count() == 72
+    assert demo_team_events.count() == 53
     assert Counter(demo_team_events.values_list('event_type', flat=True)) == {
-        'joined': 60,
-        'status_changed': 4,
-        'exited': 4,
-        'handover': 4,
+        'joined': 46,
+        'status_changed': 3,
+        'exited': 2,
+        'handover': 2,
     }
-    assert demo_team_events.filter(reason__startswith=DEMO_MARKER).count() == 72
+    assert demo_team_events.filter(reason__startswith=DEMO_MARKER).count() == 53
     demo_squads = Team.objects.filter(parent=demo_team).order_by('code')
-    assert demo_squads.count() == 3
-    assert set(demo_squads.values_list('code', flat=True)) == set(
-        DEMO_SQUAD_CODES
-    )
-    assert set(demo_squads.values_list('team_type', flat=True)) == {
-        Team.TeamType.SQUAD
-    }
-    assert {
-        squad.code: squad.owner.email
-        for squad in demo_squads.select_related('owner')
-    } == {
-        DEMO_SQUAD_CODES[0]: 'leader2@demo.com',
-        DEMO_SQUAD_CODES[1]: 'leader3@demo.com',
-        DEMO_SQUAD_CODES[2]: 'leader4@demo.com',
-    }
-    expected_squad_roles = {
-        DEMO_SQUAD_CODES[0]: {
-            TeamMember.Role.OWNER: 1,
-            TeamMember.Role.CO_LEAD: 1,
-            TeamMember.Role.TEACHER: 1,
-            TeamMember.Role.MEMBER: 14,
-        },
-        DEMO_SQUAD_CODES[1]: {
-            TeamMember.Role.OWNER: 1,
-            TeamMember.Role.CO_LEAD: 1,
-            TeamMember.Role.TEACHER: 1,
-            TeamMember.Role.MEMBER: 13,
-        },
-        DEMO_SQUAD_CODES[2]: {
-            TeamMember.Role.OWNER: 1,
-            TeamMember.Role.CO_LEAD: 1,
-            TeamMember.Role.TEACHER: 1,
-            TeamMember.Role.MEMBER: 11,
-        },
-    }
-    expected_co_leads = {
-        DEMO_SQUAD_CODES[0]: {'leader1@demo.com'},
-        DEMO_SQUAD_CODES[1]: {'member15@demo.com'},
-        DEMO_SQUAD_CODES[2]: {'member29@demo.com'},
-    }
-    for squad in demo_squads:
-        squad_memberships = TeamMember.objects.filter(team=squad)
-        assert Counter(
-            squad_memberships.values_list('role', flat=True)
-        ) == expected_squad_roles[squad.code]
-        assert set(
-            squad_memberships.values_list('status', flat=True)
-        ) == {TeamMember.Status.ACTIVE}
-        assert set(
-            squad_memberships.filter(
-                role=TeamMember.Role.CO_LEAD
-            ).values_list('user__email', flat=True)
-        ) == expected_co_leads[squad.code]
-        squad_events = TeamMembershipEvent.objects.filter(
-            membership__team=squad
-        )
-        assert squad_events.count() == squad_memberships.count()
-        assert set(
-            squad_events.values_list('event_type', flat=True)
-        ) == {'joined'}
-        assert squad_events.filter(
-            reason__startswith=DEMO_MARKER
-        ).count() == squad_memberships.count()
+    assert demo_squads.count() == 0
+    assert DEMO_SQUAD_CODES == ()
     assert Team.objects.filter(pk=real_team.pk).exists()
 
     preferences = UserPreference.objects.filter(user__email__in=owned_emails)
-    assert preferences.count() == 60
+    assert preferences.count() == 47
     assert set(preferences.values_list('items_per_page', flat=True)) <= {10, 20, 50}
     assert set(preferences.values_list('theme_mode', flat=True)) == {'system'}
     assert set(preferences.values_list('schedule_start', flat=True)) == {'19:00'}
@@ -389,7 +345,7 @@ def test_seed_demo_data_scale_lifecycle_assets_and_safe_clean(settings, tmp_path
 
     admin_preference = UserPreference.objects.get(user__email='admin@demo.com')
     member_preference = UserPreference.objects.get(user__email='member1@demo.com')
-    external_preference = UserPreference.objects.get(user__email='member49@demo.com')
+    external_preference = UserPreference.objects.get(user__email='member35@demo.com')
     allowed_dashboard_cards = {'signals', 'priority', 'delivery', 'business'}
     assert set(admin_preference.dashboard_layout['cards']) == allowed_dashboard_cards
     assert set(member_preference.dashboard_layout['cards']) == allowed_dashboard_cards
@@ -406,39 +362,43 @@ def test_seed_demo_data_scale_lifecycle_assets_and_safe_clean(settings, tmp_path
     assert external_preference.notification_preferences['digest'] == 'weekly'
     assert external_preference.favorite_routes == ['/tasks', '/files']
 
-    assert demo_projects.count() == 24
-    squad_project_counts = []
-    linked_squad_codes = set()
-    for project in demo_projects.prefetch_related('teams', 'teams__teammember_set'):
-        linked_squads = [
-            team for team in project.teams.all()
-            if team.parent_id == demo_team.id
-        ]
-        squad_project_counts.append(len(linked_squads))
-        linked_squad_codes.update(team.code for team in linked_squads)
-        assert (
-            any(team.owner_id == project.leader_id for team in linked_squads)
-            or TeamMember.objects.filter(
-                team__in=linked_squads,
-                user=project.leader,
-                status=TeamMember.Status.ACTIVE,
-            ).exists()
-        )
-    assert Counter(squad_project_counts) == {1: 19, 2: 5}
-    assert linked_squad_codes == set(DEMO_SQUAD_CODES)
+    assert demo_projects.count() == 7
+    for project in demo_projects.prefetch_related('teams'):
+        assert list(project.teams.all()) == [demo_team]
+        assert project.visibility == Project.Visibility.PROJECT
+        assert ProjectMember.objects.filter(
+            project=project,
+            user=project.leader,
+            role_in_project=ProjectMember.RoleInProject.LEADER,
+        ).exists()
     project_years = set(
         demo_projects.values_list('start_date__year', flat=True)
     )
-    assert 2022 in project_years
-    assert timezone.localdate().year in project_years
-    assert {
-        Project.Status.ACTIVE,
-        Project.Status.PAUSED,
-        Project.Status.CLOSED,
-    }.issubset(
-        set(demo_projects.values_list('status', flat=True))
-    )
-    assert demo_tasks.count() == 120
+    assert project_years == {2021, 2024}
+    assert demo_projects.filter(status=Project.Status.CLOSED).count() == 2
+    assert demo_projects.filter(status=Project.Status.ACTIVE).count() == 5
+    for year in range(2021, 2024):
+        active_that_year = [
+            project
+            for project in demo_projects
+            if project.start_date.year <= year
+            and (
+                project.actual_end_date is None
+                or project.actual_end_date.year >= year
+            )
+        ]
+        assert len(active_that_year) <= 3
+    active_in_2024 = [
+        project
+        for project in demo_projects
+        if project.start_date.year <= 2024
+        and (
+            project.actual_end_date is None
+            or project.actual_end_date.year >= 2024
+        )
+    ]
+    assert len(active_in_2024) == 5
+    assert demo_tasks.count() == 35
     assert not demo_tasks.filter(
         status__in=[Task.Status.PENDING_REVIEW, Task.Status.DONE],
         completion_note='',
@@ -453,13 +413,13 @@ def test_seed_demo_data_scale_lifecycle_assets_and_safe_clean(settings, tmp_path
     ).exists()
     assert ProjectMembershipEvent.objects.filter(
         membership__project_id__in=demo_project_ids
-    ).count() == 196
+    ).count() == 71
     assert ProjectStageLog.objects.filter(
         project_id__in=demo_project_ids
-    ).count() == 206
+    ).count() == 54
     assert UserLifecycleEvent.objects.filter(
         reason__startswith=DEMO_MARKER
-    ).count() == 68
+    ).count() == 48
     assert {
         ProjectMember.Status.ACTIVE,
         ProjectMember.Status.ON_LEAVE,
@@ -472,22 +432,98 @@ def test_seed_demo_data_scale_lifecycle_assets_and_safe_clean(settings, tmp_path
         )
     )
 
-    assert demo_files.count() == 97
+    competitions = Competition.objects.filter(
+        project_id__in=demo_project_ids
+    ).select_related('event', 'project')
+    competition_events = CompetitionEvent.objects.filter(
+        organization=demo_team
+    )
+    assert competition_events.count() == 33
+    assert competitions.count() == 109
+    assert not competitions.filter(event__isnull=True).exists()
+    assert len({
+        (competition.event_id, competition.project_id)
+        for competition in competitions
+    }) == competitions.count()
+
+    current_edition = str(timezone.localdate().year)
+    for series in CORE_COMPETITION_SERIES:
+        latest_entries = competitions.filter(
+            event__name=series['name'],
+            event__edition=current_edition,
+        )
+        assert latest_entries.count() == 5
+        assert latest_entries.values('project_id').distinct().count() == 5
+    for series in SELECTIVE_COMPETITION_SERIES:
+        for event in competition_events.filter(name=series['name']):
+            assert 1 <= event.entries.count() <= 3
+
+    root_user_ids = set(
+        demo_team_members.values_list('user_id', flat=True)
+    )
+    for competition in competitions:
+        participants = list(
+            competition.participants.select_related('user')
+        )
+        assert len(participants) == 6
+        assert sum(
+            participant.role == CompetitionParticipant.Role.LEADER
+            for participant in participants
+        ) == 1
+        assert {
+            participant.participation_status
+            for participant in participants
+        } == {
+            CompetitionParticipant.ParticipationStatus.CONFIRMED
+        }
+        assert {
+            participant.user_id for participant in participants
+        }.issubset(root_user_ids)
+
+    for award in CompetitionAward.objects.filter(
+        competition__in=competitions
+    ).prefetch_related('recipients', 'competition__participants'):
+        confirmed_ids = set(
+            award.competition.participants.filter(
+                participation_status=(
+                    CompetitionParticipant.ParticipationStatus.CONFIRMED
+                )
+            ).values_list('user_id', flat=True)
+        )
+        assert set(
+            award.recipients.values_list('id', flat=True)
+        ).issubset(confirmed_ids)
+        assert award.competition.is_awarded
+        assert award.competition.award_level == award.award_level
+
+    retirement_awards = competitions.filter(
+        award_level__in=['国赛金奖', '国赛银奖']
+    )
+    assert retirement_awards.count() == 2
+    for retired_entry in retirement_awards:
+        assert not competitions.filter(
+            project=retired_entry.project,
+            event__name=retired_entry.event.name,
+            comp_type=retired_entry.comp_type,
+            event__edition__gt=retired_entry.event.edition,
+        ).exists()
+
+    assert demo_files.count() == 247
     assert Counter(
         Path(name).suffix.lower()
         for name in demo_files.values_list('file', flat=True)
     ) == {
-        '.pdf': 25,
-        '.docx': 24,
-        '.xlsx': 24,
-        '.pptx': 24,
+        '.pdf': 8,
+        '.docx': 116,
+        '.xlsx': 7,
+        '.pptx': 116,
     }
     assert FileVersion.objects.filter(
         file_asset__project_id__in=demo_project_ids
-    ).count() == 24
+    ).count() == 116
     assert Task.attachment_files.through.objects.filter(
         task__project_id__in=demo_project_ids
-    ).count() == 96
+    ).count() == 28
     for asset in demo_files.select_related('project', 'project__leader'):
         content = Path(asset.file.path).read_bytes()
         assert asset.size == len(content)
@@ -528,10 +564,104 @@ def test_seed_demo_data_scale_lifecycle_assets_and_safe_clean(settings, tmp_path
         assert asset.project.name in parsed_text
         assert asset.project.leader.name in parsed_text
 
+    competition_files = demo_files.filter(
+        competition_entry__isnull=False
+    ).select_related('competition_entry', 'competition_entry__event')
+    assert competition_files.count() == 218
+    competition_hashes = list(
+        competition_files.values_list('file_hash', flat=True)
+    )
+    assert all(competition_hashes)
+    assert len(set(competition_hashes)) == len(competition_hashes)
+    for competition in competitions:
+        entry_files = competition_files.filter(
+            competition_entry=competition
+        )
+        assert entry_files.count() == 2
+        assert {
+            Path(name).suffix.lower()
+            for name in entry_files.values_list('file', flat=True)
+        } == {'.docx', '.pptx'}
+        assert not entry_files.exclude(
+            project_id=competition.project_id
+        ).exists()
+        plan_asset = entry_files.get(file__endswith='.docx')
+        assert plan_asset.version == 2
+        assert competition.event.edition in plan_asset.name
+        assert competition.event.name in plan_asset.name
+        assert plan_asset.created_at.year == int(competition.event.edition)
+        historical_plan = FileVersion.objects.get(
+            file_asset=plan_asset,
+            version=1,
+        )
+        assert historical_plan.created_at.year == int(
+            competition.event.edition
+        )
+        assert (
+            Path(historical_plan.file.path).read_bytes()
+            != Path(plan_asset.file.path).read_bytes()
+        )
+
+    demo_incomes = FinanceIncome.objects.filter(
+        project_id__in=demo_project_ids
+    ).select_related('project', 'competition_entry__event')
+    bonus_incomes = demo_incomes.filter(
+        income_type=FinanceIncome.IncomeType.BONUS
+    )
+    grant_incomes = demo_incomes.filter(
+        income_type=FinanceIncome.IncomeType.GRANT
+    )
+    assert bonus_incomes.count() == demo_projects.count()
+    assert grant_incomes.count() == demo_projects.count()
+    assert not bonus_incomes.filter(competition_entry__isnull=True).exists()
+    assert not grant_incomes.filter(competition_entry__isnull=False).exists()
+    for bonus_income in bonus_incomes:
+        assert (
+            bonus_income.competition_entry.project_id
+            == bonus_income.project_id
+        )
+        assert bonus_income.competition_entry.is_awarded
+
     receipts = FinanceReceipt.objects.filter(
         expense__project_id__in=demo_project_ids
     )
-    assert receipts.count() == 99
+    demo_expenses = FinanceExpense.all_objects.filter(
+        project_id__in=demo_project_ids
+    )
+    assert 14 <= demo_expenses.count() <= 21
+    competition_expenses = demo_expenses.filter(
+        competition_entry__isnull=False
+    ).select_related('competition_entry__event')
+    for expense in competition_expenses:
+        assert expense.project_id == expense.competition_entry.project_id
+
+    for project in demo_projects:
+        travel_expense = competition_expenses.get(
+            project=project,
+            title='比赛现场往返交通费',
+            category=FinanceExpense.Category.TRAVEL,
+        )
+        registration_expense = competition_expenses.get(
+            project=project,
+            title='比赛报名费',
+            category=FinanceExpense.Category.COMPETITION_FEE,
+        )
+        assert (
+            travel_expense.competition_entry_id
+            != registration_expense.competition_entry_id
+        )
+        assert (
+            travel_expense.competition_entry.event_id
+            != registration_expense.competition_entry.event_id
+        )
+        if project.status == Project.Status.ACTIVE:
+            assert {
+                travel_expense.competition_entry.event.edition,
+                registration_expense.competition_entry.event.edition,
+            } == {current_edition}
+
+    assert demo_expenses.count() <= receipts.count() <= demo_expenses.count() * 2
+    expected_receipt_count = receipts.count()
     assert {
         Path(name).suffix.lower()
         for name in receipts.values_list('file', flat=True)
@@ -679,13 +809,13 @@ def test_seed_demo_data_scale_lifecycle_assets_and_safe_clean(settings, tmp_path
     assert PortalPublication.objects.filter(
         content_type=PortalPublication.ContentType.PROJECT,
         object_id__in=demo_project_ids,
-    ).count() == 24
+    ).count() == 7
     assert PortalPublication.objects.filter(
         content_type=PortalPublication.ContentType.IP_APPLICATION,
         object_id__in=IntellectualPropertyApplication.objects.filter(
             application_code__startswith=DEMO_IP_PREFIX
         ).values_list('id', flat=True),
-    ).count() == 5
+    ).count() == 72
     demo_ip = IntellectualPropertyApplication.objects.filter(
         application_code__startswith=DEMO_IP_PREFIX
     ).select_related(
@@ -694,7 +824,19 @@ def test_seed_demo_data_scale_lifecycle_assets_and_safe_clean(settings, tmp_path
         'teacher_confirmer',
         'final_certificate_file',
     )
-    assert demo_ip.count() == 5
+    assert demo_ip.count() == 72
+    patent_types = {
+        IntellectualPropertyApplication.IPType.INVENTION_PATENT,
+        IntellectualPropertyApplication.IPType.UTILITY_MODEL,
+        IntellectualPropertyApplication.IPType.DESIGN_PATENT,
+    }
+    assert demo_ip.filter(ip_type__in=patent_types).count() == 40
+    assert demo_ip.filter(
+        ip_type=IntellectualPropertyApplication.IPType.SOFTWARE_COPYRIGHT
+    ).count() == 25
+    assert demo_ip.filter(
+        ip_type=IntellectualPropertyApplication.IPType.NOVELTY_SEARCH
+    ).count() == 7
     for application in demo_ip:
         assert application.main_writer_id
         assert application.applicant_executor_id
@@ -705,7 +847,10 @@ def test_seed_demo_data_scale_lifecycle_assets_and_safe_clean(settings, tmp_path
             User.GlobalRole.SYS_ADMIN,
         }
     authorized_ip = demo_ip.get(
-        status=IntellectualPropertyApplication.Status.AUTHORIZED
+        final_certificate_file__isnull=False
+    )
+    assert authorized_ip.status == (
+        IntellectualPropertyApplication.Status.AUTHORIZED
     )
     assert authorized_ip.final_certificate_file.level == FileAsset.Level.INTERNAL
     assert authorized_ip.final_certificate_file.name.endswith(
@@ -724,7 +869,7 @@ def test_seed_demo_data_scale_lifecycle_assets_and_safe_clean(settings, tmp_path
     demo_ip_contributors = IPApplicationContributor.objects.filter(
         application__in=demo_ip
     ).select_related('application', 'user')
-    assert demo_ip_contributors.count() >= 15
+    assert demo_ip_contributors.count() == 288
     for contributor in demo_ip_contributors:
         assert contributor.contribution_description.startswith(
             f'{contributor.user.name}在「{contributor.application.title}」中'
@@ -736,7 +881,7 @@ def test_seed_demo_data_scale_lifecycle_assets_and_safe_clean(settings, tmp_path
         application__in=demo_ip,
         responsibility_description='',
     ).exists()
-    assert IPMaterialVersion.objects.filter(application__in=demo_ip).count() == 5
+    assert IPMaterialVersion.objects.filter(application__in=demo_ip).count() == 72
     final_material = IPMaterialVersion.objects.get(
         application=authorized_ip,
         is_final=True,
@@ -751,7 +896,7 @@ def test_seed_demo_data_scale_lifecycle_assets_and_safe_clean(settings, tmp_path
         content_type=PortalPublication.ContentType.MEMBER,
         custom_summary__startswith=DEMO_MARKER,
     )
-    assert member_publications.count() == 16
+    assert member_publications.count() == 17
     assert member_publications.filter(
         is_public=True,
         member_consent=True,
@@ -786,36 +931,42 @@ def test_seed_demo_data_scale_lifecycle_assets_and_safe_clean(settings, tmp_path
     )
     assert Project.all_objects.filter(
         code__startswith=DEMO_PROJECT_PREFIX
-    ).count() == 24
+    ).count() == 7
     assert Task.all_objects.filter(
         project__code__startswith=DEMO_PROJECT_PREFIX
-    ).count() == 120
+    ).count() == 35
     assert FileAsset.objects.filter(
         project__code__startswith=DEMO_PROJECT_PREFIX
-    ).count() == 97
+    ).count() == 247
     assert ImportTask.objects.filter(
         file_path__contains=str(Path('imports') / DEMO_IMPORT_DIRNAME)
     ).count() == 8
     regenerated_team = Team.objects.get(code=DEMO_TEAM_CODE)
-    assert TeamMember.objects.filter(team=regenerated_team).count() == 60
+    assert TeamMember.objects.filter(team=regenerated_team).count() == 46
     assert TeamMembershipEvent.objects.filter(
         membership__team=regenerated_team
-    ).count() == 72
+    ).count() == 53
     regenerated_squads = Team.objects.filter(parent=regenerated_team)
-    assert regenerated_squads.count() == 3
-    assert set(
-        regenerated_squads.values_list('code', flat=True)
-    ) == set(DEMO_SQUAD_CODES)
+    assert regenerated_squads.count() == 0
     assert all(
-        project.teams.filter(parent=regenerated_team).exists()
+        project.teams.filter(pk=regenerated_team.pk).exists()
         for project in Project.all_objects.filter(
             code__startswith=DEMO_PROJECT_PREFIX
         )
     )
     assert FinanceReceipt.objects.filter(
         expense__project__code__startswith=DEMO_PROJECT_PREFIX
-    ).count() == 99
-    assert UserPreference.objects.filter(user__email__in=owned_emails).count() == 60
+    ).count() == expected_receipt_count
+    assert UserPreference.objects.filter(user__email__in=owned_emails).count() == 47
+    assert Competition.objects.filter(
+        project__code__startswith=DEMO_PROJECT_PREFIX
+    ).count() == 109
+    assert CompetitionEvent.objects.filter(
+        organization=regenerated_team
+    ).count() == 33
+    assert IntellectualPropertyApplication.objects.filter(
+        application_code__startswith=DEMO_IP_PREFIX
+    ).count() == 72
     assert SensitiveAccessRequest.objects.filter(
         project__code__startswith=DEMO_PROJECT_PREFIX
     ).count() == 4
@@ -879,9 +1030,43 @@ def test_seed_commands_share_one_complete_dataset_in_both_orders(settings, tmp_p
                 'email', flat=True
             )
         ) == set(DEMO_ACCOUNT_EMAILS)
-        assert projects.count() == 24
-        assert Task.all_objects.filter(project__in=projects).count() == 120
-        assert Competition.objects.filter(project__in=projects).count() == 5
+        assert list(
+            User.objects.filter(
+                global_role=User.GlobalRole.TEACHER,
+                is_active=True,
+            ).values_list('email', flat=True)
+        ) == ['teacher1@demo.com']
+        read_only_teacher_emails = {
+            'teacher2@demo.com',
+            'teacher3@demo.com',
+            'teacher4@demo.com',
+        }
+        assert set(
+            User.objects.filter(
+                email__in=read_only_teacher_emails,
+                global_role=User.GlobalRole.MEMBER,
+            ).values_list('email', flat=True)
+        ) == read_only_teacher_emails
+        demo_team = Team.objects.get(code=DEMO_TEAM_CODE)
+        assert set(
+            TeamMember.objects.filter(
+                team=demo_team,
+                role=TeamMember.Role.TEACHER,
+                user__email__in={
+                    'teacher1@demo.com',
+                    *read_only_teacher_emails,
+                },
+            ).values_list('user__email', flat=True)
+        ) == {
+            'teacher1@demo.com',
+            *read_only_teacher_emails,
+        }
+        assert projects.count() == 7
+        assert Task.all_objects.filter(project__in=projects).count() == 35
+        assert Competition.objects.filter(project__in=projects).count() == 109
+        assert IntellectualPropertyApplication.objects.filter(
+            application_code__startswith=DEMO_IP_PREFIX
+        ).count() == 72
         demo_reports = CustomReport.objects.filter(name__startswith=DEMO_MARKER)
         assert demo_reports.count() == 3
         assert ScheduledReport.objects.filter(report__in=demo_reports).count() == 3

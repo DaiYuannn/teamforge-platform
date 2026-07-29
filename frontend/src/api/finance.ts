@@ -237,11 +237,29 @@ export interface FinanceTraceabilityQuery {
   event?: number
 }
 
+export interface FinanceTraceabilityParticipant {
+  id: number
+  name: string
+  role: string
+}
+
+export interface FinanceTraceabilityEntrySummary {
+  competition_entry: number
+  competition_status?: string
+  award_level?: string
+  is_awarded?: boolean
+  participants?: FinanceTraceabilityParticipant[]
+}
+
+export interface FinanceTraceabilityGroupSummary {
+  entries?: FinanceTraceabilityEntrySummary[]
+}
+
 export interface FinanceTraceabilitySummaryResponse {
   perspective?: FinancePerspective
   metrics?: Record<string, number | string>
   summary?: Record<string, number | string>
-  groups?: unknown[]
+  groups?: FinanceTraceabilityGroupSummary[]
   rows?: unknown[]
   project_rows?: unknown[]
   competition_rows?: unknown[]

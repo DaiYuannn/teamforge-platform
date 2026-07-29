@@ -201,6 +201,7 @@ export const IP_TYPE_MAP: Record<string, { label: string; color: string }> = {
   invention_patent: { label: '发明专利', color: 'danger' },
   utility_model: { label: '实用新型专利', color: 'warning' },
   design_patent: { label: '外观设计专利', color: 'success' },
+  novelty_search: { label: '科技查新', color: 'primary' },
   paper: { label: '论文成果', color: 'info' },
   other: { label: '其他', color: 'info' },
 }

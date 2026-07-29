@@ -61,6 +61,18 @@ def make_application(project, main_writer=None, **extra):
     )
 
 
+@pytest.mark.django_db
+def test_novelty_search_type_is_available_and_displayed():
+    assert (
+        IntellectualPropertyApplication.IPType.NOVELTY_SEARCH
+        == 'novelty_search'
+    )
+    assert (
+        IntellectualPropertyApplication.IPType.NOVELTY_SEARCH.label
+        == '科技查新'
+    )
+
+
 @pytest.mark.api
 @pytest.mark.permission
 @pytest.mark.django_db

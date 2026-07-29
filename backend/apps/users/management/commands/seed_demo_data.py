@@ -7,12 +7,13 @@
     python manage.py seed_demo_data --force  # 跳过确认提示
 
 数据概览:
-    - 账号: 8 个固定账号 + 52 个普通成员
-    - 团队: 1 个总团队 + 3 个二级小团队
-    - 项目: 24 个（覆盖 2022 年至今，并包含已结项、暂停、进行中）
-    - 比赛: 5 个
-    - 任务: 120 个（覆盖完整状态分布）
-    - 文件: 96 个项目文档 + 1 个授权证书 PDF，并含版本与任务附件
+    - 账号: 1 个操作老师 + 3 个查看老师 + 5 个负责人
+      + 2 个平行主贡献者 + 35 个普通成员（另有 1 个技术管理员）
+    - 团队: 1 个总团队；项目与比赛参赛条目表达实际组队关系
+    - 项目: 7 个（2 个历史退役项目 + 5 个当前项目）
+    - 比赛: 2021 年起的逐届赛事与参赛条目
+    - 任务: 每项目 5 个（覆盖完整状态分布）
+    - 文件: 项目基础文档、每个参赛条目独立的计划书/PPT、授权证书
     - 生命周期: 团队成员、项目成员、项目阶段历史
     - 导入历史: 8 个模块的成功、预览、失败与回滚记录
     - 公开门户: 显式公开决策、精选与成员授权
@@ -22,7 +23,7 @@
     - 贡献记录: 15 条
     - 成员排序: 2 个项目（1 draft / 1 confirmed）+ 2 条异议
     - 定时报表: 3 个计划 + 3 个成功执行文件（XLSX/DOCX/PDF）
-    - 知识产权申请: 5 个（含退回记录、贡献人、异议）
+    - 成果档案: 40 个专利 + 25 个软著 + 7 个科技查新
     - 敏感资料: 3 条 + 2 条访问申请
     - 通知: 10 条
     - 公告: 3 条
@@ -61,7 +62,12 @@ from apps.projects.models import (
     ProjectMembershipEvent,
     ProjectStageLog,
 )
-from apps.competitions.models import Competition
+from apps.competitions.models import (
+    Competition,
+    CompetitionAward,
+    CompetitionEvent,
+    CompetitionParticipant,
+)
 from apps.tasks.models import Task
 from apps.finance.models import FinanceBudget, FinanceExpense, FinanceIncome, FinanceReceipt
 from apps.files.models import FileAsset, FileVersion
@@ -93,7 +99,8 @@ DEMO_IP_PREFIX = 'IP-TEAM-DEMO-'
 DEMO_MARKER = '【团队演示】'
 DEMO_IMPORT_DIRNAME = 'seed_demo_data'
 DEMO_TEAM_CODE = 'TEAM-DEMO-ORG'
-DEMO_SQUAD_CODES = (
+DEMO_SQUAD_CODES = ()
+LEGACY_DEMO_SQUAD_CODES = (
     'TEAM-DEMO-SQUAD-PRODUCT',
     'TEAM-DEMO-SQUAD-DATA',
     'TEAM-DEMO-SQUAD-OPERATIONS',
@@ -102,16 +109,23 @@ DEMO_ACCOUNT_EMAILS = (
     'admin@demo.com',
     'teacher1@demo.com',
     'teacher2@demo.com',
+    'teacher3@demo.com',
+    'teacher4@demo.com',
     'leader1@demo.com',
     'leader2@demo.com',
     'leader3@demo.com',
     'leader4@demo.com',
-    'approver@demo.com',
-    *(f'member{index}@demo.com' for index in range(1, 53)),
+    'leader5@demo.com',
+    'contributor1@demo.com',
+    'contributor2@demo.com',
+    *(f'member{index}@demo.com' for index in range(1, 36)),
 )
 LEGACY_COMPETITION_ACCOUNT_EMAILS = (
-    'leader5@demo.com',
     'leader6@demo.com',
+)
+LEGACY_DEMO_ACCOUNT_EMAILS = (
+    'approver@demo.com',
+    *(f'member{index}@demo.com' for index in range(36, 53)),
 )
 LEGACY_COMPETITION_REPORT_NAMES = (
     '每日项目经营概览',
@@ -177,7 +191,7 @@ MAJORS = [
     '数据科学', '网络安全', '通信工程',
 ]
 
-PROJECT_DATA = [
+PROJECT_CATALOG = [
     {
         'name': '智能校园导览系统',
         'intro': '基于移动端定位与AR技术的校园导览系统，为新生和访客提供室内外一体化导航、'
@@ -286,43 +300,148 @@ PROJECT_DATA = [
     },
 ]
 
-COMPETITION_DATA = [
+# 小团队版的确定性项目时间线。2021 年只有三个项目；其中两个分别在
+# 2022、2023 年取得国金/国银后结项。2024 年新增四个项目，与仍在持续
+# 的老项目一起形成五支当前队伍。
+PROJECT_DATA = (
     {
-        'name': '中国国际大学生创新大赛（互联网+）',
-        'comp_type': '创新创业',
+        **PROJECT_CATALOG[0],
+        'code': f'{DEMO_PROJECT_PREFIX}2021-01',
+        'leader_key': 'leader1',
+        'start_date': date(2021, 3, 15),
+        'planned_end_date': date(2022, 12, 31),
+        'actual_end_date': date(2022, 12, 15),
+        'status': Project.Status.CLOSED,
+        'current_stage': Project.Stage.CLOSED,
+        'priority': Project.Priority.NORMAL,
+    },
+    {
+        **PROJECT_CATALOG[1],
+        'code': f'{DEMO_PROJECT_PREFIX}2021-02',
+        'leader_key': 'leader2',
+        'start_date': date(2021, 5, 10),
+        'planned_end_date': date(2023, 12, 31),
+        'actual_end_date': date(2023, 12, 15),
+        'status': Project.Status.CLOSED,
+        'current_stage': Project.Stage.CLOSED,
+        'priority': Project.Priority.NORMAL,
+    },
+    {
+        **PROJECT_CATALOG[2],
+        'code': f'{DEMO_PROJECT_PREFIX}2021-03',
+        'leader_key': 'leader1',
+        'start_date': date(2021, 9, 20),
+        'planned_end_date': date(2027, 6, 30),
+        'actual_end_date': None,
+        'status': Project.Status.ACTIVE,
+        'current_stage': Project.Stage.NATIONAL_COMP,
+        'priority': Project.Priority.URGENT,
+    },
+    {
+        **PROJECT_CATALOG[3],
+        'code': f'{DEMO_PROJECT_PREFIX}2024-01',
+        'leader_key': 'leader2',
+        'start_date': date(2024, 2, 20),
+        'planned_end_date': date(2027, 9, 30),
+        'actual_end_date': None,
+        'status': Project.Status.ACTIVE,
+        'current_stage': Project.Stage.PROVINCE_COMP,
+        'priority': Project.Priority.HIGH,
+    },
+    {
+        **PROJECT_CATALOG[4],
+        'code': f'{DEMO_PROJECT_PREFIX}2024-02',
+        'leader_key': 'leader3',
+        'start_date': date(2024, 3, 18),
+        'planned_end_date': date(2027, 12, 31),
+        'actual_end_date': None,
+        'status': Project.Status.ACTIVE,
+        'current_stage': Project.Stage.DEFENSE_PREP,
+        'priority': Project.Priority.HIGH,
+    },
+    {
+        **PROJECT_CATALOG[5],
+        'code': f'{DEMO_PROJECT_PREFIX}2024-03',
+        'leader_key': 'leader4',
+        'start_date': date(2024, 5, 6),
+        'planned_end_date': date(2028, 3, 31),
+        'actual_end_date': None,
+        'status': Project.Status.ACTIVE,
+        'current_stage': Project.Stage.MATERIAL_SUBMIT,
+        'priority': Project.Priority.NORMAL,
+    },
+    {
+        **PROJECT_CATALOG[6],
+        'code': f'{DEMO_PROJECT_PREFIX}2024-04',
+        'leader_key': 'leader5',
+        'start_date': date(2024, 7, 1),
+        'planned_end_date': date(2028, 6, 30),
+        'actual_end_date': None,
+        'status': Project.Status.ACTIVE,
+        'current_stage': Project.Stage.DEV_EXPERIMENT,
+        'priority': Project.Priority.HIGH,
+    },
+)
+
+CORE_COMPETITION_SERIES = (
+    {
+        'key': 'dachuang',
+        'short_name': '大创',
+        'name': '国家级大学生创新创业训练计划（大创）',
+        'comp_type': '创新创业训练主赛道',
         'level': Competition.Level.NATIONAL,
         'organizer': '教育部',
-        'status': Competition.Status.ONGOING,
     },
     {
-        'name': '挑战杯大学生课外学术科技作品竞赛',
-        'comp_type': '学术科技',
-        'level': Competition.Level.PROVINCE,
-        'organizer': '共青团中央',
-        'status': Competition.Status.COMPLETED,
-    },
-    {
-        'name': '蓝桥杯全国软件和信息技术专业人才大赛',
-        'comp_type': '程序设计',
-        'level': Competition.Level.CITY,
-        'organizer': '工业和信息化部',
-        'status': Competition.Status.PREPARING,
-    },
-    {
-        'name': '中国大学生计算机设计大赛',
-        'comp_type': '计算机设计',
-        'level': Competition.Level.SCHOOL,
-        'organizer': '教育部高等学校计算机类专业教指委',
-        'status': Competition.Status.ONGOING,
-    },
-    {
-        'name': '全国大学生数学建模竞赛',
-        'comp_type': '数学建模',
+        'key': 'datiao',
+        'short_name': '大挑',
+        'name': '挑战杯全国大学生课外学术科技作品竞赛（大挑）',
+        'comp_type': '科技发明制作赛道',
         'level': Competition.Level.NATIONAL,
-        'organizer': '中国工业与应用数学学会',
-        'status': Competition.Status.COMPLETED,
+        'organizer': '共青团中央',
     },
-]
+    {
+        'key': 'xiaotiao',
+        'short_name': '小挑',
+        'name': '挑战杯中国大学生创业计划竞赛（小挑）',
+        'comp_type': '创业计划主赛道',
+        'level': Competition.Level.NATIONAL,
+        'organizer': '共青团中央',
+    },
+    {
+        'key': 'guochuang',
+        'short_name': '国创',
+        'name': '中国国际大学生创新大赛（国创）',
+        'comp_type': '高教主赛道',
+        'level': Competition.Level.NATIONAL,
+        'organizer': '教育部',
+    },
+)
+
+SELECTIVE_COMPETITION_SERIES = (
+    {
+        'key': 'digital_china',
+        'short_name': '数字中国',
+        'name': '数字中国创新大赛',
+        'comp_type': '数字技术创新赛道',
+        'level': Competition.Level.NATIONAL,
+        'organizer': '数字中国建设峰会组委会',
+        'start_year': 2022,
+        'entry_counts': {2022: 1, 2023: 2, 2024: 3, 2025: 2, 2026: 1},
+    },
+    {
+        'key': 'xiamen_bank',
+        'short_name': '厦门银行杯',
+        'name': '厦门银行杯金融科技创新大赛',
+        'comp_type': '金融科技应用赛道',
+        'level': Competition.Level.NATIONAL,
+        'organizer': '厦门银行杯金融科技创新大赛组委会',
+        'start_year': 2023,
+        'entry_counts': {2023: 1, 2024: 2, 2025: 3, 2026: 2},
+    },
+)
+
+COMPETITION_DATA = CORE_COMPETITION_SERIES + SELECTIVE_COMPETITION_SERIES
 
 # 15 个技能标签
 SKILL_NAMES = [
@@ -415,12 +534,14 @@ class Command(BaseCommand):
                 self.members = []
                 self.leaders = []
                 self.teachers = []
+                self.viewing_teachers = []
+                self.primary_contributors = []
                 self.projects = []
-                self.squads = []
-                self.project_squad_by_leader_id = {}
                 self.project_members = {}  # project -> [users]
                 self.tasks_by_project = {}
                 self.files_by_project = {}
+                self.competitions = []
+                self.competition_files_by_entry = {}
 
                 self.create_users()
                 self.create_team_organization()
@@ -523,6 +644,16 @@ class Command(BaseCommand):
             U.MEMBER, is_student=False, is_staff=False, major='软件工程',
             phone='13800000002',
         )
+        self.users['teacher3'] = self._make_user(
+            'teacher3@demo.com', 'teacher3', 'teacher123456', '陈老师',
+            U.MEMBER, is_student=False, is_staff=False, major='工商管理',
+            phone='13800000008',
+        )
+        self.users['teacher4'] = self._make_user(
+            'teacher4@demo.com', 'teacher4', 'teacher123456', '周老师',
+            U.MEMBER, is_student=False, is_staff=False, major='电子信息',
+            phone='13800000009',
+        )
         self.users['leader1'] = self._make_user(
             'leader1@demo.com', 'leader1', 'leader123456', '王明',
             U.MEMBER, grade='研二', major='计算机科学', phone='13800000003',
@@ -539,10 +670,17 @@ class Command(BaseCommand):
             'leader4@demo.com', 'leader4', 'leader123456', '陈雨桐',
             U.MEMBER, grade='研一', major='数据科学', phone='13800000007',
         )
-        self.users['approver'] = self._make_user(
-            'approver@demo.com', 'approver', 'approver123456', '审批员陈姐',
-            U.SENS_APPROVER, is_student=False, is_staff=True,
-            phone='13800000006',
+        self.users['leader5'] = self._make_user(
+            'leader5@demo.com', 'leader5', 'leader123456', '林嘉宁',
+            U.MEMBER, grade='大三', major='人工智能', phone='13800000010',
+        )
+        self.users['contributor1'] = self._make_user(
+            'contributor1@demo.com', 'contributor1', 'member123456', '钱思远',
+            U.MEMBER, grade='研一', major='软件工程', phone='13800000011',
+        )
+        self.users['contributor2'] = self._make_user(
+            'contributor2@demo.com', 'contributor2', 'member123456', '孙雅琪',
+            U.MEMBER, grade='大四', major='数据科学', phone='13800000012',
         )
 
         self.leaders = [
@@ -550,19 +688,29 @@ class Command(BaseCommand):
             self.users['leader2'],
             self.users['leader3'],
             self.users['leader4'],
+            self.users['leader5'],
+        ]
+        self.primary_contributors = [
+            self.users['contributor1'],
+            self.users['contributor2'],
+        ]
+        self.viewing_teachers = [
+            self.users['teacher2'],
+            self.users['teacher3'],
+            self.users['teacher4'],
         ]
         # 小团队版只保留一个全局“操作老师”。真实数据库若已有操作
-        # 老师，不改动真实账号，两个演示老师均作为团队范围内查看老师。
+        # 老师，不改动真实账号，演示老师均作为团队范围内查看老师。
         self.teachers = [
             existing_operating_teacher or self.users['teacher1']
         ]
         self.demo_teacher_is_operator = existing_operating_teacher is None
 
         used_names = {
-            '系统管理员', '张老师', '李老师', '王明', '赵芳', '刘强',
-            '陈雨桐', '审批员陈姐',
+            '系统管理员', '张老师', '李老师', '陈老师', '周老师',
+            '王明', '赵芳', '刘强', '陈雨桐', '林嘉宁', '钱思远', '孙雅琪',
         }
-        for i in range(1, 53):
+        for i in range(1, 36):
             email = f'member{i}@demo.com'
             username = f'member{i}'
             name = gen_chinese_name(used_names)
@@ -577,13 +725,15 @@ class Command(BaseCommand):
             'admin': 'blue',
             'teacher1': 'purple',
             'teacher2': 'green',
+            'teacher3': 'blue',
+            'teacher4': 'orange',
             'leader1': 'green',
             'leader2': 'blue',
             'leader3': 'purple',
             'leader4': 'orange',
             'leader5': 'green',
-            'leader6': 'blue',
-            'approver': 'orange',
+            'contributor1': 'blue',
+            'contributor2': 'purple',
         }
         theme_cycle = ('blue', 'green', 'purple', 'orange')
         notification_categories = (
@@ -623,7 +773,7 @@ class Command(BaseCommand):
                 channels = {'in_app': True, 'email': True}
                 quiet_hours = {'enabled': False, 'start': '22:00', 'end': '07:30'}
                 default_scope = 'team'
-            elif member_number >= 49:
+            elif member_number == 35:
                 profile = 'external'
                 default_landing = 'tasks'
                 sidebar_order = [
@@ -639,7 +789,7 @@ class Command(BaseCommand):
                 channels = {'in_app': True, 'email': False}
                 quiet_hours = {'enabled': True, 'start': '21:30', 'end': '08:30'}
                 default_scope = 'mine'
-            elif key in {'teacher1', 'teacher2', 'approver'}:
+            elif key in {'teacher1', 'teacher2', 'teacher3', 'teacher4'}:
                 profile = 'teacher'
                 default_landing = 'projects'
                 sidebar_order = [
@@ -736,11 +886,12 @@ class Command(BaseCommand):
             )
 
         self.stdout.write(self.style.SUCCESS(
-            f'   账号创建完成：8 个固定账号 + {len(self.members)} 个普通成员'
+            '   账号创建完成：1 个操作老师、3 个查看老师、5 个负责人、'
+            f'2 个平行主贡献者、{len(self.members)} 个普通成员'
         ))
 
     def create_team_organization(self):
-        """创建一支完整团队，并为所有演示账户生成可追溯成员关系。"""
+        """创建总团队人员池；实际组队由项目和比赛参赛条目表达。"""
         self.stdout.write('-> 创建团队组织与成员关系...')
         owner = self.users['leader1']
         self.team, _ = Team.objects.update_or_create(
@@ -748,8 +899,9 @@ class Command(BaseCommand):
             defaults={
                 'name': '数智创新实践团队',
                 'description': (
-                    '由指导老师、项目负责人、学生成员、顾问和外部协作者'
-                    '共同组成的跨专业实践团队。'
+                    '一个总团队人员池：1 位操作老师、3 位查看老师、'
+                    '5 位项目负责人、2 位平行主贡献者与 35 位普通成员。'
+                    '成员可同时参加多个“比赛届次 × 项目”参赛队。'
                 ),
                 'contact_email': 'teacher1@demo.com',
                 'join_message': (
@@ -760,12 +912,18 @@ class Command(BaseCommand):
             },
         )
         team_created_at = timezone.make_aware(
-            datetime.combine(date(2022, 1, 10), time(9, 0))
+            datetime.combine(date(2021, 1, 10), time(9, 0))
         )
         Team.objects.filter(pk=self.team.pk).update(created_at=team_created_at)
 
         memberships = {}
-        ordered_users = list(self.users.items())
+        ordered_keys = [
+            'teacher1', 'teacher2', 'teacher3', 'teacher4',
+            'leader1', 'leader2', 'leader3', 'leader4', 'leader5',
+            'contributor1', 'contributor2',
+            *(f'member{number}' for number in range(1, 36)),
+        ]
+        ordered_users = [(key, self.users[key]) for key in ordered_keys]
         for index, (key, user) in enumerate(ordered_users):
             member_number = (
                 int(key.removeprefix('member'))
@@ -774,20 +932,21 @@ class Command(BaseCommand):
             )
             if key == 'leader1':
                 role = TeamMember.Role.OWNER
-            elif key == 'admin':
-                role = TeamMember.Role.ADMIN
-            elif key in {'teacher1', 'teacher2'}:
+            elif key in {'teacher1', 'teacher2', 'teacher3', 'teacher4'}:
                 role = TeamMember.Role.TEACHER
-            elif key == 'approver':
-                role = TeamMember.Role.ADVISOR
-            elif member_number >= 49:
+            elif key in {
+                'leader2', 'leader3', 'leader4', 'leader5',
+                'contributor1', 'contributor2',
+            }:
+                role = TeamMember.Role.CO_LEAD
+            elif member_number == 35:
                 role = TeamMember.Role.EXTERNAL
             else:
                 role = TeamMember.Role.MEMBER
 
-            if 41 <= member_number <= 44:
+            if 30 <= member_number <= 32:
                 status = TeamMember.Status.ON_LEAVE
-            elif 45 <= member_number <= 48:
+            elif 33 <= member_number <= 34:
                 status = TeamMember.Status.EXITED
             else:
                 status = TeamMember.Status.ACTIVE
@@ -831,7 +990,7 @@ class Command(BaseCommand):
             )
 
         handover_target = memberships['leader2']
-        for member_number in range(41, 49):
+        for member_number in range(30, 35):
             key = f'member{member_number}'
             membership = memberships[key]
             change_at = membership.joined_at + timedelta(days=700)
@@ -873,112 +1032,9 @@ class Command(BaseCommand):
                     pk=handover_event.pk
                 ).update(created_at=change_at + timedelta(minutes=5))
 
-        # 二级小团队只增加额外归属关系，不改变根团队的 60 名成员及
-        # 72 条根级事件。这样演示账号既能保留完整团队历史，也能真实
-        # 展示“小团队负责人—共同负责人—执行成员”的日常协作结构。
-        squad_specs = (
-            {
-                'code': DEMO_SQUAD_CODES[0],
-                'name': '智能产品与软件组',
-                'description': '负责产品设计、前后端开发、移动端与系统集成。',
-                'owner_key': 'leader2',
-                'co_lead_keys': ('leader1',),
-                'teacher_keys': ('teacher1',),
-                'member_keys': tuple(
-                    f'member{number}' for number in range(1, 15)
-                ),
-            },
-            {
-                'code': DEMO_SQUAD_CODES[1],
-                'name': '数据智能与视觉组',
-                'description': '负责数据治理、算法模型、视觉分析与实验评估。',
-                'owner_key': 'leader3',
-                'co_lead_keys': ('member15',),
-                'teacher_keys': ('teacher2',),
-                'member_keys': tuple(
-                    f'member{number}' for number in range(16, 29)
-                ),
-            },
-            {
-                'code': DEMO_SQUAD_CODES[2],
-                'name': '赛事材料与运营组',
-                'description': '负责比赛统筹、材料编制、答辩演练与成果运营。',
-                'owner_key': 'leader4',
-                'co_lead_keys': ('member29',),
-                'teacher_keys': ('teacher1',),
-                'member_keys': tuple(
-                    f'member{number}' for number in range(30, 41)
-                ),
-            },
-        )
-        for squad_index, spec in enumerate(squad_specs):
-            owner = self.users[spec['owner_key']]
-            squad = Team.objects.create(
-                code=spec['code'],
-                name=spec['name'],
-                description=spec['description'],
-                contact_email=owner.email,
-                join_message='由总团队统筹，根据项目和比赛需要开展跨组协作。',
-                is_active=True,
-                owner=owner,
-                parent=self.team,
-                team_type=Team.TeamType.SQUAD,
-            )
-            squad_created_at = team_created_at + timedelta(
-                days=90 + squad_index * 30
-            )
-            Team.objects.filter(pk=squad.pk).update(
-                created_at=squad_created_at
-            )
-            self.squads.append(squad)
-
-            role_keys = (
-                ((spec['owner_key'],), TeamMember.Role.OWNER),
-                (spec['co_lead_keys'], TeamMember.Role.CO_LEAD),
-                (spec['teacher_keys'], TeamMember.Role.TEACHER),
-                (spec['member_keys'], TeamMember.Role.MEMBER),
-            )
-            membership_index = 0
-            for user_keys, role in role_keys:
-                for user_key in user_keys:
-                    user = self.users[user_key]
-                    joined_at = squad_created_at + timedelta(
-                        days=membership_index * 3
-                    )
-                    squad_membership = TeamMember.objects.create(
-                        team=squad,
-                        user=user,
-                        role=role,
-                        status=TeamMember.Status.ACTIVE,
-                    )
-                    TeamMember.objects.filter(
-                        pk=squad_membership.pk
-                    ).update(joined_at=joined_at)
-                    joined_event = TeamMembershipEvent.objects.create(
-                        membership=squad_membership,
-                        event_type='joined',
-                        to_role=role,
-                        to_status=TeamMember.Status.ACTIVE,
-                        reason=f'{DEMO_MARKER}加入{spec["name"]}',
-                        operator=owner,
-                    )
-                    TeamMembershipEvent.objects.filter(
-                        pk=joined_event.pk
-                    ).update(created_at=joined_at)
-                    membership_index += 1
-
-        self.project_squad_by_leader_id = {
-            self.users['leader1'].id: self.squads[0],
-            self.users['leader2'].id: self.squads[0],
-            self.users['leader3'].id: self.squads[1],
-            self.users['leader4'].id: self.squads[2],
-        }
-
         self.stdout.write(self.style.SUCCESS(
-            '   团队创建完成：成员 60 人，成员关系事件 72 条'
-        ))
-        self.stdout.write(self.style.SUCCESS(
-            '   二级小团队创建完成：3 个，均已配置负责人、共同负责人和执行成员'
+            '   总团队创建完成：成员 46 人，成员关系事件 53 条；'
+            '不创建固定部门，组队关系由项目和比赛条目承载'
         ))
 
     # ------------------------------------------------------------------
@@ -987,77 +1043,31 @@ class Command(BaseCommand):
     def create_projects(self):
         self.stdout.write('-> 创建项目...')
         now = timezone.now()
-        today = timezone.localdate()
-        all_pool = self.members + self.leaders
-        years = list(range(2022, today.year + 1))
-        per_year_sequence = Counter()
 
         for idx, pdata in enumerate(PROJECT_DATA):
-            year_index = min(
-                (idx * len(years)) // len(PROJECT_DATA),
-                len(years) - 1,
-            )
-            project_year = years[year_index]
-            per_year_sequence[project_year] += 1
-            code = (
-                f'{DEMO_PROJECT_PREFIX}{project_year}-'
-                f'{per_year_sequence[project_year]:02d}'
-            )
-            leader = self.leaders[idx % len(self.leaders)]
-            month = 2 + (idx * 2) % 10
-            start_date = date(project_year, month, 5 + idx % 18)
-            if start_date >= today:
-                start_date = today - timedelta(days=20 + idx)
-            planned_end = start_date + timedelta(days=420 + (idx % 4) * 45)
-
-            if (
-                project_year <= today.year - 3
-                or (project_year == today.year - 2 and idx % 2 == 0)
-            ):
-                status = Project.Status.CLOSED
-                actual_end = min(
-                    planned_end,
-                    today - timedelta(days=30 + idx),
-                )
-                current_stage = Project.Stage.CLOSED
-            elif idx in (17, 22):
-                status = Project.Status.PAUSED
-                actual_end = None
-                current_stage = Project.Stage.PAUSED
-            else:
-                status = Project.Status.ACTIVE
-                actual_end = None
-                current_stage = min(
-                    Project.Stage.AWARDED,
-                    4 + max(0, today.year - project_year) * 2 + idx % 4,
-                )
-
-            priority = random.choice([
-                Project.Priority.NORMAL, Project.Priority.NORMAL,
-                Project.Priority.HIGH, Project.Priority.URGENT,
-            ])
-
-            if status == Project.Status.CLOSED:
+            leader = self.users[pdata['leader_key']]
+            start_date = pdata['start_date']
+            actual_end = pdata['actual_end_date']
+            if actual_end:
                 last_update = timezone.make_aware(
                     datetime.combine(actual_end, time(17, 30))
                 )
-            elif idx in (2, 6, 19):
-                last_update = now - timedelta(days=random.randint(12, 20))
             else:
-                last_update = now - timedelta(days=random.randint(0, 10))
+                last_update = now - timedelta(days=(idx * 2) % 11)
 
             project = Project.objects.create(
                 name=pdata['name'],
-                code=code,
+                code=pdata['code'],
                 leader=leader,
-                current_stage=current_stage,
+                current_stage=pdata['current_stage'],
                 start_date=start_date,
-                planned_end_date=planned_end,
+                planned_end_date=pdata['planned_end_date'],
                 actual_end_date=actual_end,
-                status=status,
-                priority=priority,
+                status=pdata['status'],
+                priority=pdata['priority'],
                 intro=pdata['intro'],
                 last_leader_update=last_update,
+                visibility=Project.Visibility.PROJECT,
             )
             created_at = timezone.make_aware(
                 datetime.combine(start_date, time(9, 0))
@@ -1069,21 +1079,27 @@ class Command(BaseCommand):
                 )
             Project.all_objects.filter(pk=project.pk).update(**update_fields)
             self.projects.append(project)
+            # 根团队是人员池；具体组队由项目成员和比赛参赛名单表达。
+            project.teams.set([self.team])
 
-            primary_squad = self.project_squad_by_leader_id[leader.id]
-            linked_squads = [primary_squad]
-            if idx % 5 == 0:
-                primary_index = self.squads.index(primary_squad)
-                linked_squads.append(
-                    self.squads[(primary_index + 1) % len(self.squads)]
-                )
-            project.teams.set(linked_squads)
-
-            # 每个项目 6~9 人，既有固定核心成员，也有跨项目协作者。
-            member_count = 5 + idx % 4
-            pool = [u for u in all_pool if u != leader]
-            chosen = random.sample(pool, min(member_count, len(pool)))
-            member_users = [leader] + chosen
+            # 历史项目 8 人、当前项目 10 人。两位平行主贡献者跨项目参与，
+            # 普通成员按滑动窗口分配，因此一人可以在多个队伍中协作。
+            contributor_count = 1 if actual_end else 2
+            chosen_contributors = [
+                self.primary_contributors[
+                    (idx + offset) % len(self.primary_contributors)
+                ]
+                for offset in range(contributor_count)
+            ]
+            regular_count = 6 if actual_end else 7
+            chosen_regular_members = [
+                self.members[(idx * 5 + offset) % 29]
+                for offset in range(regular_count)
+            ]
+            chosen = list(dict.fromkeys(
+                chosen_contributors + chosen_regular_members
+            ))
+            member_users = [leader, *chosen]
 
             self.project_members[project.id] = member_users
 
@@ -1093,10 +1109,11 @@ class Command(BaseCommand):
                 role_in_project=ProjectMember.RoleInProject.LEADER,
             )
             for u in chosen:
-                role = random.choice([
-                    ProjectMember.RoleInProject.CORE,
-                    ProjectMember.RoleInProject.PARTICIPANT,
-                ])
+                role = (
+                    ProjectMember.RoleInProject.CORE
+                    if u in self.primary_contributors
+                    else ProjectMember.RoleInProject.PARTICIPANT
+                )
                 ProjectMember.objects.create(
                     project=project, user=u, role_in_project=role,
                 )
@@ -1108,12 +1125,10 @@ class Command(BaseCommand):
     def create_lifecycle_history(self):
         """生成团队成员、项目成员和项目阶段的真实时间跨度记录。"""
         self.stdout.write('-> 创建成员与项目生命周期...')
-        today = timezone.localdate()
-        lifecycle_users = self.leaders + self.members
-        years = list(range(2022, today.year + 1))
+        lifecycle_users = self.leaders + self.primary_contributors + self.members
 
         for index, user in enumerate(lifecycle_users):
-            joined_year = years[index % len(years)]
+            joined_year = min(2021 + index // 8, 2026)
             joined_date = date(joined_year, 1 + index % 10, 3 + index % 20)
             status = User.MembershipStatus.ACTIVE
             team_left_at = None
@@ -1121,18 +1136,23 @@ class Command(BaseCommand):
             handover_to = None
             handover_notes = ''
 
-            if index >= len(lifecycle_users) - 12:
-                offset = index - (len(lifecycle_users) - 12)
-                if offset < 4:
-                    status = User.MembershipStatus.ON_LEAVE
-                elif offset < 8:
-                    status = User.MembershipStatus.EXITED
-                    team_left_at = timezone.now() - timedelta(days=20 + offset)
-                    exit_reason = '学业阶段变化，完成资料与任务交接后离队。'
-                    handover_to = self.leaders[offset % len(self.leaders)]
-                    handover_notes = '代码仓库、项目材料与未结任务均已完成清单式交接。'
-                else:
-                    status = User.MembershipStatus.EXTERNAL
+            member_number = (
+                int(user.username.removeprefix('member'))
+                if user.username.startswith('member')
+                else 0
+            )
+            if 30 <= member_number <= 32:
+                status = User.MembershipStatus.ON_LEAVE
+            elif 33 <= member_number <= 34:
+                status = User.MembershipStatus.EXITED
+                team_left_at = timezone.now() - timedelta(
+                    days=20 + member_number
+                )
+                exit_reason = '学业阶段变化，完成资料与任务交接后离队。'
+                handover_to = self.leaders[member_number % len(self.leaders)]
+                handover_notes = '代码仓库、项目材料与未结任务均已完成清单式交接。'
+            elif member_number == 35:
+                status = User.MembershipStatus.EXTERNAL
 
             User.objects.filter(pk=user.pk).update(
                 team_joined_at=joined_date,
@@ -1298,37 +1318,209 @@ class Command(BaseCommand):
     # 比赛
     # ------------------------------------------------------------------
     def create_competitions(self):
-        self.stdout.write('-> 创建比赛...')
-        now = timezone.now()
-        for i, cdata in enumerate(COMPETITION_DATA):
-            project = self.projects[i]
-            register_date = (now - timedelta(days=random.randint(10, 60))).date()
-            comp = Competition(
-                project=project,
-                name=cdata['name'],
-                comp_type=cdata['comp_type'],
-                level=cdata['level'],
-                organizer=cdata['organizer'],
-                register_date=register_date,
-                status=cdata['status'],
-                current_stage=cdata['comp_type'] + '阶段',
-            )
-            # 已结束的比赛设置获奖信息
-            if cdata['status'] == Competition.Status.COMPLETED:
-                comp.is_awarded = True
-                comp.is_promoted = True
-                comp.award_level = random.choice(['一等奖', '二等奖', '三等奖', '优胜奖'])
-                comp.result_date = (now - timedelta(days=random.randint(5, 30))).date()
-                comp.review_summary = '团队表现出色，作品完整度高，获得评委好评。'
-            else:
-                # 进行中/准备中的比赛设置后续关键日期
-                comp.material_deadline = (now + timedelta(days=random.randint(7, 30))).date()
-                if cdata['status'] == Competition.Status.ONGOING:
-                    comp.review_date = (now + timedelta(days=random.randint(15, 45))).date()
-                    comp.defense_date = (now + timedelta(days=random.randint(30, 60))).date()
-            comp.save()
+        """创建 2021—2026 逐届赛事、项目参赛条目和真实参赛名单。"""
+        self.stdout.write('-> 创建逐届比赛、参赛队与名单...')
+        current_year = timezone.localdate().year
+        project_index_by_id = {
+            project.id: index for index, project in enumerate(self.projects)
+        }
+        event_count = 0
+        participant_count = 0
+        award_count = 0
 
-        self.stdout.write(self.style.SUCCESS(f'   比赛创建完成：{len(COMPETITION_DATA)} 个'))
+        def active_projects(year):
+            return [
+                project
+                for project in self.projects
+                if project.start_date.year <= year
+                and (
+                    project.actual_end_date is None
+                    or project.actual_end_date.year >= year
+                )
+            ]
+
+        def create_event_entries(series, year, projects):
+            nonlocal event_count, participant_count, award_count
+            event = CompetitionEvent.objects.create(
+                organization=self.team,
+                name=series['name'],
+                edition=str(year),
+                organizer=series['organizer'],
+            )
+            event_created_at = timezone.make_aware(
+                datetime.combine(date(year, 1, 15), time(9, 0))
+            )
+            CompetitionEvent.objects.filter(pk=event.pk).update(
+                created_at=event_created_at,
+                updated_at=event_created_at,
+            )
+            event_count += 1
+
+            for project in projects:
+                project_index = project_index_by_id[project.id]
+                is_current_edition = year == current_year
+                status = (
+                    Competition.Status.ONGOING
+                    if is_current_edition
+                    else Competition.Status.COMPLETED
+                )
+                result_date = date(year, 11, 15)
+                award_level = ''
+                if (
+                    series['key'] == 'guochuang'
+                    and year == 2022
+                    and project.code == f'{DEMO_PROJECT_PREFIX}2021-01'
+                ):
+                    award_level = '国赛金奖'
+                elif (
+                    series['key'] == 'datiao'
+                    and year == 2023
+                    and project.code == f'{DEMO_PROJECT_PREFIX}2021-02'
+                ):
+                    award_level = '国赛银奖'
+                elif (
+                    not is_current_edition
+                    and (year + project_index + len(series['key'])) % 5 == 0
+                ):
+                    award_level = '国赛铜奖'
+
+                competition = Competition.objects.create(
+                    project=project,
+                    event=event,
+                    entry_name=(
+                        f'{project.name}·{series["short_name"]}{year}参赛队'
+                    ),
+                    name=series['name'],
+                    comp_type=series['comp_type'],
+                    level=series['level'],
+                    organizer=series['organizer'],
+                    register_date=date(year, 3, 15),
+                    material_deadline=date(year, 5, 20),
+                    review_date=date(year, 7, 10),
+                    defense_date=date(year, 9, 20),
+                    school_date=date(year, 4, 15),
+                    province_date=date(year, 7, 25),
+                    national_date=date(year, 10, 20),
+                    result_date=(
+                        None if is_current_edition else result_date
+                    ),
+                    status=status,
+                    is_promoted=not is_current_edition,
+                    is_awarded=bool(award_level),
+                    award_level=award_level,
+                    review_summary=(
+                        '完成本届材料、网评与答辩复盘，相关版本均已归档。'
+                        if not is_current_edition
+                        else ''
+                    ),
+                    current_stage=(
+                        '全国赛备赛'
+                        if is_current_edition
+                        else '本届赛事已归档'
+                    ),
+                )
+                competition_created_at = timezone.make_aware(
+                    datetime.combine(date(year, 3, 15), time(10, 0))
+                )
+                Competition.objects.filter(pk=competition.pk).update(
+                    created_at=competition_created_at,
+                    updated_at=competition_created_at,
+                )
+                self.competitions.append(competition)
+
+                project_members = [
+                    user
+                    for user in self.project_members[project.id]
+                    if user.id != project.leader_id
+                ]
+                selected_members = project_members[:4]
+                advisor = self.users[
+                    f'teacher{1 + (len(self.competitions) - 1) % 4}'
+                ]
+                participant_specs = [
+                    (
+                        project.leader,
+                        CompetitionParticipant.Role.LEADER,
+                        '统筹本届比赛、确认分工并负责最终提交。',
+                    ),
+                    *[
+                        (
+                            user,
+                            CompetitionParticipant.Role.MEMBER,
+                            (
+                                '负责本届计划书、数据、系统或路演材料中的'
+                                f'第 {member_index + 1} 项工作。'
+                            ),
+                        )
+                        for member_index, user in enumerate(selected_members)
+                    ],
+                    (
+                        advisor,
+                        CompetitionParticipant.Role.ADVISOR,
+                        '查看关键节点并提供方向性指导。',
+                    ),
+                ]
+                participant_records = []
+                for participant_index, (user, role, responsibility) in enumerate(
+                    participant_specs
+                ):
+                    participant = CompetitionParticipant.objects.create(
+                        competition=competition,
+                        user=user,
+                        role=role,
+                        participation_status=(
+                            CompetitionParticipant.ParticipationStatus.CONFIRMED
+                        ),
+                        responsibility=responsibility,
+                    )
+                    joined_at = competition_created_at + timedelta(
+                        hours=participant_index
+                    )
+                    CompetitionParticipant.objects.filter(
+                        pk=participant.pk
+                    ).update(joined_at=joined_at, updated_at=joined_at)
+                    participant_records.append(participant)
+                    participant_count += 1
+
+                if award_level:
+                    award = CompetitionAward.objects.create(
+                        competition=competition,
+                        award_name=f'{series["short_name"]}{year}年度获奖',
+                        award_level=award_level,
+                        award_date=result_date,
+                        notes=(
+                            '获奖人取自该参赛条目的已确认名单；'
+                            '国金/国银项目在同赛事同赛道不再参加后续届次。'
+                        ),
+                    )
+                    award.recipients.set([
+                        participant.user
+                        for participant in participant_records[:3]
+                    ])
+                    award_count += 1
+
+        for year in range(2021, current_year + 1):
+            year_projects = active_projects(year)
+            for series in CORE_COMPETITION_SERIES:
+                create_event_entries(series, year, year_projects)
+
+        for series_index, series in enumerate(SELECTIVE_COMPETITION_SERIES):
+            for year in range(series['start_year'], current_year + 1):
+                year_projects = active_projects(year)
+                requested_count = series['entry_counts'].get(year, 1)
+                count = min(max(1, requested_count), 3, len(year_projects))
+                offset = (year + series_index) % len(year_projects)
+                selected = [
+                    year_projects[(offset + index) % len(year_projects)]
+                    for index in range(count)
+                ]
+                create_event_entries(series, year, selected)
+
+        self.stdout.write(self.style.SUCCESS(
+            f'   比赛创建完成：届次 {event_count} 个、参赛条目 '
+            f'{len(self.competitions)} 个、参赛人次 {participant_count}、'
+            f'获奖记录 {award_count} 条'
+        ))
 
     # ------------------------------------------------------------------
     # 任务
@@ -1535,11 +1727,59 @@ class Command(BaseCommand):
 
         for project in self.projects:
             members = self.project_members[project.id]
+            project_entries = list(
+                Competition.objects.filter(project=project)
+                .select_related('event')
+                .order_by('-event__edition', 'event__name', 'id')
+            )
+            awarded_entry = next(
+                (entry for entry in project_entries if entry.is_awarded),
+                None,
+            )
+            if awarded_entry is None or len(project_entries) < 2:
+                raise CommandError(
+                    f'项目 {project.code} 缺少获奖或多比赛参赛条目，'
+                    '无法生成可追溯经费演示数据。'
+                )
+
+            current_edition = str(timezone.localdate().year)
+            current_entries = [
+                entry
+                for entry in project_entries
+                if entry.event.edition == current_edition
+            ]
+            trace_entries = (
+                current_entries
+                if len(current_entries) >= 2
+                else project_entries
+            )[:2]
+            competition_expense_specs = (
+                {
+                    'category': FinanceExpense.Category.TRAVEL,
+                    'title': '比赛现场往返交通费',
+                    'competition_entry': trace_entries[0],
+                    'purpose': (
+                        f'参加 {trace_entries[0].event.name}'
+                        f'（{trace_entries[0].event.edition}）现场比赛的'
+                        '往返交通与市内接驳。'
+                    ),
+                },
+                {
+                    'category': FinanceExpense.Category.COMPETITION_FEE,
+                    'title': '比赛报名费',
+                    'competition_entry': trace_entries[1],
+                    'purpose': (
+                        f'缴纳 {trace_entries[1].event.name}'
+                        f'（{trace_entries[1].event.edition}）参赛报名费用。'
+                    ),
+                },
+            )
+
             bonus = Decimal(random.randint(5000, 50000))
-            other_income = Decimal(random.randint(0, 10000))
-            total_income = bonus + other_income
+            other_income = Decimal(random.randint(1000, 10000))
             FinanceIncome.objects.create(
                 project=project,
+                competition_entry=awarded_entry,
                 title='比赛奖金入账',
                 amount=bonus,
                 income_type=FinanceIncome.IncomeType.BONUS,
@@ -1549,18 +1789,17 @@ class Command(BaseCommand):
                 recorded_by=project.leader,
             )
             income_count += 1
-            if other_income:
-                FinanceIncome.objects.create(
-                    project=project,
-                    title='项目配套经费',
-                    amount=other_income,
-                    income_type=FinanceIncome.IncomeType.GRANT,
-                    income_date=(now - timedelta(days=random.randint(10, 45))).date(),
-                    source='团队项目经费',
-                    reference_number=f'DEMO-GRANT-{project.id:04d}',
-                    recorded_by=project.leader,
-                )
-                income_count += 1
+            FinanceIncome.objects.create(
+                project=project,
+                title='项目配套经费',
+                amount=other_income,
+                income_type=FinanceIncome.IncomeType.GRANT,
+                income_date=(now - timedelta(days=random.randint(10, 45))).date(),
+                source='团队项目经费',
+                reference_number=f'DEMO-GRANT-{project.id:04d}',
+                recorded_by=project.leader,
+            )
+            income_count += 1
 
             # 生成 2~3 条支出，覆盖草稿、待审核、已审核、已付款状态。
             expense_num = random.randint(2, 3)
@@ -1570,19 +1809,44 @@ class Command(BaseCommand):
                 FinanceExpense.ReimbursementStatus.APPROVED,
             ]
             for expense_index in range(expense_num):
-                category = random.choice(list(expense_titles.keys()))
+                expense_spec = (
+                    competition_expense_specs[expense_index]
+                    if expense_index < len(competition_expense_specs)
+                    else None
+                )
+                category = (
+                    expense_spec['category']
+                    if expense_spec
+                    else random.choice(list(expense_titles.keys()))
+                )
+                title = (
+                    expense_spec['title']
+                    if expense_spec
+                    else expense_titles[category]
+                )
+                competition_entry = (
+                    expense_spec['competition_entry']
+                    if expense_spec
+                    else None
+                )
+                purpose = (
+                    expense_spec['purpose']
+                    if expense_spec
+                    else f'{project.name} - {title}，用于项目推进所需。'
+                )
                 amount = Decimal(random.randint(100, 5000))
                 spender = random.choice(members)
                 expense_date = (now - timedelta(days=random.randint(1, 60))).date()
                 reimbursement_status = workflow_statuses[expense_index % len(workflow_statuses)]
                 expense = FinanceExpense.objects.create(
                     project=project,
-                    title=expense_titles[category],
+                    competition_entry=competition_entry,
+                    title=title,
                     amount=amount,
                     spender=spender,
                     expense_date=expense_date,
                     category=category,
-                    purpose=f'{project.name} - {expense_titles[category]}，用于项目推进所需。',
+                    purpose=purpose,
                     reimbursement_status=reimbursement_status,
                     applied_by=spender,
                     applied_at=now - timedelta(days=max(1, 8 - expense_index)),
@@ -1728,6 +1992,78 @@ class Command(BaseCommand):
         presentation.save(buffer)
         return buffer.getvalue()
 
+    def _competition_document_lines(self, competition, version):
+        event = competition.event
+        revision_focus = (
+            '首轮版本：围绕赛道要求完成结构搭建与证据清单。'
+            if version == 1
+            else (
+                f'本届修订：结合 {event.edition} 年评审口径，'
+                '更新数据、商业论证、成员分工与答辩重点。'
+            )
+        )
+        return [
+            f'项目名称：{competition.project.name}',
+            f'项目编号：{competition.project.code}',
+            f'项目负责人：{competition.project.leader.name}',
+            f'比赛名称：{event.name}',
+            f'比赛届次：{event.edition}',
+            f'参赛队：{competition.entry_name}',
+            f'参赛赛道：{competition.comp_type}',
+            f'材料版本：V{version}',
+            revision_focus,
+        ]
+
+    def _build_competition_plan_docx(self, competition, version):
+        document = Document()
+        document.add_heading(
+            f'{competition.event.name} {competition.event.edition} 参赛计划书',
+            level=1,
+        )
+        for line in self._competition_document_lines(competition, version):
+            document.add_paragraph(line)
+        document.add_heading('本届独立内容', level=2)
+        document.add_paragraph(
+            f'本计划书仅用于“{competition.entry_name}”，不得作为其他比赛、'
+            '其他项目或其他年度的共用文件。'
+        )
+        buffer = BytesIO()
+        document.save(buffer)
+        return buffer.getvalue()
+
+    def _build_competition_pitch_pptx(self, competition):
+        presentation = Presentation()
+        title_slide = presentation.slides.add_slide(
+            presentation.slide_layouts[1]
+        )
+        title_slide.shapes.title.text = (
+            f'{competition.project.name}｜{competition.event.edition}'
+            f'{competition.event.name}'
+        )
+        body = title_slide.placeholders[1].text_frame
+        body.clear()
+        for index, line in enumerate(
+            self._competition_document_lines(competition, 2)[1:]
+        ):
+            paragraph = (
+                body.paragraphs[0]
+                if index == 0
+                else body.add_paragraph()
+            )
+            paragraph.text = line
+        unique_slide = presentation.slides.add_slide(
+            presentation.slide_layouts[1]
+        )
+        unique_slide.shapes.title.text = '本届路演重点'
+        unique_slide.placeholders[1].text = (
+            f'{competition.entry_name}围绕“{competition.comp_type}”'
+            f'为{competition.event.edition}届单独准备，'
+            '项目数据、现场展示和问答口径均与其他比赛材料区分。'
+        )
+        buffer = BytesIO()
+        presentation.save(buffer)
+        return buffer.getvalue()
+
     def _build_project_file(self, project, suffix):
         builders = {
             '.pdf': self._build_project_pdf,
@@ -1741,8 +2077,8 @@ class Command(BaseCommand):
             raise CommandError(f'不支持的演示文件类型：{suffix}') from exc
 
     def create_demo_files(self):
-        """按当前项目内容动态创建四种文件，并关联版本和任务附件。"""
-        self.stdout.write('-> 创建项目文件、版本与任务附件...')
+        """创建项目基础文件及每个参赛条目的独立计划书和路演 PPT。"""
+        self.stdout.write('-> 创建项目文件、逐届比赛材料、版本与任务附件...')
 
         created_files = []
         version_count = 0
@@ -1770,6 +2106,16 @@ class Command(BaseCommand):
                     f'{suffix.lstrip(".")}{suffix}'
                 )
                 asset.file.save(storage_name, ContentFile(data), save=True)
+                asset_created_at = timezone.make_aware(
+                    datetime.combine(
+                        project.start_date + timedelta(days=30),
+                        time(9, 0),
+                    )
+                )
+                FileAsset.all_objects.filter(pk=asset.pk).update(
+                    created_at=asset_created_at,
+                    updated_at=asset_created_at,
+                )
                 project_files.append(asset)
                 created_files.append(asset)
 
@@ -1784,6 +2130,9 @@ class Command(BaseCommand):
                         ContentFile(data),
                         save=True,
                     )
+                    FileVersion.objects.filter(pk=historical.pk).update(
+                        created_at=asset_created_at - timedelta(days=14)
+                    )
                     version_count += 1
 
             self.files_by_project[project.id] = project_files
@@ -1794,6 +2143,111 @@ class Command(BaseCommand):
                 tasks[1].attachment_files.add(project_files[2])
             if len(tasks) > 2:
                 tasks[2].attachment_files.add(project_files[3])
+
+        for competition in self.competitions:
+            project = competition.project
+            event = competition.event
+            entry_key = f'entry_{competition.pk}'
+
+            plan_v1 = self._build_competition_plan_docx(competition, 1)
+            plan_v2 = self._build_competition_plan_docx(competition, 2)
+            plan_asset = FileAsset(
+                project=project,
+                competition_entry=competition,
+                name=(
+                    f'{project.code}｜{event.edition}{event.name}｜'
+                    '参赛计划书.docx'
+                ),
+                level=FileAsset.Level.INTERNAL,
+                size=len(plan_v2),
+                content_type=(
+                    'application/vnd.openxmlformats-officedocument.'
+                    'wordprocessingml.document'
+                ),
+                uploader=project.leader,
+                version=2,
+            )
+            plan_asset.file.save(
+                (
+                    f'{DEMO_IMPORT_DIRNAME}/{entry_key}_'
+                    f'{event.edition}_plan_v2.docx'
+                ),
+                ContentFile(plan_v2),
+                save=True,
+            )
+            plan_history = FileVersion(
+                file_asset=plan_asset,
+                version=1,
+                uploader=project.leader,
+            )
+            plan_history.file.save(
+                (
+                    f'{DEMO_IMPORT_DIRNAME}/{entry_key}_'
+                    f'{event.edition}_plan_v1.docx'
+                ),
+                ContentFile(plan_v1),
+                save=True,
+            )
+            material_history_at = timezone.make_aware(
+                datetime.combine(
+                    competition.register_date + timedelta(days=14),
+                    time(9, 0),
+                )
+            )
+            material_current_at = timezone.make_aware(
+                datetime.combine(
+                    competition.material_deadline - timedelta(days=5),
+                    time(18, 0),
+                )
+            )
+            FileVersion.objects.filter(pk=plan_history.pk).update(
+                created_at=material_history_at
+            )
+            FileAsset.all_objects.filter(pk=plan_asset.pk).update(
+                created_at=material_current_at,
+                updated_at=material_current_at,
+            )
+
+            pitch_data = self._build_competition_pitch_pptx(competition)
+            pitch_asset = FileAsset(
+                project=project,
+                competition_entry=competition,
+                name=(
+                    f'{project.code}｜{event.edition}{event.name}｜'
+                    '路演PPT.pptx'
+                ),
+                level=FileAsset.Level.INTERNAL,
+                size=len(pitch_data),
+                content_type=(
+                    'application/vnd.openxmlformats-officedocument.'
+                    'presentationml.presentation'
+                ),
+                uploader=project.leader,
+                version=1,
+            )
+            pitch_asset.file.save(
+                (
+                    f'{DEMO_IMPORT_DIRNAME}/{entry_key}_'
+                    f'{event.edition}_pitch.pptx'
+                ),
+                ContentFile(pitch_data),
+                save=True,
+            )
+            pitch_created_at = timezone.make_aware(
+                datetime.combine(
+                    competition.defense_date - timedelta(days=10),
+                    time(18, 0),
+                )
+            )
+            FileAsset.all_objects.filter(pk=pitch_asset.pk).update(
+                created_at=pitch_created_at,
+                updated_at=pitch_created_at,
+            )
+
+            entry_files = [plan_asset, pitch_asset]
+            self.competition_files_by_entry[competition.id] = entry_files
+            created_files.extend(entry_files)
+            version_count += 1
 
         extension_counts = Counter(
             Path(asset.file.name).suffix.lower() for asset in created_files
@@ -2400,7 +2854,7 @@ class Command(BaseCommand):
         )
         return certificate
 
-    def create_ip_applications(self):
+    def _create_legacy_ip_applications(self):
         self.stdout.write('-> 创建知识产权申请...')
         now = timezone.now()
 
@@ -2664,6 +3118,256 @@ class Command(BaseCommand):
             '   知识产权创建完成：申请 5 个，材料版本 5 条，退回记录 2 条，异议 2 条'
         ))
 
+    def create_ip_applications(self):
+        """创建 40 个专利、25 个软著和 7 个科技查新档案。"""
+        self.stdout.write('-> 创建知识产权与科技查新档案...')
+        now = timezone.now()
+        application_specs = [
+            *[
+                (
+                    IntellectualPropertyApplication.IPType.INVENTION_PATENT,
+                    f'发明专利 {index + 1:02d}',
+                )
+                for index in range(22)
+            ],
+            *[
+                (
+                    IntellectualPropertyApplication.IPType.UTILITY_MODEL,
+                    f'实用新型专利 {index + 1:02d}',
+                )
+                for index in range(14)
+            ],
+            *[
+                (
+                    IntellectualPropertyApplication.IPType.DESIGN_PATENT,
+                    f'外观设计专利 {index + 1:02d}',
+                )
+                for index in range(4)
+            ],
+            *[
+                (
+                    IntellectualPropertyApplication.IPType.SOFTWARE_COPYRIGHT,
+                    f'软件著作权 {index + 1:02d}',
+                )
+                for index in range(25)
+            ],
+            *[
+                (
+                    IntellectualPropertyApplication.IPType.NOVELTY_SEARCH,
+                    f'科技查新报告 {index + 1:02d}',
+                )
+                for index in range(7)
+            ],
+        ]
+        archived_statuses = (
+            IntellectualPropertyApplication.Status.AUTHORIZED,
+            IntellectualPropertyApplication.Status.ARCHIVED,
+        )
+        applications = []
+        returned_applications = []
+
+        for index, (ip_type, type_label) in enumerate(application_specs):
+            project = self.projects[index % len(self.projects)]
+            project_users = self.project_members[project.id]
+            main_writer = project.leader
+            applicant_executor = project_users[
+                1 + index % (len(project_users) - 1)
+            ]
+            material_manager = project_users[
+                1 + (index + 2) % (len(project_users) - 1)
+            ]
+            year = 2021 + index % 6
+            start_date = date(year, 1 + index % 5, 5 + index % 18)
+
+            if year <= 2023:
+                status = archived_statuses[index % len(archived_statuses)]
+            elif year == 2024:
+                status = (
+                    IntellectualPropertyApplication.Status.ACCEPTED,
+                    IntellectualPropertyApplication.Status.AUTHORIZED,
+                    IntellectualPropertyApplication.Status.ARCHIVED,
+                )[index % 3]
+            elif year == 2025:
+                status = (
+                    IntellectualPropertyApplication.Status.RESEARCH_OFFICE_REVIEW,
+                    IntellectualPropertyApplication.Status.RETURNED,
+                    IntellectualPropertyApplication.Status.ACCEPTED,
+                    IntellectualPropertyApplication.Status.RESUBMITTED,
+                )[index % 4]
+            else:
+                status = (
+                    IntellectualPropertyApplication.Status.WRITING,
+                    IntellectualPropertyApplication.Status.LEADER_REVIEW,
+                    IntellectualPropertyApplication.Status.TEACHER_CONFIRM,
+                    IntellectualPropertyApplication.Status.DRAFT,
+                )[index % 4]
+
+            submit_date = (
+                start_date + timedelta(days=45)
+                if status
+                not in {
+                    IntellectualPropertyApplication.Status.DRAFT,
+                    IntellectualPropertyApplication.Status.WRITING,
+                }
+                else None
+            )
+            accepted_date = (
+                start_date + timedelta(days=100)
+                if status
+                in {
+                    IntellectualPropertyApplication.Status.ACCEPTED,
+                    *archived_statuses,
+                }
+                else None
+            )
+            authorized_date = (
+                start_date + timedelta(days=180)
+                if status in archived_statuses
+                else None
+            )
+            code = f'{DEMO_IP_PREFIX}{index + 1:03d}'
+            title = f'{project.name}｜{type_label}'
+            certificate_file = None
+            if index == 0:
+                status = IntellectualPropertyApplication.Status.AUTHORIZED
+                submit_date = start_date + timedelta(days=45)
+                accepted_date = start_date + timedelta(days=100)
+                authorized_date = start_date + timedelta(days=180)
+                certificate_file = self._create_ip_certificate_asset(
+                    project,
+                    code,
+                    title,
+                    authorized_date,
+                )
+
+            application = IntellectualPropertyApplication.objects.create(
+                title=title,
+                application_code=code,
+                ip_type=ip_type,
+                related_project=project,
+                status=status,
+                main_writer=main_writer,
+                applicant_executor=applicant_executor,
+                material_manager=material_manager,
+                project_reviewer=project.leader,
+                teacher_confirmer=self.teachers[0],
+                start_date=start_date,
+                submit_date=submit_date,
+                accepted_date=accepted_date,
+                authorized_date=authorized_date,
+                return_count=1 if status == (
+                    IntellectualPropertyApplication.Status.RETURNED
+                ) else 0,
+                current_problem=(
+                    '学校系统退回：需核对材料字段、署名顺序与附件版本。'
+                    if status == IntellectualPropertyApplication.Status.RETURNED
+                    else ''
+                ),
+                status_note=(
+                    f'{year} 年启动，按项目成果实际进度形成演示档案。'
+                ),
+                final_certificate_file=certificate_file,
+                intro=(
+                    f'{project.name}形成的{type_label}，'
+                    '完整记录撰写、复核、提交、退回与归档责任。'
+                ),
+                created_by=main_writer,
+            )
+            created_at = timezone.make_aware(
+                datetime.combine(start_date, time(9, 0))
+            )
+            IntellectualPropertyApplication.objects.filter(
+                pk=application.pk
+            ).update(created_at=created_at, updated_at=created_at)
+            applications.append(application)
+            if status == IntellectualPropertyApplication.Status.RETURNED:
+                returned_applications.append(application)
+
+            self._add_ip_contributors(
+                application,
+                main_writer,
+                project,
+                [
+                    IPApplicationContributor.ContributorRole.MAIN_WRITER,
+                    IPApplicationContributor.ContributorRole.EXECUTOR,
+                    IPApplicationContributor.ContributorRole.MATERIAL_MANAGER,
+                    IPApplicationContributor.ContributorRole.REVIEWER,
+                ],
+            )
+
+            material_type = {
+                IntellectualPropertyApplication.IPType.SOFTWARE_COPYRIGHT:
+                    IPMaterialVersion.MaterialType.MANUAL,
+                IntellectualPropertyApplication.IPType.NOVELTY_SEARCH:
+                    IPMaterialVersion.MaterialType.ARCHIVE,
+                IntellectualPropertyApplication.IPType.DESIGN_PATENT:
+                    IPMaterialVersion.MaterialType.DRAWING,
+                IntellectualPropertyApplication.IPType.UTILITY_MODEL:
+                    IPMaterialVersion.MaterialType.SPECIFICATION,
+                IntellectualPropertyApplication.IPType.INVENTION_PATENT:
+                    IPMaterialVersion.MaterialType.DISCLOSURE,
+            }[ip_type]
+            if index == 0:
+                material_type = IPMaterialVersion.MaterialType.ARCHIVE
+            IPMaterialVersion.objects.create(
+                application=application,
+                file_asset=self.files_by_project[project.id][
+                    index % len(self.files_by_project[project.id])
+                ],
+                material_type=material_type,
+                version='v2' if year <= 2025 else 'v1',
+                uploaded_by=material_manager,
+                change_note=(
+                    f'{year} 年材料版本，已核对关联项目、责任人和成果类型。'
+                ),
+                is_final=status in archived_statuses,
+            )
+
+        for return_index, application in enumerate(returned_applications[:2]):
+            IPReturnRecord.objects.create(
+                application=application,
+                return_time=now - timedelta(days=7 - return_index),
+                return_source=IPReturnRecord.ReturnSource.RESEARCH_OFFICE,
+                return_reason='材料字段与附件版本不一致，需完成核对后重新提交。',
+                responsibility_type=(
+                    IPReturnRecord.ResponsibilityType.MATERIAL_PROBLEM
+                ),
+                responsible_user=application.material_manager,
+                assigned_by=self.teachers[0],
+                modify_deadline=now + timedelta(days=7 + return_index),
+                actual_modifier=application.material_manager,
+                modify_description='按退回清单逐项核对中。',
+                result=IPReturnRecord.ReturnResult.PENDING,
+            )
+
+        if returned_applications:
+            IPObjection.objects.create(
+                application=returned_applications[0],
+                objector=returned_applications[0].material_manager,
+                objection_type=IPObjection.ObjectionType.RETURN_RESPONSIBILITY,
+                content='退回原因同时涉及撰写和系统字段，请负责人复核责任划分。',
+                status=IPObjection.ObjectionStatus.PENDING,
+            )
+        IPObjection.objects.create(
+            application=applications[0],
+            objector=applications[0].applicant_executor,
+            objection_type=IPObjection.ObjectionType.WRITING_CREDIT,
+            content='申请执行与材料复核投入尚未在署名说明中充分体现。',
+            status=IPObjection.ObjectionStatus.RESOLVED,
+            leader_opinion='经核验贡献属实，已补充责任说明。',
+            leader_reviewer=applications[0].project_reviewer,
+            leader_reviewed_at=now - timedelta(days=5),
+            teacher_confirmer=self.teachers[0],
+            teacher_confirmed_at=now - timedelta(days=3),
+            final_result='贡献说明已补充，原署名顺序保持不变。',
+        )
+
+        self.ip_apps = applications
+        self.stdout.write(self.style.SUCCESS(
+            '   成果创建完成：专利 40 个、软著 25 个、科技查新 7 个；'
+            f'材料版本 {len(applications)} 条'
+        ))
+
     def _add_ip_contributors(self, application, main_writer, project, roles):
         """按档案中的实际职责为 IP 申请建立一致、可确认的责任分工。"""
         members = [u for u in self.project_members[project.id] if u != main_writer]
@@ -2714,7 +3418,7 @@ class Command(BaseCommand):
         portal_defaults = {
             'team_name': '数智创新实践团队',
             'tagline': '真实项目 · 持续协作 · 成果沉淀',
-            'summary': '团队自 2022 年起持续开展跨专业项目实践，所有公开内容均经过逐项确认。',
+            'summary': '团队自 2021 年起持续开展跨专业项目实践，所有公开内容均经过逐项确认。',
             'about_title': '让每一段协作过程都可追踪、可复盘',
             'about_text': '我们围绕校园、社区、乡村和产业真实需求开展项目，并沉淀任务、文件、赛事与知识产权成果。',
             'contact_email': 'teacher1@demo.com',
@@ -2777,7 +3481,9 @@ class Command(BaseCommand):
                 },
             )
 
-        governed_members = self.leaders + self.members[:12]
+        governed_members = (
+            self.leaders + self.primary_contributors + self.members[:10]
+        )
         for index, member in enumerate(governed_members):
             has_consent = index < 12
             PortalPublication.objects.update_or_create(
@@ -2844,7 +3550,7 @@ class Command(BaseCommand):
     def create_sensitive_requests(self):
         self.stdout.write('-> 创建敏感资料访问申请...')
         now = timezone.now()
-        approver = self.users['approver']
+        approver = self.teachers[0]
 
         # 1. member5 申请下载 leader1 的附件 - 已通过，仍在有效期内
         sd_leader1 = self.sensitive_data_map[self.users['leader1'].email]
@@ -3015,7 +3721,7 @@ class Command(BaseCommand):
                 'ref_type': 'contribution', 'ref_id': 1,
             },
             {
-                'recipient': self.users['approver'],
+                'recipient': self.teachers[0],
                 'sender': self.users['member10'],
                 'type': NT.SYSTEM,
                 'title': '敏感资料访问申请待审批',
@@ -3102,7 +3808,7 @@ class Command(BaseCommand):
             (self.users['leader2'], OT.APPROVE, 'contributions', 'Contribution', '审核通过贡献记录', 'POST', '/api/contributions/1/review/', 200),
             (self.users['leader1'], OT.REJECT, 'contributions', 'Contribution', '驳回贡献记录', 'POST', '/api/contributions/2/review/', 200),
             (self.users['member10'], OT.CREATE, 'sensitive', 'SensitiveAccessRequest', '提交敏感资料访问申请', 'POST', '/api/sensitive/requests/', 201),
-            (self.users['approver'], OT.APPROVE, 'sensitive', 'SensitiveAccessRequest', '审批通过敏感资料访问申请', 'POST', '/api/sensitive/requests/1/approve/', 200),
+            (self.teachers[0], OT.APPROVE, 'sensitive', 'SensitiveAccessRequest', '审批通过敏感资料访问申请', 'POST', '/api/sensitive/requests/1/approve/', 200),
             (self.users['member5'], OT.VIEW_SENSITIVE, 'sensitive', 'SensitiveData', '查看敏感资料明文', 'GET', '/api/sensitive/1/view/', 200),
             (self.users['admin'], OT.UPLOAD, 'files', 'FileAsset', '上传项目文件', 'POST', '/api/files/', 201),
             (self.users['member12'], OT.DOWNLOAD, 'files', 'FileAsset', '下载公开文件', 'GET', '/api/files/1/download/', 200),
@@ -3159,6 +3865,20 @@ class Command(BaseCommand):
             legacy_competition_projects.values_list('id', flat=True)
         )
         project_ids = list(dict.fromkeys(project_ids))
+        competition_queryset = Competition.objects.filter(
+            project_id__in=project_ids
+        )
+        competition_event_ids = list(dict.fromkeys([
+            *CompetitionEvent.objects.filter(
+                organization__code=DEMO_TEAM_CODE
+            ).values_list('id', flat=True),
+            *list(
+                competition_queryset.exclude(event_id=None).values_list(
+                    'event_id',
+                    flat=True,
+                ).distinct()
+            ),
+        ]))
         ip_applications = IntellectualPropertyApplication.objects.filter(
             application_code__startswith=DEMO_IP_PREFIX
         )
@@ -3179,12 +3899,6 @@ class Command(BaseCommand):
             nonlocal total
             count, _ = queryset.delete()
             total += count
-
-        # 二级团队的 parent 使用 PROTECT，需先按本命令专属编号精确删除；
-        # 随后再清除根团队及其根级成员历史。
-        delete_queryset(Team.objects.filter(code__in=DEMO_SQUAD_CODES))
-        # 团队编号是本命令的唯一所有权边界；只清除该团队及其级联成员历史。
-        delete_queryset(Team.objects.filter(code=DEMO_TEAM_CODE))
 
         # 删除数据库记录前先清除本命令写入的物理文件。
         receipt_queryset = FinanceReceipt.objects.filter(
@@ -3327,8 +4041,10 @@ class Command(BaseCommand):
             ))
             delete_queryset(version_queryset)
             delete_queryset(file_queryset)
-            delete_queryset(Competition.objects.filter(
-                project_id__in=project_ids
+            delete_queryset(competition_queryset)
+            delete_queryset(CompetitionEvent.objects.filter(
+                id__in=competition_event_ids,
+                entries__isnull=True,
             ))
             delete_queryset(ProjectMembershipEvent.objects.filter(
                 membership__project_id__in=project_ids
@@ -3341,13 +4057,20 @@ class Command(BaseCommand):
             ))
             delete_queryset(Project.all_objects.filter(id__in=project_ids))
 
-        # 旧版比赛种子比完整团队种子多创建了两个负责人账号。它们不属于
-        # 当前固定的 60 账号集合；仅按精确邮箱清理，避免扩大到其他测试账号。
+        # 旧版固定小组必须在根团队前删除；当前小团队版不再创建固定部门。
+        delete_queryset(Team.objects.filter(code__in=LEGACY_DEMO_SQUAD_CODES))
+        delete_queryset(Team.objects.filter(code=DEMO_TEAM_CODE))
+
+        # 精确清理旧版专属账号，避免缩减成员规模后残留 member36~52、
+        # 旧审批员或旧比赛负责人。
         delete_queryset(User.objects.filter(
-            email__in=LEGACY_COMPETITION_ACCOUNT_EMAILS
+            email__in=(
+                *LEGACY_COMPETITION_ACCOUNT_EMAILS,
+                *LEGACY_DEMO_ACCOUNT_EMAILS,
+            )
         ))
 
-        # 账号和共享技能标签可被其他演示场景复用，不做删除；创建阶段使用
+        # 当前账号和共享技能标签可被其他演示场景复用，不做删除；创建阶段使用
         # update_or_create 保证重复运行稳定。所有真实账号和非演示业务记录均不触碰。
         self.stdout.write(self.style.SUCCESS(
             f'   已精准清除 {total} 条团队演示记录；真实数据与共享演示账号均保留'
@@ -3367,10 +4090,15 @@ class Command(BaseCommand):
         self.stdout.write(
             f'  {teacher1_label}:  teacher1@demo.com / teacher123456'
         )
-        self.stdout.write('  查看老师:  teacher2@demo.com / teacher123456')
-        self.stdout.write('  负责人1:   leader1@demo.com / leader123456')
-        self.stdout.write('  负责人2:   leader2@demo.com / leader123456')
-        self.stdout.write('  负责人3:   leader3@demo.com / leader123456')
-        self.stdout.write('  负责人4:   leader4@demo.com / leader123456')
-        self.stdout.write('  敏感审批:  approver@demo.com / approver123456')
-        self.stdout.write('  普通成员:  member1~52@demo.com / member123456')
+        self.stdout.write(
+            '  查看老师:  teacher2~teacher4@demo.com / teacher123456'
+        )
+        self.stdout.write(
+            '  五位负责人: leader1~leader5@demo.com / leader123456'
+        )
+        self.stdout.write(
+            '  平行主贡献者: contributor1~contributor2@demo.com / member123456'
+        )
+        self.stdout.write(
+            '  普通成员:  member1~35@demo.com / member123456'
+        )

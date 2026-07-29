@@ -23,6 +23,45 @@ export interface FinanceAllocationEntryRef {
   event?: number | null
 }
 
+export interface FinanceTraceEntryMetadata {
+  leader_names: string[]
+  participant_names: string[]
+  award_result: string
+}
+
+/**
+ * Index the authoritative participant and award data returned by the
+ * traceability endpoint. The general competition picker is paginated and may
+ * not contain every historical entry.
+ */
+export function buildTraceEntryMetadataIndex(
+  response?: FinanceTraceabilitySummaryResponse | null,
+): Map<number, FinanceTraceEntryMetadata> {
+  const index = new Map<number, FinanceTraceEntryMetadata>()
+  for (const group of response?.groups || []) {
+    for (const entry of group.entries || []) {
+      const participants = (entry.participants || []).filter((item) => item.name)
+      const uniqueNames = (names: string[]) => names.filter(
+        (name, position, list) => list.indexOf(name) === position,
+      )
+      index.set(entry.competition_entry, {
+        leader_names: uniqueNames(
+          participants
+            .filter((item) => item.role === 'leader')
+            .map((item) => item.name),
+        ),
+        participant_names: uniqueNames(participants.map((item) => item.name)),
+        award_result: entry.is_awarded
+          ? entry.award_level || '已获奖'
+          : entry.competition_status === 'completed'
+            ? '未获奖'
+            : '结果待公布',
+      })
+    }
+  }
+  return index
+}
+
 /**
  * Resolve the competition edition that constrains an allocation editor.
  *

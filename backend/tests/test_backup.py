@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from django.core.files.base import ContentFile
 from django.core.management import call_command
+from django.db.models import Count
 
 from apps.common.backup_service import (
     DEMO_MARKER,
@@ -15,12 +16,19 @@ from apps.common.backup_service import (
     restore_demo_backup,
     verify_demo_backup,
 )
+from apps.competitions.models import (
+    Competition,
+    CompetitionAward,
+    CompetitionEvent,
+    CompetitionParticipant,
+)
 from apps.exports.custom_report_models import CustomReport
 from apps.exports.scheduled_report_models import (
     ScheduledReport,
     ScheduledReportExecution,
 )
 from apps.files.models import FileAsset
+from apps.finance.models import FinanceExpense, FinanceIncome
 from apps.intellectual_property.models import IntellectualPropertyApplication
 from apps.notifications.models import Announcement
 from apps.projects.models import Project
@@ -96,6 +104,10 @@ class TestBackup:
             assert '"user_lifecycle_events"' in snapshot
             assert '"teams"' in snapshot
             assert '"team_members"' in snapshot
+            assert '"competition_events"' in snapshot
+            assert '"competition_participants"' in snapshot
+            assert '"competition_awards"' in snapshot
+            assert '"competition_award_recipients"' in snapshot
             assert '"member_skills"' in snapshot
             assert '"flexible_work_schedules"' in snapshot
             assert '"member_rankings"' in snapshot
@@ -428,10 +440,107 @@ class TestBackup:
         )
         project = Project.objects.filter(code__startswith='TEAM-DEMO-').order_by('code').first()
         asset = FileAsset.objects.filter(project=project).exclude(file='').first()
+        repeated_name = (
+            Competition.objects.filter(project=project)
+            .values('name')
+            .annotate(total=Count('id'))
+            .filter(total__gt=1)
+            .order_by('name')
+            .first()
+        )
+        assert repeated_name is not None
+        competition = (
+            Competition.objects.filter(
+                project=project,
+                name=repeated_name['name'],
+            )
+            .select_related('event', 'event__organization')
+            .order_by('event__edition')
+            .first()
+        )
+        participant = competition.participants.select_related('user').first()
+        competition_asset = FileAsset.objects.filter(
+            competition_entry=competition,
+        ).exclude(file='').first()
+        award = (
+            CompetitionAward.objects.filter(
+                competition__project__code__startswith='TEAM-DEMO-',
+            )
+            .prefetch_related('recipients')
+            .first()
+        )
+        assert participant is not None
+        assert competition_asset is not None
+        assert award is not None
+        expense = FinanceExpense.objects.filter(project=project).first()
+        income = FinanceIncome.objects.filter(project=project).first()
+        assert expense is not None
+        assert income is not None
+        expense.competition_entry = competition
+        expense.save(update_fields=['competition_entry'])
+        income.competition_entry = competition
+        income.save(update_fields=['competition_entry'])
+        expense_identity = (
+            expense.project.code,
+            expense.title,
+            expense.expense_date,
+            expense.amount,
+        )
+        income_identity = (
+            income.project.code,
+            income.reference_number or income.title,
+        )
+
+        event_identity = (
+            competition.event.organization.code,
+            competition.event.name,
+            competition.event.edition,
+            competition.event.organizer,
+        )
+        competition_identity = (
+            competition.project.code,
+            competition.event.name,
+            competition.event.edition,
+            competition.event.organizer,
+            competition.entry_name,
+        )
+        participant_email = participant.user.email
+        award_identity = (
+            award.competition.project.code,
+            award.competition.event.name,
+            award.competition.event.edition,
+            award.competition.event.organizer,
+            award.competition.entry_name,
+            award.award_name,
+            award.award_level,
+            award.award_date,
+        )
+        award_recipient_emails = set(
+            award.recipients.values_list('email', flat=True)
+        )
+        expected_event_count = CompetitionEvent.objects.filter(
+            organization__code='TEAM-DEMO-ORG',
+        ).count()
+        expected_competition_count = Competition.objects.filter(
+            project__code__startswith='TEAM-DEMO-',
+        ).count()
+        expected_participant_count = CompetitionParticipant.objects.filter(
+            competition__project__code__startswith='TEAM-DEMO-',
+        ).count()
+        expected_award_count = CompetitionAward.objects.filter(
+            competition__project__code__startswith='TEAM-DEMO-',
+        ).count()
+
         original_content = Path(asset.file.path).read_bytes()
         backup_content = original_content + b'\nselected-backup-state'
         project.intro = '完整备份包 A 的项目状态'
         project.save(update_fields=['intro'])
+        competition.review_summary = 'selected competition snapshot'
+        competition.save(update_fields=['review_summary'])
+        participant.responsibility = 'selected participant snapshot'
+        participant.save(update_fields=['responsibility'])
+        award.notes = 'selected award snapshot'
+        award.save(update_fields=['notes'])
         Path(asset.file.path).write_bytes(backup_content)
         asset.size = len(backup_content)
         asset.save(update_fields=['size'])
@@ -440,14 +549,93 @@ class TestBackup:
         project.intro = '恢复前的后续状态 B'
         project.save(update_fields=['intro'])
         Path(asset.file.path).write_bytes(b'later-state-b')
+        competition.review_summary = 'later competition state'
+        competition.save(update_fields=['review_summary'])
+        participant.responsibility = 'later participant state'
+        participant.save(update_fields=['responsibility'])
+        award.notes = 'later award state'
+        award.save(update_fields=['notes'])
+        expense.competition_entry = None
+        expense.save(update_fields=['competition_entry'])
+        income.competition_entry = None
+        income.save(update_fields=['competition_entry'])
+        competition_asset.competition_entry = None
+        competition_asset.save(update_fields=['competition_entry'])
 
         result = restore_demo_backup(selected['backup_id'], requested_by=admin_client.user)
 
         restored_project = Project.objects.get(code=project.code)
         restored_asset = FileAsset.objects.get(project=restored_project, name=asset.name)
+        restored_event = CompetitionEvent.objects.get(
+            organization__code=event_identity[0],
+            name=event_identity[1],
+            edition=event_identity[2],
+            organizer=event_identity[3],
+        )
+        restored_competition = Competition.objects.get(
+            project__code=competition_identity[0],
+            event=restored_event,
+            entry_name=competition_identity[4],
+        )
+        restored_participant = CompetitionParticipant.objects.get(
+            competition=restored_competition,
+            user__email=participant_email,
+        )
+        restored_award = CompetitionAward.objects.get(
+            competition__project__code=award_identity[0],
+            competition__event__name=award_identity[1],
+            competition__event__edition=award_identity[2],
+            competition__event__organizer=award_identity[3],
+            competition__entry_name=award_identity[4],
+            award_name=award_identity[5],
+            award_level=award_identity[6],
+            award_date=award_identity[7],
+        )
+        restored_competition_asset = FileAsset.objects.get(
+            project__code=competition_identity[0],
+            name=competition_asset.name,
+        )
+        restored_expense = FinanceExpense.objects.get(
+            project__code=expense_identity[0],
+            title=expense_identity[1],
+            expense_date=expense_identity[2],
+            amount=expense_identity[3],
+        )
+        restored_income = (
+            FinanceIncome.objects.get(
+                project__code=income_identity[0],
+                reference_number=income_identity[1],
+            )
+            if income.reference_number
+            else FinanceIncome.objects.get(
+                project__code=income_identity[0],
+                title=income_identity[1],
+            )
+        )
         assert restored_project.intro == '完整备份包 A 的项目状态'
         assert Path(restored_asset.file.path).read_bytes() == backup_content
-        assert Project.objects.filter(code__startswith='TEAM-DEMO-').count() == 24
+        assert restored_competition.review_summary == 'selected competition snapshot'
+        assert restored_participant.responsibility == 'selected participant snapshot'
+        assert restored_award.notes == 'selected award snapshot'
+        assert set(
+            restored_award.recipients.values_list('email', flat=True)
+        ) == award_recipient_emails
+        assert restored_competition_asset.competition_entry == restored_competition
+        assert restored_expense.competition_entry == restored_competition
+        assert restored_income.competition_entry == restored_competition
+        assert CompetitionEvent.objects.filter(
+            organization__code='TEAM-DEMO-ORG',
+        ).count() == expected_event_count
+        assert Competition.objects.filter(
+            project__code__startswith='TEAM-DEMO-',
+        ).count() == expected_competition_count
+        assert CompetitionParticipant.objects.filter(
+            competition__project__code__startswith='TEAM-DEMO-',
+        ).count() == expected_participant_count
+        assert CompetitionAward.objects.filter(
+            competition__project__code__startswith='TEAM-DEMO-',
+        ).count() == expected_award_count
+        assert Project.objects.filter(code__startswith='TEAM-DEMO-').count() == 7
         assert result['restored_records']['updated'] > 0
         assert result['restored_media_files'] > 100
 

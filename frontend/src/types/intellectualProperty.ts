@@ -3,7 +3,7 @@
 // ============================================
 
 // 知识产权成果类型
-export type IPType = 'software_copyright' | 'invention_patent' | 'utility_model' | 'design_patent' | 'paper' | 'other'
+export type IPType = 'software_copyright' | 'invention_patent' | 'utility_model' | 'design_patent' | 'novelty_search' | 'paper' | 'other'
 
 // 申请状态（14种）
 export type IPStatus = 'draft' | 'writing' | 'leader_review' | 'teacher_confirm' | 'research_office_review' | 'returned' | 'modifying' | 'resubmitted' | 'accepted' | 'authorized' | 'archived' | 'paused' | 'terminated' | 'deferred'

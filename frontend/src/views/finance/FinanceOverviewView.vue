@@ -447,6 +447,7 @@ import {
   attributedRecordAmount,
   allExpenseAttachments,
   buildMetricSummary,
+  buildTraceEntryMetadataIndex,
   buildTraceabilityGroups,
   completedPaymentAmount,
   expenseStatusLabel,
@@ -555,6 +556,7 @@ const filteredIncomes = computed(() => incomeList.value
 
 const metrics = computed(() => buildMetricSummary(filteredExpenses.value, filteredIncomes.value, traceSummary.value))
 const todoCounts = computed(() => normalizeFundTodos(fundTodos.value, expenseList.value))
+const traceEntryMetadata = computed(() => buildTraceEntryMetadataIndex(traceSummary.value))
 const todoCards = computed(() => [
   { key: 'missing_receipt', label: '待补发票', value: todoCounts.value.missing_receipt, hint: '缺少发票或原始票据', tone: 'warning' },
   { key: 'pending_review', label: '待负责人审核', value: todoCounts.value.pending_review, hint: '额度已临时预留', tone: 'warning' },
@@ -571,17 +573,26 @@ const rawGroups = computed(() => buildTraceabilityGroups(perspective.value, filt
     ...group,
     children: group.children.map((row) => {
       const entry = competitionOptions.value.find((item) => item.id === row.competition_entry_id)
-      if (!entry) return row
-      const activeParticipants = (entry.participants || []).filter((item) => item.participation_status !== 'withdrawn')
+      const summaryMetadata = row.competition_entry_id
+        ? traceEntryMetadata.value.get(row.competition_entry_id)
+        : undefined
+      if (!entry && !summaryMetadata) return row
+      const activeParticipants = (entry?.participants || []).filter((item) => item.participation_status !== 'withdrawn')
       const participantName = (item: typeof activeParticipants[number]) => item.user_detail?.name || `成员 ${item.user}`
       const leaders = [
-        ...(entry.leader_names || []),
+        ...(summaryMetadata?.leader_names || []),
+        ...(entry?.leader_names || []),
         ...activeParticipants.filter((item) => item.role === 'leader').map(participantName),
       ].filter((name, index, list) => Boolean(name) && list.indexOf(name) === index)
-      const participants = activeParticipants.map(participantName).filter((name, index, list) => list.indexOf(name) === index)
-      const awardResult = entry.is_awarded
-        ? entry.award_level || '已获奖'
-        : entry.status === 'completed' ? '未获奖' : '结果待公布'
+      const participants = [
+        ...(summaryMetadata?.participant_names || []),
+        ...activeParticipants.map(participantName),
+      ].filter((name, index, list) => list.indexOf(name) === index)
+      const awardResult = summaryMetadata?.award_result || (
+        entry?.is_awarded
+          ? entry.award_level || '已获奖'
+          : entry?.status === 'completed' ? '未获奖' : '结果待公布'
+      )
       return { ...row, leader_names: leaders, participant_names: participants, award_result: awardResult }
     }),
   })))

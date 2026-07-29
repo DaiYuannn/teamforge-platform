@@ -26,6 +26,7 @@ class IntellectualPropertyApplication(models.Model):
         INVENTION_PATENT = 'invention_patent', '发明专利'
         UTILITY_MODEL = 'utility_model', '实用新型专利'
         DESIGN_PATENT = 'design_patent', '外观设计专利'
+        NOVELTY_SEARCH = 'novelty_search', '科技查新'
         PAPER = 'paper', '论文成果'
         OTHER = 'other', '其他'
 

@@ -5,6 +5,7 @@ import {
   allocationTargetsShareEvent,
   attributedRecordAmount,
   buildMetricSummary,
+  buildTraceEntryMetadataIndex,
   buildTraceabilityGroups,
   filterLedgerRecordByDestination,
   normalizeFundTodos,
@@ -208,6 +209,32 @@ describe('dual traceability grouping', () => {
     expect(groups.map((group) => group.label).sort()).toEqual(['互联网+大赛', '挑战杯'].sort())
     expect(groups.reduce((sum, group) => sum + group.received_bonus, 0)).toBe(600)
     expect(groups.reduce((sum, group) => sum + group.member_advanced, 0)).toBe(300)
+  })
+})
+
+describe('traceability entry metadata', () => {
+  it('uses the summary endpoint as the complete participant source', () => {
+    const index = buildTraceEntryMetadataIndex({
+      groups: [{
+        entries: [{
+          competition_entry: 109,
+          competition_status: 'completed',
+          is_awarded: true,
+          award_level: '国赛金奖',
+          participants: [
+            { id: 1, name: '王明', role: 'leader' },
+            { id: 2, name: '钱思远', role: 'member' },
+            { id: 3, name: '张老师', role: 'advisor' },
+          ],
+        }],
+      }],
+    })
+
+    expect(index.get(109)).toEqual({
+      leader_names: ['王明'],
+      participant_names: ['王明', '钱思远', '张老师'],
+      award_result: '国赛金奖',
+    })
   })
 })
 

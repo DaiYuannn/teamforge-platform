@@ -390,9 +390,12 @@ class DashboardView(APIView):
         # 临近比赛
         upcoming_competitions = scope_project_queryset(
             Competition.objects.filter(
-            status__in=[Competition.Status.PREPARING, Competition.Status.ONGOING],
-            defense_date__gte=now.date(),
-            defense_date__lte=(now + timedelta(days=30)).date(),
+                status__in=[
+                    Competition.Status.PREPARING,
+                    Competition.Status.ONGOING,
+                ],
+                defense_date__gte=now.date(),
+                defense_date__lte=(now + timedelta(days=30)).date(),
             ),
             request.user,
             project_lookup='project',

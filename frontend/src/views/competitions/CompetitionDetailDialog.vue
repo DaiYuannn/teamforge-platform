@@ -424,6 +424,9 @@ async function loadAwards(competitionId = props.competition?.id): Promise<void> 
   awardLoading.value = true
   try {
     awards.value = await getCompetitionAwards(competitionId)
+  } catch {
+    // 详情主体仍可用；奖项接口暂时不可用时回退到参赛记录上的汇总字段。
+    awards.value = []
   } finally {
     awardLoading.value = false
   }
